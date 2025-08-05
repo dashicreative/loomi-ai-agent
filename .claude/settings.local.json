@@ -8,7 +8,8 @@
       "Bash(touch:*)",
       "Bash(python:*)",
       "Bash(git init:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(git add:*)"
     ],
     "deny": []
   }
