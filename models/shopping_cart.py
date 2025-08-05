@@ -7,7 +7,7 @@ import time
 
 class CartItem(BaseEntity):
     """Individual cart item model"""
-    name: str = Field(..., description="Name of the cart item")
+    name: str = Field(..., description="Name of the cart item", alias="ingredient")
     quantity: int = Field(default=1, description="Quantity of the item")
     is_completed: bool = Field(False, description="Whether item has been shopped", alias="isCompleted")
     date_added: datetime = Field(default_factory=datetime.now, description="When item was added to cart", alias="dateAdded")
@@ -23,7 +23,7 @@ class CartItem(BaseEntity):
         "json_schema_extra": {
             "example": {
                 "id": "550e8400-e29b-41d4-a716-446655440002",
-                "name": "Milk",
+                "ingredient": "Milk",
                 "quantity": 1,
                 "isCompleted": False,
                 "dateAdded": 1691240200.0
@@ -79,7 +79,7 @@ class ShoppingCart(BaseModel):
                 "items": [
                     {
                         "id": "550e8400-e29b-41d4-a716-446655440002",
-                        "name": "Milk",
+                        "ingredient": "Milk",
                         "quantity": 1,
                         "isCompleted": False,
                         "dateAdded": 1691240200.0
@@ -101,7 +101,7 @@ class CartMealCreate(BaseModel):
 
 class CartItemCreate(BaseModel):
     """Model for adding an item to cart"""
-    name: str
+    name: str = Field(..., alias="ingredient")
     quantity: int = Field(default=1)
     
     model_config = {
