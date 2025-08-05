@@ -3,6 +3,7 @@ from typing import Optional
 
 from models.ai_models import ChatMessage, ChatResponse, AIAction
 from services.llm_service import llm_service
+from ai_agents.meal_management_agent import MealManagementAgent
 
 router = APIRouter()
 
@@ -11,23 +12,33 @@ router = APIRouter()
 async def chat(message: ChatMessage):
     """
     Process a chat message from the iOS app.
-    For now, returns echo responses for testing.
+    
+    Phase 1: Uses Meal Management Agent for scheduling requests.
     """
     try:
-        # Echo response for testing Step 5
-        echo_response = ChatResponse(
-            conversational_response=f"Echo: {message.content}",
-            actions=[],
-            model_used="echo"
+        # Initialize the Meal Management Agent
+        meal_agent = MealManagementAgent()
+        
+        # Process the message with the agent
+        ai_response = await meal_agent.process(message)
+        
+        # Convert AIResponse to ChatResponse (iOS format)
+        chat_response = ChatResponse(
+            conversational_response=ai_response.conversational_response,
+            actions=ai_response.actions,
+            model_used=ai_response.model_used
         )
         
-        return echo_response
+        return chat_response
         
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Chat processing failed: {str(e)}"
+        # Return error message to iOS app
+        error_response = ChatResponse(
+            conversational_response=f"Sorry, I encountered an error: {str(e)}",
+            actions=[],
+            model_used="error"
         )
+        return error_response
 
 
 @router.get("/test")
