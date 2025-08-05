@@ -56,6 +56,7 @@ async def root():
             "meals": "/api/meals",
             "scheduled_meals": "/api/scheduled-meals", 
             "shopping_cart": "/api/shopping-cart",
+            "chat": "/api/chat",
             "docs": "/docs"
         }
     }
@@ -82,7 +83,8 @@ async def health_check():
             "endpoints_available": [
                 "/api/meals",
                 "/api/scheduled-meals",
-                "/api/shopping-cart"
+                "/api/shopping-cart",
+                "/api/chat"
             ]
         }
     except Exception as e:
