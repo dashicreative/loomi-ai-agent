@@ -61,6 +61,18 @@ class AIResponse(BaseModel):
         }
     }
 
+class ChatResponse(BaseModel):
+    """Response from the AI chat endpoint - iOS compatible"""
+    conversational_response: str = Field(..., description="Natural language response to user", alias="response")
+    actions: List[AIAction] = Field(default_factory=list, description="Actions to perform")
+    model_used: str = Field(..., description="Which AI model was used", alias="modelUsed")
+    preview_message: Optional[str] = Field(None, description="Preview of what actions will do", alias="previewMessage")
+    
+    model_config = {
+        "populate_by_name": True
+    }
+
+
 class ChatMessage(BaseModel):
     """Chat message from user"""
     content: str = Field(..., description="Message content")

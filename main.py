@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 
 # Import API routers
-from api import meals, scheduled_meals, shopping_cart
+from api import meals, scheduled_meals, shopping_cart, chat
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -95,6 +95,7 @@ async def health_check():
 app.include_router(meals.router, prefix="/api/meals", tags=["meals"])
 app.include_router(scheduled_meals.router, prefix="/api/scheduled-meals", tags=["scheduled-meals"])
 app.include_router(shopping_cart.router, prefix="/api/shopping-cart", tags=["shopping-cart"])
+app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 
 if __name__ == "__main__":
     uvicorn.run(
