@@ -1,8 +1,9 @@
 from datetime import datetime
 from typing import List
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 from .base import BaseEntity
+import time
 
 class CartItem(BaseEntity):
     """Individual cart item model"""
@@ -10,6 +11,11 @@ class CartItem(BaseEntity):
     quantity: int = Field(default=1, description="Quantity of the item")
     is_completed: bool = Field(False, description="Whether item has been shopped", alias="isCompleted")
     date_added: datetime = Field(default_factory=datetime.now, description="When item was added to cart", alias="dateAdded")
+    
+    @field_serializer('date_added')
+    def serialize_date_added(self, date_added: datetime) -> float:
+        """Serialize datetime to Unix timestamp for iOS compatibility"""
+        return date_added.timestamp()
     
     model_config = {
         "use_enum_values": True,
@@ -20,7 +26,7 @@ class CartItem(BaseEntity):
                 "name": "Milk",
                 "quantity": 1,
                 "isCompleted": False,
-                "dateAdded": "2025-08-05T10:30:00"
+                "dateAdded": 1691240200.0
             }
         }
     }
@@ -32,6 +38,11 @@ class CartMeal(BaseEntity):
     servings: int = Field(default=1, description="Number of servings needed")
     date_added: datetime = Field(default_factory=datetime.now, description="When meal was added to cart", alias="dateAdded")
     
+    @field_serializer('date_added')
+    def serialize_date_added(self, date_added: datetime) -> float:
+        """Serialize datetime to Unix timestamp for iOS compatibility"""
+        return date_added.timestamp()
+    
     model_config = {
         "use_enum_values": True,
         "populate_by_name": True,
@@ -41,7 +52,7 @@ class CartMeal(BaseEntity):
                 "mealId": "550e8400-e29b-41d4-a716-446655440000",
                 "mealName": "Chicken Parmesan",
                 "servings": 4,
-                "dateAdded": "2025-08-05T10:30:00"
+                "dateAdded": 1691240200.0
             }
         }
     }
@@ -62,7 +73,7 @@ class ShoppingCart(BaseModel):
                         "mealId": "550e8400-e29b-41d4-a716-446655440000",
                         "mealName": "Chicken Parmesan",
                         "servings": 4,
-                        "dateAdded": "2025-08-05T10:30:00"
+                        "dateAdded": 1691240200.0
                     }
                 ],
                 "items": [
@@ -71,7 +82,7 @@ class ShoppingCart(BaseModel):
                         "name": "Milk",
                         "quantity": 1,
                         "isCompleted": False,
-                        "dateAdded": "2025-08-05T10:30:00"
+                        "dateAdded": 1691240200.0
                     }
                 ]
             }
