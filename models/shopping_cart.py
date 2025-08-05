@@ -8,6 +8,7 @@ import time
 class CartItem(BaseEntity):
     """Individual cart item model"""
     name: str = Field(..., description="Name of the cart item", alias="ingredient")
+    meal_id: UUID = Field(..., description="ID of the meal this ingredient is from", alias="mealId")
     meal_name: str = Field(..., description="Name of the meal this ingredient is from", alias="mealName")
     quantity: int = Field(default=1, description="Quantity of the item")
     is_completed: bool = Field(False, description="Whether item has been shopped", alias="isCompleted")
@@ -25,6 +26,7 @@ class CartItem(BaseEntity):
             "example": {
                 "id": "550e8400-e29b-41d4-a716-446655440002",
                 "ingredient": "Milk",
+                "mealId": "550e8400-e29b-41d4-a716-446655440000",
                 "mealName": "Chicken Parmesan",
                 "quantity": 1,
                 "isCompleted": False,
@@ -104,6 +106,7 @@ class CartMealCreate(BaseModel):
 class CartItemCreate(BaseModel):
     """Model for adding an item to cart"""
     name: str = Field(..., alias="ingredient")
+    meal_id: UUID = Field(..., alias="mealId")
     meal_name: str = Field(..., alias="mealName")
     quantity: int = Field(default=1)
     
