@@ -58,6 +58,12 @@ Current context:
 - Today is {today}
 - Available meals: {available_meals}
 
+IMPORTANT: If a requested meal is not available, respond with a brief, helpful message:
+- Don't list all available meals (overwhelming for users)
+- Suggest 2-3 specific meals that might work instead
+- Keep it concise and friendly
+- Example: "I don't have sushi available. How about Pizza or New Meal instead?"
+
 Parse the user's request and identify the scheduling pattern:
 
 1. **Multi-meal requests**: "Schedule pizza and egg tacos for tomorrow"
@@ -247,8 +253,13 @@ Extract:
                 else:
                     response_text = str(llm_response)
                 
-                # If LLM gives helpful text response, capture it
-                if "not in" in response_text.lower() or "available meals" in response_text.lower():
+                # If LLM gives helpful text response about unavailable meals, capture it
+                helpful_indicators = [
+                    "don't have", "not available", "not in", "available meals", 
+                    "how about", "instead", "try", "consider"
+                ]
+                
+                if any(indicator in response_text.lower() for indicator in helpful_indicators):
                     llm_response_text = response_text
                     
             except:
