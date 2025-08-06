@@ -206,8 +206,19 @@ Extract:
         # Detect batch day patterns
         if "next 5 days" in request_lower or "rest of the week" in request_lower or "this week" in request_lower:
             # Calculate dates based on pattern
-            if "rest of the week" in request_lower or "this week" in request_lower:
-                # Rest of the week = today through Sunday
+            if "rest of the week" in request_lower:
+                # Rest of the week = tomorrow through Sunday
+                today = date.today()
+                tomorrow = today + timedelta(days=1)
+                days_until_end_of_week = 6 - today.weekday()  # 0=Monday, 6=Sunday
+                
+                if days_until_end_of_week > 0:
+                    dates = self._get_date_range(tomorrow, days_until_end_of_week)
+                else:
+                    # Today is Sunday, so no "rest of week"
+                    dates = []
+            elif "this week" in request_lower:
+                # This week = today through Sunday
                 today = date.today()
                 days_until_sunday = (6 - today.weekday()) % 7
                 if days_until_sunday == 0 and today.weekday() == 6:  # Today is Sunday
@@ -217,9 +228,14 @@ Extract:
                 # Next 5 days
                 dates = self._get_date_range(date.today() + timedelta(days=1), 5)
             
-            meal_type = "breakfast" if "breakfast" in request_lower else "dinner"
-            if "lunch" in request_lower:
+            # Determine meal type - default to dinner
+            meal_type = "dinner"  # Default
+            if "breakfast" in request_lower:
+                meal_type = "breakfast"
+            elif "lunch" in request_lower:
                 meal_type = "lunch"
+            elif "dinner" in request_lower or "dinners" in request_lower:
+                meal_type = "dinner"
             
             for target_date in dates:
                 if "random" in request_lower or "saved meals" in request_lower or not any(meal.lower() in request_lower for meal in available_meals):
