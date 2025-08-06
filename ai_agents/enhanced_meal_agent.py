@@ -402,7 +402,7 @@ Extract:
                     model_used="enhanced"
                 )
             
-            # Simple date extraction
+            # Simple date extraction - default to today
             target_date = date.today()
             content_lower = message.content.lower()
             
@@ -410,10 +410,24 @@ Extract:
                 target_date = date.today() + timedelta(days=1)
             elif "next wednesday" in content_lower:
                 target_date = date.fromisoformat(self._get_next_weekday_date("wednesday", date.today()))
+            elif "next tuesday" in content_lower:
+                target_date = date.fromisoformat(self._get_next_weekday_date("tuesday", date.today()))
+            elif "next monday" in content_lower:
+                target_date = date.fromisoformat(self._get_next_weekday_date("monday", date.today()))
+            elif "next thursday" in content_lower:
+                target_date = date.fromisoformat(self._get_next_weekday_date("thursday", date.today()))
+            elif "next friday" in content_lower:
+                target_date = date.fromisoformat(self._get_next_weekday_date("friday", date.today()))
+            elif "next saturday" in content_lower:
+                target_date = date.fromisoformat(self._get_next_weekday_date("saturday", date.today()))
+            elif "next sunday" in content_lower:
+                target_date = date.fromisoformat(self._get_next_weekday_date("sunday", date.today()))
             elif "tuesday" in content_lower:
                 target_date = date.fromisoformat(self._get_next_weekday_date("tuesday", date.today()))
             elif "monday" in content_lower:
                 target_date = date.fromisoformat(self._get_next_weekday_date("monday", date.today()))
+            elif "wednesday" in content_lower:
+                target_date = date.fromisoformat(self._get_next_weekday_date("wednesday", date.today()))
             elif "thursday" in content_lower:
                 target_date = date.fromisoformat(self._get_next_weekday_date("thursday", date.today()))
             elif "friday" in content_lower:
