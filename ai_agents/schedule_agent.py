@@ -22,7 +22,7 @@ from storage.local_storage import LocalStorage
 class ScheduleMealParameters(BaseModel):
     meal_name: str
     date: str
-    occasion: str = Field(default="dinner")
+    occasion: Optional[str] = Field(default=None)  # No default occasion
     servings: Optional[int] = Field(default=4)
     notes: Optional[str] = None
 
@@ -111,7 +111,7 @@ You must respond with ONLY a JSON object in one of these formats:
       "parameters": {{
         "meal_name": "exact meal name from saved_meals",
         "date": "YYYY-MM-DD",
-        "occasion": "breakfast|lunch|dinner|snack",
+        "occasion": "breakfast|lunch|dinner|snack|null (use meal's default)",
         "servings": number,
         "notes": "optional notes"
       }}
@@ -156,7 +156,8 @@ You must respond with ONLY a JSON object in one of these formats:
 
 2. Only schedule for current date or future dates
 
-3. Default to "dinner" if occasion not specified
+3. If occasion not specified by user, use the meal's default occasion
+4. If meal has no default occasion, don't mention occasion in response
 
 ## Conflict Handling
 Check if date + occasion already has a scheduled meal. If so, note in conflicts array.
@@ -165,10 +166,12 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
 1. Always respond with valid JSON in the specified format
 2. Use exact meal names from available_meals list (after fuzzy matching)
 3. Convert all dates to YYYY-MM-DD format
-4. Be conversational but concise
+4. Be conversational but concise - use natural date words (today, tomorrow, Monday) instead of exact dates
 5. Handle ambiguity by requesting clarification
 6. **When using fuzzy matches, acknowledge the match in your response**
-7. **Prefer exact matches over fuzzy matches when available**"""),
+7. **Prefer exact matches over fuzzy matches when available**
+8. **If no occasion specified, set occasion to null - the system will use meal's default**
+9. **Use natural date language in responses: today, tomorrow, Monday, etc.**"""),
             ("human", "{user_request}")
         ])
         
@@ -258,6 +261,43 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
             formatted.append(f"- {sm.date}: {meal_name} ({sm.occasion})")
         
         return "\n".join(formatted)
+    
+    def _format_date_naturally(self, target_date: date) -> str:
+        """Convert date to natural language (today, tomorrow, Monday, etc.)"""
+        today = date.today()
+        
+        if target_date == today:
+            return "today"
+        elif target_date == today + timedelta(days=1):
+            return "tomorrow"
+        elif target_date == today - timedelta(days=1):
+            return "yesterday"
+        else:
+            # Check if it's within this week
+            days_diff = (target_date - today).days
+            if 0 < days_diff <= 7:
+                weekday_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+                return weekday_names[target_date.weekday()]
+            elif -7 <= days_diff < 0:
+                weekday_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+                return f"last {weekday_names[target_date.weekday()]}"
+            elif 7 < days_diff <= 14:
+                weekday_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+                return f"next {weekday_names[target_date.weekday()]}"
+            else:
+                # Use month and day for further dates
+                return target_date.strftime("%B %d")
+    
+    def _get_meal_default_occasion(self, meal_name: str) -> Optional[str]:
+        """Get the default occasion for a meal"""
+        meals = self.storage.load_meals()
+        for meal in meals:
+            if meal.name.lower() == meal_name.lower():
+                if hasattr(meal.occasion, 'value'):
+                    return meal.occasion.value
+                else:
+                    return meal.occasion if meal.occasion else None
+        return None
     
     def _extract_meal_name_from_request(self, user_request: str) -> str:
         """
@@ -400,12 +440,24 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
                     "error": f"Meal '{parameters['meal_name']}' not found even with fuzzy matching"
                 }
             
-            # Create scheduled meal
+            # Determine the occasion to use
             from models.scheduled_meal import ScheduledMeal, MealOccasion
             from uuid import uuid4
             
             target_date = date.fromisoformat(parameters["date"])
-            meal_occasion = MealOccasion(parameters["occasion"])
+            
+            # Use provided occasion, or meal's default, or dinner as final fallback
+            if parameters.get("occasion"):
+                occasion_str = parameters["occasion"]
+            else:
+                # Use meal's default occasion (it's already a string in our current model)
+                if hasattr(target_meal.occasion, 'value'):
+                    meal_default_occasion = target_meal.occasion.value
+                else:
+                    meal_default_occasion = target_meal.occasion if target_meal.occasion else "dinner"
+                occasion_str = meal_default_occasion
+            
+            meal_occasion = MealOccasion(occasion_str)
             
             scheduled_meal = ScheduledMeal(
                 id=uuid4(),
@@ -417,12 +469,17 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
             # Save to storage
             self.storage.add_scheduled_meal(scheduled_meal)
             
+            # Format natural date for response
+            natural_date = self._format_date_naturally(target_date)
+            
             return {
                 "success": True,
                 "scheduled_meal_id": str(scheduled_meal.id),
                 "meal_name": target_meal.name,
                 "date": parameters["date"],
-                "meal_type": parameters["occasion"]
+                "natural_date": natural_date,
+                "meal_type": occasion_str,
+                "occasion_specified": bool(parameters.get("occasion"))  # Track if user specified occasion
             }
             
         except Exception as e:
@@ -481,16 +538,21 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
                         target_date = date.today() + timedelta(days=days_ahead)
                         break
             
-            # Schedule the meal
+            # Schedule the meal (no occasion specified - will use meal's default)
             result = await self._execute_schedule_action({
                 "meal_name": meal_name,
-                "date": target_date.isoformat(),
-                "occasion": "dinner"
+                "date": target_date.isoformat()
+                # No occasion specified - will use meal's default
             })
             
             if result["success"]:
                 confidence_msg = f" (I matched '{potential_meal_name}' to '{meal_name}')" if confidence < 1.0 else ""
-                response = f"✅ I've scheduled {meal_name} for {result['meal_type']} on {result['date']}!{confidence_msg}"
+                
+                # Build response with natural date and conditional occasion mention
+                if result.get("occasion_specified"):
+                    response = f"✅ I've scheduled {meal_name} for {result['meal_type']} {result['natural_date']}!{confidence_msg}"
+                else:
+                    response = f"✅ I've scheduled {meal_name} for {result['natural_date']}!{confidence_msg}"
                 action = AIAction(
                     type=ActionType.SCHEDULE_MEAL,
                     parameters=result
