@@ -263,8 +263,36 @@ Extract:
             
             return BatchScheduleAction(tasks=tasks, request_type="batch_days")
         
+        # Detect random selection (including "pick" variants) - check before multi-meal
+        elif any(word in request_lower for word in ["random", "pick", "choose", "select"]) and not any(meal.lower() in request_lower for meal in available_meals):
+            target_date = date.today().isoformat()
+            if "tomorrow" in request_lower:
+                target_date = (date.today() + timedelta(days=1)).isoformat()
+            elif "friday" in request_lower:
+                target_date = self._get_next_weekday_date("friday", date.today())
+            
+            # Detect meal type
+            meal_type = "dinner"  # default
+            if "breakfast" in request_lower:
+                meal_type = "breakfast"
+            elif "lunch" in request_lower:
+                meal_type = "lunch"
+            elif "dinner" in request_lower:
+                meal_type = "dinner"
+            elif "snack" in request_lower:
+                meal_type = "snack"
+            
+            tasks.append(ScheduleTask(
+                meal_name=None,
+                target_date=target_date,
+                meal_type=meal_type,
+                is_random=True
+            ))
+            
+            return BatchScheduleAction(tasks=tasks, request_type="random_selection")
+        
         # Detect multi-meal patterns (pizza and tacos)
-        elif " and " in request_lower:
+        elif " and " in request_lower and any(meal.lower() in request_lower for meal in available_meals):
             # Find target date
             target_date = date.today().isoformat()
             if "tomorrow" in request_lower:
@@ -295,22 +323,6 @@ Extract:
             
             return BatchScheduleAction(tasks=tasks, request_type="multi_meal")
         
-        # Detect random selection
-        elif "random" in request_lower or "pick some" in request_lower:
-            target_date = date.today().isoformat()
-            if "tomorrow" in request_lower:
-                target_date = (date.today() + timedelta(days=1)).isoformat()
-            elif "friday" in request_lower:
-                target_date = self._get_next_weekday_date("friday", date.today())
-            
-            tasks.append(ScheduleTask(
-                meal_name=None,
-                target_date=target_date,
-                meal_type="dinner",
-                is_random=True
-            ))
-            
-            return BatchScheduleAction(tasks=tasks, request_type="random_selection")
         
         # Default to single task (fallback)
         default_date = date.today().isoformat()
@@ -520,8 +532,8 @@ Extract:
         
         # Check for vague quantity words that need clarification
         has_vague_quantity = any(word in request_lower for word in [
-            "some", "a few", "several", "multiple"
-        ])
+            "some", "a few", "several", "multiple", "pick", "choose", "select"
+        ]) and not any(word in request_lower for word in ["1", "2", "3", "4", "5", "6", "7", "8", "9"])
         
         # Check for date/time indicators (when to schedule)
         has_timeframe = any(word in request_lower for word in [
