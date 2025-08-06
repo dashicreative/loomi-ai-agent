@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 from typing import List, Optional
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 from models.meal import Meal
 from models.scheduled_meal import ScheduledMeal
@@ -113,6 +113,58 @@ class LocalStorage:
             self.save_scheduled_meals(scheduled_meals)
             return True
         return False
+    
+    def clear_schedule(self, date_range: Optional[str] = None, start_date: Optional[date] = None, end_date: Optional[date] = None) -> int:
+        """Clear scheduled meals based on date range
+        
+        Args:
+            date_range: 'all', 'week', 'month', or None
+            start_date: Specific start date for custom range
+            end_date: Specific end date for custom range
+        
+        Returns:
+            Number of meals removed
+        """
+        scheduled_meals = self.load_scheduled_meals()
+        original_count = len(scheduled_meals)
+        
+        if date_range == "all":
+            # Clear all scheduled meals
+            self.save_scheduled_meals([])
+            return original_count
+        
+        elif date_range == "week":
+            # Clear meals for current week (Monday to Sunday)
+            today = date.today()
+            days_since_monday = today.weekday()  # Monday is 0
+            start_of_week = today - timedelta(days=days_since_monday)
+            end_of_week = start_of_week + timedelta(days=6)
+            
+            filtered_meals = [sm for sm in scheduled_meals if not (start_of_week <= sm.date <= end_of_week)]
+            self.save_scheduled_meals(filtered_meals)
+            return original_count - len(filtered_meals)
+        
+        elif date_range == "month":
+            # Clear meals for current month
+            today = date.today()
+            start_of_month = today.replace(day=1)
+            # Get last day of month
+            if today.month == 12:
+                end_of_month = date(today.year + 1, 1, 1) - timedelta(days=1)
+            else:
+                end_of_month = date(today.year, today.month + 1, 1) - timedelta(days=1)
+            
+            filtered_meals = [sm for sm in scheduled_meals if not (start_of_month <= sm.date <= end_of_month)]
+            self.save_scheduled_meals(filtered_meals)
+            return original_count - len(filtered_meals)
+        
+        elif start_date and end_date:
+            # Clear meals within custom date range
+            filtered_meals = [sm for sm in scheduled_meals if not (start_date <= sm.date <= end_date)]
+            self.save_scheduled_meals(filtered_meals)
+            return original_count - len(filtered_meals)
+        
+        return 0
     
     # Shopping Cart Storage
     def save_shopping_cart(self, shopping_cart: ShoppingCart) -> None:

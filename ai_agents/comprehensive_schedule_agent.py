@@ -49,6 +49,12 @@ class ClarificationOption(BaseModel):
     action: Optional[str] = None
 
 
+class ClearScheduleParameters(BaseModel):
+    date_range: str = Field(..., description="Date range to clear: 'all', 'week', 'month', or 'custom'")
+    start_date: Optional[str] = Field(default=None, description="Start date for custom range (YYYY-MM-DD)")
+    end_date: Optional[str] = Field(default=None, description="End date for custom range (YYYY-MM-DD)")
+
+
 class ScheduleAction(BaseModel):
     type: str
     parameters: Dict[str, Any]
@@ -108,6 +114,7 @@ When users request multiple tasks:
 ## Your Advanced Capabilities
 - Schedule single or multiple meals to specific dates and meal occasions
 - Reschedule existing meals to new dates/occasions
+- **Clear scheduled meals for specified date ranges (all, week, month, or custom dates)**
 - Handle relative dates (today, tomorrow, Monday, next week, etc.)
 - Process batch scheduling requests consecutively
 - Validate scheduling conflicts and constraints
@@ -155,6 +162,27 @@ You must respond with ONLY a JSON object in one of these formats:
     }}
   ],
   "conflicts": []
+}}
+```
+
+### Successful Clear Schedule
+```json
+{{
+  "status": "success",
+  "conversational_response": "I've cleared [X] meals from your [time period] schedule!",
+  "total_tasks": 1,
+  "completed_tasks": 1,
+  "failed_tasks": 0,
+  "actions": [
+    {{
+      "type": "clear_schedule",
+      "parameters": {{
+        "date_range": "all|week|month|custom",
+        "start_date": "YYYY-MM-DD (for custom range only)",
+        "end_date": "YYYY-MM-DD (for custom range only)"
+      }}
+    }}
+  ]
 }}
 ```
 
@@ -216,6 +244,14 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
 - Single: "Schedule chicken for Tuesday" → 1 task
 - Multiple: "Schedule chicken for Tuesday and pasta for Wednesday" → 2 tasks
 - Complex: "Add chicken for breakfast today, pasta for lunch tomorrow, and salmon for Friday" → 3 tasks
+- Clear: "Clear the schedule for this week" → 1 clear task
+- Clear All: "Clear entire meal schedule" or "clear all scheduled meals" → 1 clear all task
+
+## Clear Schedule Examples
+- "Clear schedule for this week" → date_range: "week"
+- "Clear all scheduled meals" / "clear entire schedule" → date_range: "all" 
+- "Clear schedule for this month" → date_range: "month"
+- "Clear schedule from Monday to Friday" → date_range: "custom", start_date/end_date
 
 ## Critical Rules
 1. Always respond with valid JSON in the specified format
@@ -412,6 +448,13 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
                                 type=ActionType.SCHEDULE_MEAL,
                                 parameters=result
                             ))
+                    elif action.type == "clear_schedule":
+                        result = await self._execute_clear_action(action.parameters)
+                        if result["success"]:
+                            executed_actions.append(AIAction(
+                                type=ActionType.CLEAR_SCHEDULE,
+                                parameters=result
+                            ))
                 
                 return AIResponse(
                     conversational_response=agent_response.conversational_response,
@@ -521,6 +564,55 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
                 "error": str(e)
             }
     
+    async def _execute_clear_action(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute the clear schedule action"""
+        try:
+            date_range = parameters.get("date_range", "all")
+            start_date = None
+            end_date = None
+            
+            # Parse custom date range if provided
+            if date_range == "custom":
+                if parameters.get("start_date"):
+                    start_date = date.fromisoformat(parameters["start_date"])
+                if parameters.get("end_date"):
+                    end_date = date.fromisoformat(parameters["end_date"])
+            
+            # Execute the clear operation
+            cleared_count = self.storage.clear_schedule(
+                date_range=date_range,
+                start_date=start_date,
+                end_date=end_date
+            )
+            
+            return {
+                "success": True,
+                "cleared_count": cleared_count,
+                "date_range": date_range,
+                "range_description": self._get_range_description(date_range, start_date, end_date)
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    def _get_range_description(self, date_range: str, start_date: Optional[date] = None, end_date: Optional[date] = None) -> str:
+        """Get a human-readable description of the date range"""
+        if date_range == "all":
+            return "entire schedule"
+        elif date_range == "week":
+            return "this week's schedule"
+        elif date_range == "month":
+            return "this month's schedule"
+        elif date_range == "custom" and start_date and end_date:
+            start_natural = self._format_date_naturally(start_date)
+            end_natural = self._format_date_naturally(end_date)
+            return f"schedule from {start_natural} to {end_natural}"
+        else:
+            return "schedule"
+    
     async def _fallback_process_with_fuzzy(self, message: ChatMessage) -> AIResponse:
         """Enhanced fallback processing with fuzzy matching and natural dates"""
         try:
@@ -622,6 +714,9 @@ async def test_comprehensive_agent():
         "Add storge test meal for breakfast today and psta for lunch tomorrow",  # Multi-task with typos and occasions
         "Schedule nonexistent meal for today",  # Error handling
         "Schedule chicken parmesan today and pasta tomorrow",  # Fuzzy matching across multiple tasks
+        "Clear the schedule for this week",  # Clear week
+        "Clear all scheduled meals",  # Clear all
+        "Clear schedule for this month",  # Clear month
     ]
     
     print("🧪 Testing Comprehensive Schedule Agent - All Features")

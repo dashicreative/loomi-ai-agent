@@ -7,6 +7,7 @@ class ActionType(str, Enum):
     """AI action types"""
     SCHEDULE_MEAL = "schedule_meal"
     DELETE_SCHEDULED_MEAL = "delete_scheduled_meal"
+    CLEAR_SCHEDULE = "clear_schedule"
     ADD_TO_CART = "add_to_cart"
     REMOVE_FROM_CART = "remove_from_cart"
     DELETE_MEAL = "delete_meal"
