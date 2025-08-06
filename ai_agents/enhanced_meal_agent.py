@@ -507,8 +507,83 @@ Extract:
                 model_used="enhanced"
             )
     
+    def _detect_ambiguity(self, user_request: str, available_meals: List[str]) -> dict:
+        """Detect if request is too ambiguous and needs clarification"""
+        request_lower = user_request.lower()
+        
+        # Check for specific quantity indicators (how many exactly)
+        has_specific_quantity = any(word in request_lower for word in ["1", "2", "3", "4", "5", "6", "7", "8", "9"]) or any(
+            phrase in request_lower for phrase in [
+                "next week", "this week", "rest of the week", "weekend", "daily", "each day", 
+                "tomorrow", "today"  # These specify exact timeframes
+            ])
+        
+        # Check for vague quantity words that need clarification
+        has_vague_quantity = any(word in request_lower for word in [
+            "some", "a few", "several", "multiple"
+        ])
+        
+        # Check for date/time indicators (when to schedule)
+        has_timeframe = any(word in request_lower for word in [
+            "next", "this", "tomorrow", "today", "weekend", "rest of",
+            "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+            "week", "weekly", "days", "daily"
+        ])
+        
+        # Check for specific meal indicators
+        has_specific_meals = any(meal.lower() in request_lower for meal in available_meals) or not any(
+            word in request_lower for word in ["random", "some", "pick", "choose", "saved meals"]
+        )
+        
+        # Determine ambiguity level
+        missing_elements = []
+        
+        # If vague quantity without specific timeframe = ambiguous
+        if has_vague_quantity and not has_specific_quantity:
+            missing_elements.append("specific_quantity")
+        if not has_timeframe:
+            missing_elements.append("timeframe")
+            
+        # High ambiguity = vague quantity without specific count
+        is_highly_ambiguous = has_vague_quantity and not has_specific_quantity
+        
+        return {
+            "is_ambiguous": is_highly_ambiguous,
+            "missing": missing_elements,
+            "has_specific_quantity": has_specific_quantity,
+            "has_vague_quantity": has_vague_quantity,
+            "has_timeframe": has_timeframe
+        }
+
+    def _generate_clarification_response(self, ambiguity_info: dict, user_request: str) -> str:
+        """Generate helpful clarification questions"""
+        missing = ambiguity_info["missing"]
+        
+        clarifications = []
+        if "specific_quantity" in missing:
+            clarifications.append("how many meals would you like me to schedule")
+        if "timeframe" in missing:
+            clarifications.append("which days or time period you'd prefer")
+            
+        if len(clarifications) == 1:
+            return f"I'd be happy to help! Could you let me know {clarifications[0]}?"
+        else:
+            return f"I'd be happy to help! Could you let me know {' and '.join(clarifications)}?"
+
     async def _process_complex_request(self, message: ChatMessage, available_meals: List[str]) -> AIResponse:
         """Process complex multi-task scheduling requests"""
+        
+        # Check for ambiguity first
+        ambiguity_info = self._detect_ambiguity(message.content, available_meals)
+        
+        if ambiguity_info["is_ambiguous"]:
+            # Request clarification instead of guessing
+            clarification_msg = self._generate_clarification_response(ambiguity_info, message.content)
+            return AIResponse(
+                conversational_response=clarification_msg,
+                actions=[],
+                model_used="enhanced"
+            )
         
         # Parse the complex request
         batch_action = await self._parse_complex_request(message.content, available_meals)
