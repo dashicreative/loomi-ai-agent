@@ -3,7 +3,7 @@ from typing import Optional
 
 from models.ai_models import ChatMessage, ChatResponse, AIAction
 from services.llm_service import llm_service
-from ai_agents.meal_management_agent import MealManagementAgent
+from ai_agents.schedule_agent import ScheduleAgent
 
 router = APIRouter()
 
@@ -13,14 +13,14 @@ async def chat(message: ChatMessage):
     """
     Process a chat message from the iOS app.
     
-    Phase 1: Uses Meal Management Agent for scheduling requests.
+    Phase 1: Uses Schedule Agent with fuzzy matching for scheduling requests.
     """
     try:
-        # Initialize the Meal Management Agent
-        meal_agent = MealManagementAgent()
+        # Initialize the Schedule Agent with fuzzy matching
+        schedule_agent = ScheduleAgent(fuzzy_threshold=0.6)
         
         # Process the message with the agent
-        ai_response = await meal_agent.process(message)
+        ai_response = await schedule_agent.process(message)
         
         # Convert AIResponse to ChatResponse (iOS format)
         chat_response = ChatResponse(
