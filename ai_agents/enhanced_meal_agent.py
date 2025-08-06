@@ -199,7 +199,7 @@ Extract:
         # Default to complex for robust handling
         return "complex"
     
-    async def _parse_complex_request(self, user_request: str, available_meals: List[str]) -> BatchScheduleAction:
+    async def _parse_complex_request(self, user_request: str, available_meals: List[str]):
         """Parse complex multi-task scheduling requests"""
         try:
             # Build the enhanced prompt
@@ -223,11 +223,40 @@ Extract:
             return BatchScheduleAction(
                 tasks=tasks,
                 request_type=result_dict.get('request_type', 'unknown')
-            )
+            ), None
             
         except Exception as e:
+            # Try to get the helpful LLM response text before falling back
+            llm_response_text = None
+            try:
+                # Get the raw LLM response without JSON parsing
+                chain = self.enhanced_prompt | llm_service.claude
+                llm_response = await chain.ainvoke({
+                    "user_request": user_request,
+                    "today": date.today().isoformat(),
+                    "tomorrow": tomorrow,
+                    "available_meals": ", ".join(available_meals),
+                    "format_instructions": "Return a JSON object with 'tasks' array and 'request_type' string"
+                })
+                
+                # Extract the helpful response text
+                if hasattr(llm_response, 'content'):
+                    response_text = llm_response.content
+                elif isinstance(llm_response, str):
+                    response_text = llm_response
+                else:
+                    response_text = str(llm_response)
+                
+                # If LLM gives helpful text response, capture it
+                if "not in" in response_text.lower() or "available meals" in response_text.lower():
+                    llm_response_text = response_text
+                    
+            except:
+                pass
+            
             print(f"Complex parsing failed, using fallback: {e}")
-            return self._fallback_complex_parse(user_request, available_meals)
+            fallback_result = self._fallback_complex_parse(user_request, available_meals)
+            return fallback_result, llm_response_text
     
     def _fallback_complex_parse(self, user_request: str, available_meals: List[str]) -> BatchScheduleAction:
         """Fallback parsing for complex requests without LLM"""
@@ -629,10 +658,26 @@ Extract:
             )
         
         # Parse the complex request
-        batch_action = await self._parse_complex_request(message.content, available_meals)
+        parse_result = await self._parse_complex_request(message.content, available_meals)
+        
+        # Handle the new return format (batch_action, llm_response_text)
+        if isinstance(parse_result, tuple):
+            batch_action, llm_response_text = parse_result
+        else:
+            # Backwards compatibility
+            batch_action = parse_result
+            llm_response_text = None
         
         # Execute batch scheduling
         result = await self._execute_batch_schedule(batch_action, available_meals)
+        
+        # If execution failed but we have helpful LLM response, use that instead
+        if not result["success"] and llm_response_text:
+            return AIResponse(
+                conversational_response=llm_response_text,
+                actions=[],
+                model_used="enhanced"
+            )
         
         if result["success"]:
             # Create success response
