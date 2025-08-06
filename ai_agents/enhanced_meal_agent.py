@@ -156,8 +156,10 @@ Extract:
         complex_indicators = [
             " and ",  # "pizza and tacos"
             "next 5 days", "next 3 days", "next week",  # batch scheduling
-            "random", "pick some", "choose some",  # random selection
-            "breakfast for", "lunch for", "dinner for"  # batch meal types
+            "rest of the week", "this week", "the week",  # week-based scheduling
+            "random", "pick some", "choose some", "saved meals",  # random selection
+            "breakfast for", "lunch for", "dinner for",  # batch meal types
+            "dinners for", "meals for"  # plural meal planning
         ]
         
         for indicator in complex_indicators:
@@ -202,12 +204,26 @@ Extract:
         tasks = []
         
         # Detect batch day patterns
-        if "next 5 days" in request_lower:
-            dates = self._get_date_range(date.today() + timedelta(days=1), 5)
+        if "next 5 days" in request_lower or "rest of the week" in request_lower or "this week" in request_lower:
+            # Calculate dates based on pattern
+            if "rest of the week" in request_lower or "this week" in request_lower:
+                # Rest of the week = today through Sunday
+                today = date.today()
+                days_until_sunday = (6 - today.weekday()) % 7
+                if days_until_sunday == 0 and today.weekday() == 6:  # Today is Sunday
+                    days_until_sunday = 7
+                dates = self._get_date_range(today, days_until_sunday + 1)
+            else:
+                # Next 5 days
+                dates = self._get_date_range(date.today() + timedelta(days=1), 5)
+            
             meal_type = "breakfast" if "breakfast" in request_lower else "dinner"
+            if "lunch" in request_lower:
+                meal_type = "lunch"
             
             for target_date in dates:
-                if "random" in request_lower:
+                if "random" in request_lower or "saved meals" in request_lower or not any(meal.lower() in request_lower for meal in available_meals):
+                    # Use random selection if explicitly requested, mentions "saved meals", or no specific meal found
                     tasks.append(ScheduleTask(
                         meal_name=None,
                         target_date=target_date,
@@ -280,9 +296,10 @@ Extract:
             
             return BatchScheduleAction(tasks=tasks, request_type="random_selection")
         
-        # Default to single task
+        # Default to single task (fallback)
+        default_date = date.today().isoformat()
         return BatchScheduleAction(
-            tasks=[ScheduleTask(meal_name="Unknown", target_date=target_date, meal_type="dinner")],
+            tasks=[ScheduleTask(meal_name="Unknown", target_date=default_date, meal_type="dinner")],
             request_type="single"
         )
     
