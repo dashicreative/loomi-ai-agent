@@ -1,8 +1,15 @@
 """
-Schedule Agent - Enhanced with fuzzy matching for meal names
+Comprehensive Schedule Agent - Combines Multi-Task + All Enhanced Features
 
-Handles meal scheduling with fuzzy string matching to handle typos,
-case variations, and partial matches.
+This agent includes:
+- Multi-task consecutive processing
+- Advanced fuzzy matching
+- Natural date formatting
+- Smart occasion handling
+- Conflict detection and resolution
+- Clarification handling
+- User preferences integration
+- All prompt template enhancements
 """
 
 import asyncio
@@ -18,7 +25,7 @@ from models.ai_models import ChatMessage, AIResponse, AIAction, ActionType
 from storage.local_storage import LocalStorage
 
 
-# Pydantic models for structured outputs
+# Enhanced Pydantic models with all features
 class ScheduleMealParameters(BaseModel):
     meal_name: str
     date: str
@@ -47,10 +54,27 @@ class ScheduleAction(BaseModel):
     parameters: Dict[str, Any]
 
 
+class TaskAction(BaseModel):
+    task_number: int
+    meal_name: str
+    date: str
+    occasion: Optional[str] = None
+    servings: Optional[int] = Field(default=4)
+    notes: Optional[str] = None
+    original_text: str
+
+
 class AgentResponse(BaseModel):
-    status: str = Field(..., description="success, needs_clarification, or error")
+    status: str = Field(..., description="success, needs_clarification, partial_success, or error")
     conversational_response: str
     actions: Optional[List[ScheduleAction]] = Field(default_factory=list)
+    
+    # Multi-task fields
+    total_tasks: Optional[int] = None
+    completed_tasks: Optional[int] = None
+    failed_tasks: Optional[int] = None
+    
+    # Clarification fields
     clarification_type: Optional[str] = None
     pending_actions: Optional[List[ScheduleAction]] = None
     clarification_options: Optional[List[ClarificationOption]] = None
@@ -58,30 +82,40 @@ class AgentResponse(BaseModel):
     validation_errors: Optional[List[str]] = None
 
 
-class ScheduleAgent:
+class ComprehensiveScheduleAgent:
     """
-    Enhanced meal scheduling agent with fuzzy string matching for meal names
+    Comprehensive Schedule Agent with ALL enhanced features + multi-task support
     """
     
     def __init__(self, fuzzy_threshold: float = 0.6):
         self.storage = LocalStorage()
-        self.fuzzy_threshold = fuzzy_threshold  # Minimum similarity score (0.0 to 1.0)
+        self.fuzzy_threshold = fuzzy_threshold
         
-        # Enhanced prompt template with fuzzy matching guidance
+        # Comprehensive prompt template combining all features
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """# Meal Scheduling Sub-Agent Prompt Template
+            ("system", """# Comprehensive Meal Scheduling Agent - Multi-Task + Advanced Features
 
 ## System Role
-You are a specialized meal scheduling sub-agent within an AI meal planning app. Your primary responsibility is to understand meal scheduling requests and convert them into precise scheduling actions. You handle conversational clarifications when needed but do NOT handle recipe discovery - you focus exclusively on scheduling operations and related clarifications.
+You are an advanced meal scheduling agent that can handle both single and multiple scheduling requests with sophisticated clarification, conflict resolution, and fuzzy matching capabilities.
 
-## Your Capabilities
+## Multi-Task Processing
+When users request multiple tasks:
+1. Parse ALL individual tasks from the request
+2. Process them consecutively (one-by-one, not parallel)
+3. Handle each task with full advanced capabilities
+4. Provide comprehensive summary of all results
+
+## Your Advanced Capabilities
 - Schedule single or multiple meals to specific dates and meal occasions
 - Reschedule existing meals to new dates/occasions
 - Handle relative dates (today, tomorrow, Monday, next week, etc.)
-- Process batch scheduling requests
+- Process batch scheduling requests consecutively
 - Validate scheduling conflicts and constraints
 - Generate precise action parameters for the execution engine
 - **Handle meal name variations, typos, and fuzzy matches**
+- **Provide clarifications when needed**
+- **Detect and resolve scheduling conflicts**
+- **Support user preferences and serving sizes**
 
 ## Input Context
 Current context:
@@ -100,11 +134,14 @@ When fuzzy_matches is provided, it means the user's input didn't exactly match a
 ## Output Format
 You must respond with ONLY a JSON object in one of these formats:
 
-### Successful Scheduling (No clarification needed)
+### Successful Scheduling (Single or Multiple Tasks)
 ```json
 {{
   "status": "success",
   "conversational_response": "I've scheduled [meal details] for you! (I matched '[user_input]' to '[actual_meal_name]')",
+  "total_tasks": number,
+  "completed_tasks": number,
+  "failed_tasks": 0,
   "actions": [
     {{
       "type": "schedule_meal",
@@ -121,11 +158,24 @@ You must respond with ONLY a JSON object in one of these formats:
 }}
 ```
 
-### Needs Clarification (Multiple fuzzy matches or ambiguous)
+### Partial Success (Some Tasks Failed)
+```json
+{{
+  "status": "partial_success",
+  "conversational_response": "I scheduled [X] meals successfully, but had issues with [Y] tasks...",
+  "total_tasks": number,
+  "completed_tasks": number,
+  "failed_tasks": number,
+  "actions": [...successful actions...],
+  "validation_errors": ["errors for failed tasks"]
+}}
+```
+
+### Needs Clarification
 ```json
 {{
   "status": "needs_clarification",
-  "conversational_response": "I found a few meals that might match '[user_input]'. Did you mean: [list options]?",
+  "conversational_response": "I need clarification for some of your requests...",
   "clarification_type": "fuzzy_match_ambiguity|date_ambiguity|conflict_resolution|meal_not_found|serving_size",
   "pending_actions": [...],
   "clarification_options": [
@@ -160,7 +210,12 @@ You must respond with ONLY a JSON object in one of these formats:
 4. If meal has no default occasion, don't mention occasion in response
 
 ## Conflict Handling
-Check if date + occasion already has a scheduled meal. If so, note in conflicts array.
+Check if date + occasion already has a scheduled meal. If so, note in conflicts array and ask for resolution.
+
+## Multi-Task Examples
+- Single: "Schedule chicken for Tuesday" → 1 task
+- Multiple: "Schedule chicken for Tuesday and pasta for Wednesday" → 2 tasks
+- Complex: "Add chicken for breakfast today, pasta for lunch tomorrow, and salmon for Friday" → 3 tasks
 
 ## Critical Rules
 1. Always respond with valid JSON in the specified format
@@ -171,18 +226,16 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
 6. **When using fuzzy matches, acknowledge the match in your response**
 7. **Prefer exact matches over fuzzy matches when available**
 8. **If no occasion specified, set occasion to null - the system will use meal's default**
-9. **Use natural date language in responses: today, tomorrow, Monday, etc.**"""),
+9. **Use natural date language in responses: today, tomorrow, Monday, etc.**
+10. **For multiple tasks, process each one thoroughly with full capabilities**
+11. **Detect conflicts across all tasks and handle appropriately**"""),
             ("human", "{user_request}")
         ])
         
-        # JSON output parser
         self.output_parser = JsonOutputParser()
     
     def _fuzzy_match_meal_name(self, user_input: str, available_meals: List[str]) -> List[Tuple[str, float]]:
-        """
-        Find fuzzy matches for meal names using multiple strategies
-        Returns list of (meal_name, confidence_score) tuples sorted by confidence
-        """
+        """Find fuzzy matches for meal names using multiple strategies"""
         if not user_input or not available_meals:
             return []
         
@@ -199,7 +252,6 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
             
             # Strategy 2: Substring match (high priority)
             if user_input_lower in meal_name_lower or meal_name_lower in user_input_lower:
-                # Calculate overlap ratio
                 overlap = min(len(user_input_lower), len(meal_name_lower)) / max(len(user_input_lower), len(meal_name_lower))
                 matches.append((meal_name, 0.85 + (overlap * 0.1)))  # 0.85-0.95 range
                 continue
@@ -231,37 +283,6 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
         matches.sort(key=lambda x: x[1], reverse=True)
         return matches[:5]  # Return top 5 matches
     
-    def _get_next_weekday_date(self, weekday_name: str, from_date: date) -> str:
-        """Convert weekday name to next occurrence date"""
-        weekdays = {
-            'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
-            'friday': 4, 'saturday': 5, 'sunday': 6
-        }
-        
-        target_weekday = weekdays.get(weekday_name.lower())
-        if target_weekday is None:
-            return from_date.isoformat()
-        
-        days_ahead = target_weekday - from_date.weekday()
-        if days_ahead <= 0:  # Target day already happened this week
-            days_ahead += 7
-            
-        target_date = from_date + timedelta(days=days_ahead)
-        return target_date.isoformat()
-    
-    def _format_scheduled_meals(self, scheduled_meals) -> str:
-        """Format scheduled meals for the prompt"""
-        if not scheduled_meals:
-            return "No meals currently scheduled"
-        
-        formatted = []
-        for sm in scheduled_meals:
-            meal = self.storage.get_meal_by_id(str(sm.meal_id))
-            meal_name = meal.name if meal else "Unknown Meal"
-            formatted.append(f"- {sm.date}: {meal_name} ({sm.occasion})")
-        
-        return "\n".join(formatted)
-    
     def _format_date_naturally(self, target_date: date) -> str:
         """Convert date to natural language (today, tomorrow, Monday, etc.)"""
         today = date.today()
@@ -288,41 +309,18 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
                 # Use month and day for further dates
                 return target_date.strftime("%B %d")
     
-    def _get_meal_default_occasion(self, meal_name: str) -> Optional[str]:
-        """Get the default occasion for a meal"""
-        meals = self.storage.load_meals()
-        for meal in meals:
-            if meal.name.lower() == meal_name.lower():
-                if hasattr(meal.occasion, 'value'):
-                    return meal.occasion.value
-                else:
-                    return meal.occasion if meal.occasion else None
-        return None
-    
-    def _extract_meal_name_from_request(self, user_request: str) -> str:
-        """
-        Extract potential meal name from user request
-        This is a simple extraction - could be enhanced with NLP
-        """
-        # Remove common scheduling words to isolate meal name
-        scheduling_words = [
-            'schedule', 'add', 'put', 'plan', 'book', 'set',
-            'for', 'on', 'to', 'at', 'tomorrow', 'today',
-            'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
-            'next', 'this', 'breakfast', 'lunch', 'dinner', 'snack'
-        ]
+    def _format_scheduled_meals(self, scheduled_meals) -> str:
+        """Format scheduled meals for the prompt"""
+        if not scheduled_meals:
+            return "No meals currently scheduled"
         
-        words = user_request.lower().split()
-        meal_words = []
+        formatted = []
+        for sm in scheduled_meals:
+            meal = self.storage.get_meal_by_id(str(sm.meal_id))
+            meal_name = meal.name if meal else "Unknown Meal"
+            formatted.append(f"- {sm.date}: {meal_name} ({sm.occasion})")
         
-        for word in words:
-            # Remove punctuation
-            clean_word = ''.join(c for c in word if c.isalnum())
-            if clean_word and clean_word not in scheduling_words:
-                meal_words.append(clean_word)
-        
-        # Join remaining words - this is our best guess at the meal name
-        return ' '.join(meal_words) if meal_words else user_request
+        return "\n".join(formatted)
     
     def _format_fuzzy_matches(self, fuzzy_matches: List[Tuple[str, float]]) -> str:
         """Format fuzzy matches for the prompt"""
@@ -336,9 +334,35 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
         
         return "\n".join(formatted)
     
+    def _extract_potential_meal_names(self, text: str) -> List[str]:
+        """Extract potential meal names from the entire request for fuzzy matching"""
+        scheduling_words = {
+            'schedule', 'add', 'put', 'plan', 'book', 'set', 'for', 'on', 'at', 'and',
+            'today', 'tomorrow', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 
+            'saturday', 'sunday', 'next', 'this', 'breakfast', 'lunch', 'dinner', 'snack'
+        }
+        
+        words = text.lower().split()
+        potential_names = []
+        current_phrase = []
+        
+        for word in words:
+            clean_word = ''.join(c for c in word if c.isalnum())
+            if clean_word and clean_word not in scheduling_words:
+                current_phrase.append(clean_word)
+            else:
+                if current_phrase:
+                    potential_names.append(' '.join(current_phrase))
+                    current_phrase = []
+        
+        if current_phrase:
+            potential_names.append(' '.join(current_phrase))
+        
+        return potential_names
+    
     async def process(self, message: ChatMessage) -> AIResponse:
         """
-        Process a meal scheduling request with fuzzy matching
+        Process message with comprehensive capabilities and multi-task support
         """
         try:
             # Load current data
@@ -346,22 +370,29 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
             available_meals = [meal.name for meal in meals]
             scheduled_meals = self.storage.load_scheduled_meals()
             
-            # Extract potential meal name and find fuzzy matches
-            potential_meal_name = self._extract_meal_name_from_request(message.content)
-            fuzzy_matches = self._fuzzy_match_meal_name(potential_meal_name, available_meals)
+            # Get fuzzy matches for potential meal names in the request
+            potential_meal_names = self._extract_potential_meal_names(message.content)
+            all_fuzzy_matches = []
+            for potential_name in potential_meal_names:
+                matches = self._fuzzy_match_meal_name(potential_name, available_meals)
+                all_fuzzy_matches.extend(matches)
+            
+            # Remove duplicates and sort
+            unique_matches = list(set(all_fuzzy_matches))
+            unique_matches.sort(key=lambda x: x[1], reverse=True)
             
             # Format context
             user_preferences = message.user_context.get("preferences", {"default_servings": 4})
             
-            # Build the prompt with context and fuzzy matches
+            # Build the prompt with comprehensive context
             chain = self.prompt | llm_service.claude | self.output_parser
             
-            # Execute the chain
+            # Execute the chain with full context
             response_dict = await chain.ainvoke({
                 "user_request": message.content,
                 "current_date": date.today().isoformat(),
                 "available_meals": ", ".join(available_meals),
-                "fuzzy_matches": self._format_fuzzy_matches(fuzzy_matches),
+                "fuzzy_matches": self._format_fuzzy_matches(unique_matches[:10]),
                 "scheduled_meals": self._format_scheduled_meals(scheduled_meals),
                 "user_preferences": str(user_preferences)
             })
@@ -370,8 +401,8 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
             agent_response = AgentResponse(**response_dict)
             
             # Process based on status
-            if agent_response.status == "success":
-                # Execute the actions
+            if agent_response.status in ["success", "partial_success"]:
+                # Execute the actions consecutively
                 executed_actions = []
                 for action in agent_response.actions:
                     if action.type == "schedule_meal":
@@ -385,7 +416,7 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
                 return AIResponse(
                     conversational_response=agent_response.conversational_response,
                     actions=executed_actions,
-                    model_used="claude"
+                    model_used="comprehensive_agent"
                 )
             
             elif agent_response.status == "needs_clarification":
@@ -393,23 +424,23 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
                 return AIResponse(
                     conversational_response=agent_response.conversational_response,
                     actions=[],
-                    model_used="claude"
+                    model_used="comprehensive_agent"
                 )
             
             else:  # error
                 return AIResponse(
                     conversational_response=agent_response.conversational_response,
                     actions=[],
-                    model_used="claude"
+                    model_used="comprehensive_agent"
                 )
                 
         except Exception as e:
-            print(f"Agent processing error: {e}")
-            # Fallback to fuzzy matching process
+            print(f"Comprehensive agent processing error: {e}")
+            # Fallback to enhanced single-task processing
             return await self._fallback_process_with_fuzzy(message)
     
     async def _execute_schedule_action(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute the meal scheduling action with fuzzy matching"""
+        """Execute the meal scheduling action with comprehensive handling"""
         try:
             # Find the meal using fuzzy matching
             meals = self.storage.load_meals()
@@ -479,7 +510,9 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
                 "date": parameters["date"],
                 "natural_date": natural_date,
                 "meal_type": occasion_str,
-                "occasion_specified": bool(parameters.get("occasion"))  # Track if user specified occasion
+                "occasion_specified": bool(parameters.get("occasion")),
+                "servings": parameters.get("servings", 4),
+                "notes": parameters.get("notes")
             }
             
         except Exception as e:
@@ -489,20 +522,20 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
             }
     
     async def _fallback_process_with_fuzzy(self, message: ChatMessage) -> AIResponse:
-        """Enhanced fallback processing with fuzzy matching"""
+        """Enhanced fallback processing with fuzzy matching and natural dates"""
         try:
             meals = self.storage.load_meals()
             meal_names = [m.name for m in meals]
             
             # Extract potential meal name and find fuzzy matches
-            potential_meal_name = self._extract_meal_name_from_request(message.content)
+            potential_meal_name = self._extract_potential_meal_names(message.content)[0] if self._extract_potential_meal_names(message.content) else message.content
             fuzzy_matches = self._fuzzy_match_meal_name(potential_meal_name, meal_names)
             
             if not fuzzy_matches:
                 return AIResponse(
                     conversational_response=f"I couldn't find any meals similar to '{potential_meal_name}'. Available meals are: {', '.join(meal_names)}",
                     actions=[],
-                    model_used="fallback"
+                    model_used="comprehensive_fallback"
                 )
             
             # Use the best fuzzy match if confidence is good
@@ -513,13 +546,13 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
                 return AIResponse(
                     conversational_response=f"I'm not sure which meal you meant by '{potential_meal_name}'. Did you mean one of these: {', '.join(top_matches)}?",
                     actions=[],
-                    model_used="fallback"
+                    model_used="comprehensive_fallback"
                 )
             
             # High confidence, proceed with scheduling
             meal_name = best_match
             
-            # Simple date extraction (same as before)
+            # Simple date extraction
             target_date = date.today()
             content_lower = message.content.lower()
             
@@ -553,6 +586,7 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
                     response = f"✅ I've scheduled {meal_name} for {result['meal_type']} {result['natural_date']}!{confidence_msg}"
                 else:
                     response = f"✅ I've scheduled {meal_name} for {result['natural_date']}!{confidence_msg}"
+                
                 action = AIAction(
                     type=ActionType.SCHEDULE_MEAL,
                     parameters=result
@@ -560,53 +594,51 @@ Check if date + occasion already has a scheduled meal. If so, note in conflicts 
                 return AIResponse(
                     conversational_response=response,
                     actions=[action],
-                    model_used="fallback"
+                    model_used="comprehensive_fallback"
                 )
             else:
                 return AIResponse(
                     conversational_response=f"❌ Sorry, I couldn't schedule that meal: {result['error']}",
                     actions=[],
-                    model_used="fallback"
+                    model_used="comprehensive_fallback"
                 )
         
         except Exception as e:
             return AIResponse(
                 conversational_response=f"❌ An error occurred while processing your request: {str(e)}",
                 actions=[],
-                model_used="fallback"
+                model_used="comprehensive_fallback"
             )
 
 
-# Test function for fuzzy matching
-async def test_fuzzy_matching():
-    """Test the fuzzy matching capabilities"""
-    agent = ScheduleAgent(fuzzy_threshold=0.6)
+# Test function for comprehensive capabilities
+async def test_comprehensive_agent():
+    """Test the comprehensive agent with all capabilities"""
+    agent = ComprehensiveScheduleAgent(fuzzy_threshold=0.6)
     
-    # Simulate some saved meals
-    print("🧪 Testing Fuzzy Matching Capabilities")
-    print("=" * 50)
-    
-    # Test various typo scenarios
     test_cases = [
-        "Schedule chiken parmesan for Tuesday",  # Missing 'c'
-        "Add psta to Wednesday",                   # Missing 'a' 
-        "Schedule Chicken Parmasan for Thursday",  # Typo in 'parmesan'
-        "Put turkey bowel on Friday",             # Wrong word 'bowel' vs 'bowl'
-        "Schedule CHICKEN PARMESAN for Monday",   # Case variation
-        "Add chicken parm for Saturday",          # Shortened name
-        "Schedule completely wrong name for Sunday"  # No match
+        "Schedule storage test meal for today",  # Single task
+        "Schedule storage test meal today and api test meal tomorrow",  # Multi-task
+        "Add storge test meal for breakfast today and psta for lunch tomorrow",  # Multi-task with typos and occasions
+        "Schedule nonexistent meal for today",  # Error handling
+        "Schedule chicken parmesan today and pasta tomorrow",  # Fuzzy matching across multiple tasks
     ]
+    
+    print("🧪 Testing Comprehensive Schedule Agent - All Features")
+    print("=" * 60)
     
     for test_msg in test_cases:
         print(f"\n🔍 Test: '{test_msg}'")
-        message = ChatMessage(content=test_msg, user_context={})
+        message = ChatMessage(content=test_msg, user_context={"preferences": {"default_servings": 4}})
         
         result = await agent.process(message)
         print(f"📝 Response: {result.conversational_response}")
         print(f"⚡ Actions: {len(result.actions)}")
         if result.actions:
-            print(f"   Scheduled: {result.actions[0].parameters.get('meal_name', 'N/A')}")
+            for i, action in enumerate(result.actions):
+                params = action.parameters
+                print(f"   {i+1}. {params.get('meal_name', 'N/A')} on {params.get('natural_date', 'N/A')}")
 
 
 if __name__ == "__main__":
-    asyncio.run(test_fuzzy_matching())
+    asyncio.run(test_comprehensive_agent())

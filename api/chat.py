@@ -3,7 +3,7 @@ from typing import Optional
 
 from models.ai_models import ChatMessage, ChatResponse, AIAction
 from services.llm_service import llm_service
-from ai_agents.schedule_agent import ScheduleAgent
+from ai_agents.comprehensive_schedule_agent import ComprehensiveScheduleAgent
 
 router = APIRouter()
 
@@ -13,11 +13,12 @@ async def chat(message: ChatMessage):
     """
     Process a chat message from the iOS app.
     
-    Phase 1: Uses Schedule Agent with fuzzy matching for scheduling requests.
+    Enhanced: Uses Comprehensive Schedule Agent with multi-task support, 
+    fuzzy matching, natural dates, and advanced capabilities.
     """
     try:
-        # Initialize the Schedule Agent with fuzzy matching
-        schedule_agent = ScheduleAgent(fuzzy_threshold=0.6)
+        # Initialize the Comprehensive Schedule Agent
+        schedule_agent = ComprehensiveScheduleAgent(fuzzy_threshold=0.6)
         
         # Process the message with the agent
         ai_response = await schedule_agent.process(message)
