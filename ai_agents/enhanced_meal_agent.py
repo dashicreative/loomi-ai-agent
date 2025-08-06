@@ -157,7 +157,7 @@ Extract:
             " and ",  # "pizza and tacos"
             "next 5 days", "next 3 days", "next week",  # batch scheduling
             "rest of the week", "this week", "the week",  # week-based scheduling
-            "random", "pick some", "choose some", "saved meals",  # random selection
+            "random", "pick", "choose", "select", "saved meals",  # random selection and clarification triggers
             "breakfast for", "lunch for", "dinner for",  # batch meal types
             "dinners for", "meals for"  # plural meal planning
         ]
