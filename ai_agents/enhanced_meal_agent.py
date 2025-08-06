@@ -148,25 +148,56 @@ Extract:
         count = min(count, len(available_meals))
         return random.sample(available_meals, count)
     
-    async def _detect_request_complexity(self, user_request: str) -> str:
-        """Determine if this is a simple or complex request"""
+    async def _detect_request_complexity(self, user_request: str, available_meals: List[str]) -> str:
+        """
+        Determine if this is a simple or complex request
+        
+        Simple requests have:
+        - A specific meal name from saved meals
+        - Basic scheduling commands (schedule, reschedule)  
+        - Clear date/time specification
+        - Single action intent
+        
+        Everything else defaults to complex for robust handling
+        """
         request_lower = user_request.lower()
         
-        # Complex patterns
-        complex_indicators = [
-            " and ",  # "pizza and tacos"
-            "next 5 days", "next 3 days", "next week",  # batch scheduling
-            "rest of the week", "this week", "the week",  # week-based scheduling
-            "random", "pick", "choose", "select", "saved meals",  # random selection and clarification triggers
-            "breakfast for", "lunch for", "dinner for",  # batch meal types
-            "dinners for", "meals for"  # plural meal planning
+        # Check for simple request criteria
+        has_specific_meal = any(meal.lower() in request_lower for meal in available_meals)
+        has_basic_command = any(cmd in request_lower for cmd in ["schedule", "reschedule", "add"])
+        has_clear_timeframe = any(time in request_lower for time in [
+            "today", "tomorrow", "tonight",
+            "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+            "next monday", "next tuesday", "next wednesday", "next thursday", 
+            "next friday", "next saturday", "next sunday"
+        ])
+        
+        # Simple request indicators
+        simple_indicators = [
+            # Single meal scheduling patterns
+            has_specific_meal and has_basic_command and has_clear_timeframe,
+            # Very clear single-action patterns
+            "schedule" in request_lower and has_specific_meal and ("today" in request_lower or "tomorrow" in request_lower),
         ]
         
-        for indicator in complex_indicators:
-            if indicator in request_lower:
-                return "complex"
+        # If it clearly matches simple patterns, classify as simple
+        if any(simple_indicators):
+            # But exclude if it has complexity markers
+            complexity_markers = [
+                " and ",  # multiple items
+                "pick", "choose", "select", "random",  # ambiguous selection
+                "some", "a few", "several", "multiple",  # vague quantities
+                "next 5 days", "next week", "rest of week", "this week",  # batch operations
+                "meals for", "dinners for", "breakfasts for"  # plural operations
+            ]
+            
+            has_complexity_markers = any(marker in request_lower for marker in complexity_markers)
+            
+            if not has_complexity_markers:
+                return "simple"
         
-        return "simple"
+        # Default to complex for robust handling
+        return "complex"
     
     async def _parse_complex_request(self, user_request: str, available_meals: List[str]) -> BatchScheduleAction:
         """Parse complex multi-task scheduling requests"""
@@ -414,7 +445,7 @@ Extract:
                 )
             
             # Detect request complexity
-            complexity = await self._detect_request_complexity(message.content)
+            complexity = await self._detect_request_complexity(message.content, available_meals)
             
             if complexity == "simple":
                 # Use existing simple logic for basic requests
