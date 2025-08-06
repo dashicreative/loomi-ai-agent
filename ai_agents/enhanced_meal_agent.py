@@ -386,11 +386,79 @@ Extract:
             )
     
     async def _process_simple_request(self, message: ChatMessage, available_meals: List[str]) -> AIResponse:
-        """Process simple single-meal scheduling requests"""
-        # Import and use existing simple agent logic here
-        from ai_agents.meal_management_agent import MealManagementAgent
-        simple_agent = MealManagementAgent()
-        return await simple_agent.process(message)
+        """Process simple single-meal scheduling requests directly"""
+        try:
+            # Use the existing fallback logic for simple requests
+            meal_name = None
+            for meal in available_meals:
+                if meal.lower() in message.content.lower():
+                    meal_name = meal
+                    break
+            
+            if not meal_name:
+                return AIResponse(
+                    conversational_response="I couldn't find that meal in your saved meals. Please try with one of your saved meals.",
+                    actions=[],
+                    model_used="enhanced"
+                )
+            
+            # Simple date extraction
+            target_date = date.today()
+            content_lower = message.content.lower()
+            
+            if "tomorrow" in content_lower:
+                target_date = date.today() + timedelta(days=1)
+            elif "next wednesday" in content_lower:
+                target_date = date.fromisoformat(self._get_next_weekday_date("wednesday", date.today()))
+            elif "tuesday" in content_lower:
+                target_date = date.fromisoformat(self._get_next_weekday_date("tuesday", date.today()))
+            elif "monday" in content_lower:
+                target_date = date.fromisoformat(self._get_next_weekday_date("monday", date.today()))
+            elif "thursday" in content_lower:
+                target_date = date.fromisoformat(self._get_next_weekday_date("thursday", date.today()))
+            elif "friday" in content_lower:
+                target_date = date.fromisoformat(self._get_next_weekday_date("friday", date.today()))
+            elif "saturday" in content_lower:
+                target_date = date.fromisoformat(self._get_next_weekday_date("saturday", date.today()))
+            elif "sunday" in content_lower:
+                target_date = date.fromisoformat(self._get_next_weekday_date("sunday", date.today()))
+            
+            # Execute the scheduling using existing batch logic
+            task = ScheduleTask(
+                meal_name=meal_name,
+                target_date=target_date.isoformat(),
+                meal_type="dinner",
+                is_random=False
+            )
+            batch_action = BatchScheduleAction(tasks=[task], request_type="single")
+            batch_result = await self._execute_batch_schedule(batch_action, available_meals)
+            
+            if batch_result["success"] and batch_result["schedules"]:
+                schedule_result = batch_result["schedules"][0]
+                response = f"✅ I've scheduled {schedule_result['meal_name']} for {schedule_result['meal_type']} on {schedule_result['date']}!"
+                action = AIAction(
+                    type=ActionType.SCHEDULE_MEAL,
+                    parameters=schedule_result
+                )
+                return AIResponse(
+                    conversational_response=response,
+                    actions=[action],
+                    model_used="enhanced"
+                )
+            else:
+                error_msg = batch_result["errors"][0] if batch_result["errors"] else "Unknown error"
+                return AIResponse(
+                    conversational_response=f"❌ Sorry, I couldn't schedule that meal: {error_msg}",
+                    actions=[],
+                    model_used="enhanced"
+                )
+                
+        except Exception as e:
+            return AIResponse(
+                conversational_response=f"❌ I encountered an error: {str(e)}",
+                actions=[],
+                model_used="enhanced"
+            )
     
     async def _process_complex_request(self, message: ChatMessage, available_meals: List[str]) -> AIResponse:
         """Process complex multi-task scheduling requests"""
