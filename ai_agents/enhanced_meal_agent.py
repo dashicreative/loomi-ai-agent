@@ -57,6 +57,7 @@ class EnhancedMealAgent:
 Current context:
 - Today is {today}
 - Available meals: {available_meals}
+- Current Shopping Cart: {shopping_cart}
 
 IMPORTANT: If a requested meal is not available, respond with a brief, helpful message:
 - Don't list all available meals (overwhelming for users)
