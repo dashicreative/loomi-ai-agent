@@ -7,13 +7,10 @@ This modular agent handles complex meal scheduling requests with:
 - Random selection: "Pick some meals at random for Friday"
 - Smart clarification: Asks for help only when truly ambiguous
 
-Now available in two versions:
-- EnhancedMealAgent: Original with direct function calls
-- ToolBasedMealAgent: Tool-based architecture following AI SDK patterns
+Uses a modular architecture with tools for better maintainability and extensibility.
 """
 
 from .agent import EnhancedMealAgent
-from .tool_agent import ToolBasedMealAgent
 from .core.complexity_detector import ComplexityDetector
 from .parsers.parser_models import ScheduleTask, BatchScheduleAction
 from .exceptions.meal_exceptions import (
@@ -28,7 +25,6 @@ from .tools import ToolRegistry, ToolOrchestrator
 # Public API - what external code imports
 __all__ = [
     'EnhancedMealAgent',
-    'ToolBasedMealAgent',
     'ScheduleTask', 
     'BatchScheduleAction',
     'ComplexityDetector',
@@ -42,4 +38,4 @@ __all__ = [
 ]
 
 # Version info
-__version__ = "2.0.0"  # Bumped for tool-based architecture
+__version__ = "2.0.0"  # Modular architecture with tools

@@ -1,5 +1,5 @@
 """
-Complex Processor - Handles multi-task, batch, and ambiguous requests
+Complex Processor - Handles multi-task, batch, and ambiguous requests using tools
 """
 
 from typing import List
@@ -9,17 +9,19 @@ from storage.local_storage import LocalStorage
 from ..core.ambiguity_detector import AmbiguityDetector
 from ..parsers.llm_parser import LLMParser
 from ..parsers.fallback_parser import FallbackParser
+from ..tools.tool_orchestrator import ToolOrchestrator
 from .batch_executor import BatchExecutor
 from ..utils.response_utils import ResponseBuilder
 
 
 class ComplexProcessor:
     """
-    Processes complex scheduling requests
+    Processes complex scheduling requests using tools
     """
     
     def __init__(self, storage: LocalStorage):
         self.storage = storage
+        self.orchestrator = ToolOrchestrator(storage)
         self.ambiguity_detector = AmbiguityDetector()
         self.llm_parser = LLMParser()
         self.fallback_parser = FallbackParser()
@@ -32,7 +34,7 @@ class ComplexProcessor:
         available_meals: List[str]
     ) -> AIResponse:
         """
-        Process complex multi-task scheduling requests
+        Process complex multi-task scheduling requests using tools
         
         Args:
             message: The user's message
@@ -78,7 +80,7 @@ class ComplexProcessor:
                 message.content, available_meals
             )
         
-        # Execute batch scheduling
+        # Execute batch scheduling using tools
         result = await self.batch_executor.execute_batch_schedule(batch_action, available_meals)
         
         # If execution failed but we have helpful LLM response, use that instead
@@ -145,15 +147,23 @@ class ComplexProcessor:
             meal_not_found_errors = [e for e in result["errors"] if "not found" in e.get("reason", "")]
             
             if meal_not_found_errors:
-                # Extract meal names and suggest alternatives
-                unavailable_meals = [e.get("meal_name", "Unknown") for e in meal_not_found_errors[:2]]
-                error_msg = f"I don't have {' or '.join(unavailable_meals)} available. "
+                # Use suggestions from tools if available
+                first_error = meal_not_found_errors[0]
+                unavailable_meal = first_error.get("meal_name", "Unknown")
+                suggestions = first_error.get("suggestions", [])
                 
-                # Get available meals and suggest a few
-                available_meals = self.storage.load_meals()
-                if available_meals:
-                    suggestions = [meal.name for meal in available_meals[:3]]
-                    error_msg += f"How about {', '.join(suggestions[:-1])} or {suggestions[-1]} instead?"
+                error_msg = f"I don't have {unavailable_meal} available. "
+                if suggestions:
+                    if len(suggestions) > 1:
+                        error_msg += f"How about {', '.join(suggestions[:-1])} or {suggestions[-1]} instead?"
+                    else:
+                        error_msg += f"How about {suggestions[0]} instead?"
+                else:
+                    # Fall back to loading meals for suggestions
+                    meal_names, _ = self.orchestrator.get_available_meals()
+                    if meal_names:
+                        suggestions = meal_names[:3]
+                        error_msg += f"How about {', '.join(suggestions[:-1])} or {suggestions[-1]} instead?"
             else:
                 # Other types of errors
                 error_reasons = [e.get("reason", "Unknown error") for e in result["errors"][:3]]

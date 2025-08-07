@@ -2,14 +2,9 @@
 
 This is a modular implementation of the Enhanced Meal Agent, broken down into smaller, focused components following SDK best practices.
 
-## 🆕 Tool-Based Architecture Available!
+## Tool-Based Architecture
 
-We now offer two versions of the agent:
-
-1. **EnhancedMealAgent** - Original implementation with direct function calls
-2. **ToolBasedMealAgent** - New tool-based architecture following AI SDK patterns (OpenAI, LangChain)
-
-See [TOOLS_ARCHITECTURE.md](TOOLS_ARCHITECTURE.md) for details on the tool-based approach.
+The Enhanced Meal Agent uses a modular, tool-based architecture following AI SDK patterns (similar to OpenAI and LangChain). This provides better separation of concerns and easier extensibility.
 
 ## Architecture Overview
 
@@ -24,11 +19,15 @@ meal_scheduling_agent/
 │   ├── fallback_parser.py     # Rule-based fallback
 │   └── parser_models.py       # Pydantic data models
 ├── processors/                 # Request processing
-│   ├── simple_processor.py    # Direct scheduling
-│   ├── complex_processor.py   # Multi-task handling
-│   └── batch_executor.py      # Execute operations
+│   ├── simple_processor.py    # Single-meal scheduling
+│   ├── complex_processor.py   # Multi-task handling  
+│   └── batch_executor.py      # Batch operations
 ├── prompts/                    # Prompt management
-│   └── templates.py           # LangChain templates
+│   └── templates.py           # LLM prompt templates
+├── tools/                      # Tool-based operations
+│   ├── production_tools.py    # Production-ready tools
+│   ├── tool_registry.py       # Tool management
+│   └── tool_orchestrator.py   # Tool execution
 ├── utils/                      # Utilities
 │   ├── date_utils.py          # Date parsing
 │   ├── meal_utils.py          # Meal selection
@@ -60,7 +59,12 @@ The main orchestrator that:
 - **ComplexProcessor**: Manages multi-task, batch, and ambiguous requests
 - **BatchExecutor**: Executes multiple scheduling operations
 
-### 5. **Utilities** (`utils/`)
+### 5. **Tools** (`tools/`)
+- **ProductionTools**: 8 specialized tools for meal operations
+- **ToolRegistry**: Manages and provides access to all tools
+- **ToolOrchestrator**: Executes tools and handles batch operations
+
+### 6. **Utilities** (`utils/`)
 - **DateUtils**: Parse relative dates ("tomorrow", "next Friday")
 - **MealUtils**: Random selection, fuzzy matching
 - **ResponseBuilder**: Create consistent AIResponse objects

@@ -1,5 +1,5 @@
 """
-Simple Processor - Handles straightforward single-meal requests
+Simple Processor - Handles straightforward single-meal requests using tools
 """
 
 from typing import List
@@ -8,19 +8,19 @@ from datetime import date, timedelta
 from models.ai_models import ChatMessage, AIResponse, AIAction, ActionType
 from storage.local_storage import LocalStorage
 from ..parsers.parser_models import ScheduleTask, BatchScheduleAction
-from ..utils.date_utils import DateUtils
+from ..tools.tool_orchestrator import ToolOrchestrator
 from ..utils.response_utils import ResponseBuilder
 from .batch_executor import BatchExecutor
 
 
 class SimpleProcessor:
     """
-    Processes simple scheduling requests
+    Processes simple scheduling requests using tools
     """
     
     def __init__(self, storage: LocalStorage):
         self.storage = storage
-        self.date_utils = DateUtils()
+        self.orchestrator = ToolOrchestrator(storage)
         self.response_builder = ResponseBuilder()
         self.batch_executor = BatchExecutor(storage)
     
@@ -30,7 +30,7 @@ class SimpleProcessor:
         available_meals: List[str]
     ) -> AIResponse:
         """
-        Process simple single-meal scheduling requests directly
+        Process simple single-meal scheduling requests using tools
         
         Args:
             message: The user's message
@@ -54,16 +54,16 @@ class SimpleProcessor:
                     model_used="enhanced_meal_agent"
                 )
             
-            # Extract date from request
-            target_date = self._extract_simple_date(message.content)
+            # Extract date from request using tools
+            target_date = await self._extract_simple_date(message.content)
             
-            # Determine meal type
-            meal_type = self._extract_meal_type(message.content)
+            # Extract meal type using tools
+            meal_type = await self.orchestrator.extract_meal_type(message.content)
             
             # Execute the scheduling using batch logic for consistency
             task = ScheduleTask(
                 meal_name=meal_name,
-                target_date=target_date.isoformat(),
+                target_date=target_date,
                 meal_type=meal_type,
                 is_random=False
             )
@@ -98,59 +98,40 @@ class SimpleProcessor:
         except Exception as e:
             return self.response_builder.unexpected_error(str(e))
     
-    def _extract_simple_date(self, content: str) -> date:
+    async def _extract_simple_date(self, content: str) -> str:
         """
-        Extract date from simple request
+        Extract date from simple request using tools
         
         Args:
             content: User request content
             
         Returns:
-            Extracted date (defaults to today)
+            ISO formatted date string
         """
         content_lower = content.lower()
         
-        # Check for tomorrow first
+        # Try common patterns
         if "tomorrow" in content_lower:
-            return date.today() + timedelta(days=1)
+            result = await self.orchestrator.parse_date_string("tomorrow")
+            if result:
+                return result
         
-        # Check for "next" weekday patterns
+        # Check for weekday patterns
         weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
         
+        # Check for "next" weekday patterns
         for weekday in weekdays:
             if f"next {weekday}" in content_lower:
-                iso_date = self.date_utils.get_next_weekday_date(weekday, date.today())
-                return date.fromisoformat(iso_date)
+                result = await self.orchestrator.parse_date_string(f"next {weekday}")
+                if result:
+                    return result
         
         # Check for regular weekday patterns
         for weekday in weekdays:
             if weekday in content_lower:
-                iso_date = self.date_utils.get_next_weekday_date(weekday, date.today())
-                return date.fromisoformat(iso_date)
+                result = await self.orchestrator.parse_date_string(weekday)
+                if result:
+                    return result
         
         # Default to today
-        return date.today()
-    
-    def _extract_meal_type(self, content: str) -> str:
-        """
-        Extract meal type from request
-        
-        Args:
-            content: User request content
-            
-        Returns:
-            Meal type (defaults to dinner)
-        """
-        content_lower = content.lower()
-        
-        if "breakfast" in content_lower:
-            return "breakfast"
-        elif "lunch" in content_lower:
-            return "lunch"
-        elif "dinner" in content_lower:
-            return "dinner"
-        elif "snack" in content_lower:
-            return "snack"
-        else:
-            # Default to dinner
-            return "dinner"
+        return date.today().isoformat()
