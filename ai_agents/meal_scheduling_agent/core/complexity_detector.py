@@ -29,7 +29,8 @@ class ComplexityDetector:
             "pick", "choose", "select", "random",  # ambiguous selection
             "some", "a few", "several", "multiple",  # vague quantities
             "next 5 days", "next week", "rest of week", "this week",  # batch operations
-            "meals for", "dinners for", "breakfasts for"  # plural operations
+            "meals for", "dinners for", "breakfasts for",  # plural operations
+            "clear", "remove all", "delete all", "unschedule"  # clear operations
         ]
     
     async def detect(self, user_request: str, available_meals: List[str]) -> str:

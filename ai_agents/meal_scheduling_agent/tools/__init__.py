@@ -12,6 +12,7 @@ from .production_tools import (
     GetDateRangeTool,
     SuggestAlternativeMealsTool,
     ExtractMealTypeTool,
+    ClearScheduleTool,
     ToolRegistry
 )
 from .tool_orchestrator import ToolOrchestrator
@@ -26,6 +27,7 @@ __all__ = [
     'GetDateRangeTool',
     'SuggestAlternativeMealsTool',
     'ExtractMealTypeTool',
+    'ClearScheduleTool',
     'ToolRegistry',
     'ToolOrchestrator'
 ]

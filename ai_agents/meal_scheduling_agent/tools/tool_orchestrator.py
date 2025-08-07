@@ -225,3 +225,25 @@ class ToolOrchestrator:
             "schedules": successful_schedules,
             "errors": errors
         }
+    
+    async def clear_schedule(
+        self,
+        date_range: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Clear scheduled meals using the clear schedule tool"""
+        clear_tool = self.tools.get_tool("clear_schedule")
+        
+        if not clear_tool:
+            return {
+                "success": False,
+                "error": "Clear schedule tool not available",
+                "cleared_count": 0
+            }
+        
+        return await clear_tool.execute(
+            date_range=date_range,
+            start_date=start_date,
+            end_date=end_date
+        )

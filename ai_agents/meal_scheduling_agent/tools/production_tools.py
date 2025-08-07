@@ -5,7 +5,7 @@ These replace direct function calls with standardized tool interfaces.
 """
 
 from typing import List, Dict, Optional, Any, Tuple
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from uuid import uuid4
 import random
 from abc import ABC, abstractmethod
@@ -371,6 +371,55 @@ class ExtractMealTypeTool(BaseTool):
 
 
 # Tool Registry
+class ClearScheduleTool(BaseTool):
+    """Clear scheduled meals for a date range"""
+    
+    def __init__(self, storage: LocalStorage):
+        super().__init__(
+            name="clear_schedule",
+            description="Clear scheduled meals for a specified date range (week, month, or custom)"
+        )
+        self.storage = storage
+    
+    async def execute(
+        self,
+        date_range: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Clear scheduled meals"""
+        try:
+            # Convert string dates to date objects if provided
+            start_date_obj = None
+            end_date_obj = None
+            
+            if start_date:
+                start_date_obj = datetime.fromisoformat(start_date).date()
+            if end_date:
+                end_date_obj = datetime.fromisoformat(end_date).date()
+            
+            # Clear schedule
+            cleared_count = self.storage.clear_schedule(
+                date_range=date_range,
+                start_date=start_date_obj,
+                end_date=end_date_obj
+            )
+            
+            return {
+                "success": True,
+                "cleared_count": cleared_count,
+                "date_range": date_range or "custom",
+                "message": f"Cleared {cleared_count} scheduled meals"
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "cleared_count": 0
+            }
+
+
 class ToolRegistry:
     """Registry of all available tools"""
     
@@ -388,7 +437,8 @@ class ToolRegistry:
             "parse_date": ParseDateTool(),
             "get_date_range": GetDateRangeTool(),
             "suggest_alternatives": SuggestAlternativeMealsTool(),
-            "extract_meal_type": ExtractMealTypeTool()
+            "extract_meal_type": ExtractMealTypeTool(),
+            "clear_schedule": ClearScheduleTool(self.storage)
         }
     
     def get_tool(self, name: str) -> Optional[BaseTool]:

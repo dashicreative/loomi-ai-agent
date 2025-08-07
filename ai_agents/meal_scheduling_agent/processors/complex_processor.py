@@ -43,7 +43,12 @@ class ComplexProcessor:
         Returns:
             AIResponse with the result
         """
-        # Check for ambiguity first
+        # Check for clear schedule requests first
+        request_lower = message.content.lower()
+        if any(keyword in request_lower for keyword in ["clear", "remove all", "delete all", "unschedule"]):
+            return await self._handle_clear_schedule(message)
+        
+        # Check for ambiguity
         ambiguity_info = self.ambiguity_detector.detect_ambiguity(
             message.content, available_meals
         )
@@ -174,3 +179,50 @@ class ComplexProcessor:
             actions=[],
             model_used="enhanced_meal_agent"
         )
+    
+    async def _handle_clear_schedule(self, message: ChatMessage) -> AIResponse:
+        """Handle clear schedule requests"""
+        request_lower = message.content.lower()
+        
+        # Determine date range
+        date_range = None
+        if "week" in request_lower or "this week" in request_lower:
+            date_range = "week"
+        elif "month" in request_lower or "this month" in request_lower:
+            date_range = "month"
+        elif "all" in request_lower or "everything" in request_lower:
+            date_range = "all"
+        else:
+            # Default to week if not specified
+            date_range = "week"
+        
+        # Execute clear operation
+        result = await self.orchestrator.clear_schedule(date_range=date_range)
+        
+        if result["success"]:
+            cleared_count = result["cleared_count"]
+            
+            if cleared_count == 0:
+                response = "Your schedule is already clear!"
+            elif cleared_count == 1:
+                response = "I've cleared 1 scheduled meal."
+            else:
+                time_phrase = {
+                    "week": "for this week",
+                    "month": "for this month",
+                    "all": ""
+                }.get(date_range, "for this week")
+                
+                response = f"I've cleared {cleared_count} scheduled meals {time_phrase}."
+            
+            return AIResponse(
+                conversational_response=response.strip(),
+                actions=[],
+                model_used="enhanced_meal_agent"
+            )
+        else:
+            return AIResponse(
+                conversational_response=f"Sorry, I couldn't clear your schedule: {result.get('error', 'Unknown error')}",
+                actions=[],
+                model_used="enhanced_meal_agent"
+            )
