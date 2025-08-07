@@ -12,6 +12,21 @@ class DateUtils:
     """
     
     @staticmethod
+    def get_tomorrow() -> str:
+        """Get tomorrow's date in ISO format"""
+        return (date.today() + timedelta(days=1)).isoformat()
+    
+    @staticmethod
+    def get_next_weekday(weekday_name: str) -> str:
+        """Get the next occurrence of a weekday (e.g., 'next monday')"""
+        return DateUtils.get_next_weekday_date(weekday_name, date.today() + timedelta(days=7))
+    
+    @staticmethod  
+    def get_upcoming_weekday(weekday_name: str) -> str:
+        """Get the upcoming occurrence of a weekday (could be today if it matches)"""
+        return DateUtils.get_next_weekday_date(weekday_name, date.today())
+    
+    @staticmethod
     def get_date_range(start_date: date, num_days: int) -> List[str]:
         """
         Generate a list of consecutive dates starting from start_date

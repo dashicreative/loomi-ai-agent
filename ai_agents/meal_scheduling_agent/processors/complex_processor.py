@@ -130,11 +130,15 @@ class ComplexProcessor:
                     response += f"\n• {error['meal_name']}: {error['reason']}"
         
         # Create AI actions
+        # For batch operations, we don't need individual actions
+        # The summary message is sufficient for user experience
         actions = []
-        for schedule in schedules:
+        
+        # Only include actions if it's a single schedule (for backward compatibility)
+        if scheduled_count == 1:
             actions.append(AIAction(
                 type=ActionType.SCHEDULE_MEAL,
-                parameters=schedule
+                parameters=schedules[0]
             ))
         
         return AIResponse(
