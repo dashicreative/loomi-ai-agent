@@ -3,7 +3,7 @@ from typing import Optional
 
 from models.ai_models import ChatMessage, ChatResponse, AIAction
 from services.llm_service import llm_service
-from ai_agents.enhanced_meal_agent import EnhancedMealAgent
+from ai_agents.migration_agent import migration_agent
 
 router = APIRouter()
 
@@ -13,15 +13,12 @@ async def chat(message: ChatMessage):
     """
     Process a chat message from the iOS app.
     
-    Enhanced: Uses Enhanced Meal Agent with multi-task support,
-    batch scheduling, random meal selection, and complex request handling.
+    Uses Migration Agent to support gradual transition from
+    Enhanced Agent to LangChain Agent with fallback support.
     """
     try:
-        # Initialize the Enhanced Meal Agent
-        enhanced_agent = EnhancedMealAgent()
-        
-        # Process the message with the agent
-        ai_response = await enhanced_agent.process(message)
+        # Use migration agent for gradual transition
+        ai_response = await migration_agent.process(message)
         
         # Convert AIResponse to ChatResponse (iOS format)
         chat_response = ChatResponse(
@@ -40,6 +37,12 @@ async def chat(message: ChatMessage):
             model_used="error"
         )
         return error_response
+
+
+@router.get("/status")
+async def agent_status():
+    """Get current agent migration status"""
+    return migration_agent.get_agent_status()
 
 
 @router.get("/test")
