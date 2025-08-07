@@ -3,7 +3,7 @@ from typing import Optional
 
 from models.ai_models import ChatMessage, ChatResponse, AIAction
 from services.llm_service import llm_service
-from ai_agents.enhanced_meal_agent import EnhancedMealAgent
+from ai_agents.meal_scheduling_agent import EnhancedMealAgent
 
 router = APIRouter()
 
