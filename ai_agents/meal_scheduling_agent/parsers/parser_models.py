@@ -3,7 +3,7 @@ Parser Models - Pydantic models for structured parsing
 """
 
 from typing import List, Optional, Literal
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, model_validator
 from datetime import date
 
 
@@ -28,13 +28,12 @@ class ScheduleTask(BaseModel):
         except ValueError:
             raise ValueError(f"Invalid date format: {v}. Expected YYYY-MM-DD")
     
-    @validator('meal_name')
-    def validate_meal_name_or_random(cls, v, values):
+    @model_validator(mode='after')
+    def validate_meal_name_or_random(self):
         """Ensure either meal_name is provided or is_random is True"""
-        is_random = values.get('is_random', False)
-        if not v and not is_random:
+        if not self.meal_name and not self.is_random:
             raise ValueError("Either meal_name must be provided or is_random must be True")
-        return v
+        return self
 
 
 class BatchScheduleAction(BaseModel):

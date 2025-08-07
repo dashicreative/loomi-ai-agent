@@ -35,8 +35,49 @@ class FallbackParser:
         request_lower = user_request.lower()
         tasks = []
         
+        # Detect "fill schedule" patterns
+        if "fill" in request_lower and ("schedule" in request_lower or "week" in request_lower):
+            # Parse what meal types to fill
+            meal_types_to_fill = []
+            
+            # Check for specific meal types mentioned
+            if "breakfast" in request_lower:
+                meal_types_to_fill.append("breakfast")
+            if "lunch" in request_lower:
+                meal_types_to_fill.append("lunch")
+            if "dinner" in request_lower:
+                meal_types_to_fill.append("dinner")
+            
+            # If no specific meal types, default to dinner
+            if not meal_types_to_fill:
+                meal_types_to_fill = ["dinner"]
+            
+            # Determine date range
+            if "this week" in request_lower or "week" in request_lower:
+                # This week = today through Sunday
+                today = date.today()
+                days_until_sunday = (6 - today.weekday()) % 7
+                if days_until_sunday == 0 and today.weekday() == 6:  # Today is Sunday
+                    days_until_sunday = 7
+                dates = self.date_utils.get_date_range(today, days_until_sunday + 1)
+            else:
+                # Default to next 7 days
+                dates = self.date_utils.get_date_range(date.today(), 7)
+            
+            # Create random tasks for each meal type per day
+            for target_date in dates:
+                for meal_type in meal_types_to_fill:
+                    tasks.append(ScheduleTask(
+                        meal_name=None,
+                        target_date=target_date,
+                        meal_type=meal_type,
+                        is_random=True
+                    ))
+            
+            return BatchScheduleAction(tasks=tasks, request_type="batch_days")
+        
         # Detect batch day patterns
-        if "next 5 days" in request_lower or "rest of the week" in request_lower or "this week" in request_lower:
+        elif "next 5 days" in request_lower or "rest of the week" in request_lower or "this week" in request_lower:
             # Calculate dates based on pattern
             if "rest of the week" in request_lower:
                 # Rest of the week = tomorrow through Sunday

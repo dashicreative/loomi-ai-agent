@@ -39,14 +39,17 @@ Parse the user's request and identify the scheduling pattern:
 3. **Random selection**: "Pick some meals at random to schedule for Friday"
    → Create tasks with is_random=true
 
-4. **Mixed requests**: "Schedule pizza for tomorrow and pick random meals for Friday"
+4. **Fill schedule**: "Fill my schedule with 1 dinner and 1 breakfast per day this week"
+   → Create multiple tasks with meal_name=null and is_random=true for each meal type per day
+
+5. **Mixed requests**: "Schedule pizza for tomorrow and pick random meals for Friday"
    → Combine different task types
 
 For each task, extract:
 - meal_name: Exact meal name from available meals, or null if random
 - target_date: Convert to YYYY-MM-DD format
 - meal_type: breakfast, lunch, dinner, snack
-- is_random: true if should pick random meal
+- is_random: true if should pick random meal (MUST be true when meal_name is null)
 
 Date conversion rules:
 - "tomorrow" → {tomorrow}

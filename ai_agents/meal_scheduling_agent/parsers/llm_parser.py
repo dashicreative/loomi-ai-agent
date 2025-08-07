@@ -54,6 +54,9 @@ class LLMParser:
             # Convert dict result to BatchScheduleAction
             tasks = []
             for task_dict in result_dict.get('tasks', []):
+                # Ensure is_random is True when meal_name is None
+                if task_dict.get('meal_name') is None and not task_dict.get('is_random', False):
+                    task_dict['is_random'] = True
                 tasks.append(ScheduleTask(**task_dict))
             
             return BatchScheduleAction(
