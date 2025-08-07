@@ -62,26 +62,14 @@ class LLMParser:
             ), None
             
         except Exception as e:
-            # Try to get the helpful LLM response text before falling back
+            # We already have the LLM response from above, just check if it's helpful
             llm_response_text = None
-            try:
-                # Get the raw LLM response without JSON parsing
-                chain = self.prompt_template | llm_service.claude
-                llm_response = await chain.ainvoke({
-                    "user_request": user_request,
-                    "today": date.today().isoformat(),
-                    "tomorrow": tomorrow,
-                    "available_meals": ", ".join(available_meals),
-                    "format_instructions": "Return a JSON object with 'tasks' array and 'request_type' string"
-                })
-                
-                # Extract the helpful response text
-                if hasattr(llm_response, 'content'):
-                    response_text = llm_response.content
-                elif isinstance(llm_response, str):
-                    response_text = llm_response
-                else:
-                    response_text = str(llm_response)
+            
+            # Extract the helpful response text from the error
+            error_str = str(e)
+            if "Invalid json output:" in error_str:
+                # Extract the actual LLM response from the error message
+                response_text = error_str.split("Invalid json output:")[1].split("\n")[0].strip()
                 
                 # If LLM gives helpful text response about unavailable meals, capture it
                 helpful_indicators = [
@@ -91,9 +79,7 @@ class LLMParser:
                 
                 if any(indicator in response_text.lower() for indicator in helpful_indicators):
                     llm_response_text = response_text
-                    
-            except:
-                pass
             
             print(f"LLM parsing failed: {e}")
-            raise Exception(f"LLM parsing failed: {e}") from e
+            # Return the fallback with the helpful message if we have one
+            return None, llm_response_text

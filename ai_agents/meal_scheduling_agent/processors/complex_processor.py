@@ -61,9 +61,19 @@ class ComplexProcessor:
             batch_action, llm_response_text = await self.llm_parser.parse_complex_request(
                 message.content, available_meals
             )
+            
+            # If LLM returned None but gave us a helpful message, use it directly
+            if batch_action is None and llm_response_text:
+                return AIResponse(
+                    conversational_response=llm_response_text,
+                    actions=[],
+                    model_used="enhanced_meal_agent"
+                )
         except Exception as e:
             print(f"LLM parsing failed, using fallback: {e}")
-            # Fall back to rule-based parsing
+        
+        # Fall back to rule-based parsing if needed
+        if batch_action is None:
             batch_action = self.fallback_parser.parse_complex_request(
                 message.content, available_meals
             )

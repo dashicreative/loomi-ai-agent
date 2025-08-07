@@ -156,8 +156,18 @@ class FallbackParser:
             return BatchScheduleAction(tasks=tasks, request_type="multi_meal")
         
         # Default to single task (fallback)
+        # Extract what meal was requested even if not found
+        requested_meal = None
+        for word in user_request.split():
+            if len(word) > 3 and word.lower() not in ["schedule", "tomorrow", "today", "for", "the"]:
+                requested_meal = word
+                break
+        
+        if not requested_meal:
+            requested_meal = "requested meal"
+        
         default_date = date.today().isoformat()
         return BatchScheduleAction(
-            tasks=[ScheduleTask(meal_name="Unknown", target_date=default_date, meal_type="dinner")],
+            tasks=[ScheduleTask(meal_name=requested_meal, target_date=default_date, meal_type="dinner")],
             request_type="single"
         )
