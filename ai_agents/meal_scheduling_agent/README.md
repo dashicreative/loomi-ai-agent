@@ -2,6 +2,15 @@
 
 This is a modular implementation of the Enhanced Meal Agent, broken down into smaller, focused components following SDK best practices.
 
+## 🆕 Tool-Based Architecture Available!
+
+We now offer two versions of the agent:
+
+1. **EnhancedMealAgent** - Original implementation with direct function calls
+2. **ToolBasedMealAgent** - New tool-based architecture following AI SDK patterns (OpenAI, LangChain)
+
+See [TOOLS_ARCHITECTURE.md](TOOLS_ARCHITECTURE.md) for details on the tool-based approach.
+
 ## Architecture Overview
 
 ```
