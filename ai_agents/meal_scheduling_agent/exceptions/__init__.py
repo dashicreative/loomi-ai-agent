@@ -8,7 +8,8 @@ from .meal_exceptions import (
     InvalidDateError,
     SchedulingConflictError,
     AmbiguousRequestError,
-    LLMParsingError
+    LLMParsingError,
+    ToolExecutionError
 )
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     'InvalidDateError',
     'SchedulingConflictError',
     'AmbiguousRequestError',
-    'LLMParsingError'
+    'LLMParsingError',
+    'ToolExecutionError'
 ]

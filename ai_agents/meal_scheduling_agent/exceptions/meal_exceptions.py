@@ -46,3 +46,11 @@ class LLMParsingError(MealAgentError):
     def __init__(self, original_error: str):
         self.original_error = original_error
         super().__init__(f"LLM parsing failed: {original_error}")
+
+
+class ToolExecutionError(MealAgentError):
+    """Raised when a tool execution fails"""
+    def __init__(self, tool_name: str, error: str):
+        self.tool_name = tool_name
+        self.error = error
+        super().__init__(f"Tool '{tool_name}' execution failed: {error}")
