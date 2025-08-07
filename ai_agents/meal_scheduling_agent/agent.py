@@ -9,6 +9,7 @@ from typing import List
 from models.ai_models import ChatMessage, AIResponse
 from storage.local_storage import LocalStorage
 from .core.complexity_detector import ComplexityDetector
+from .core.conversation_context import ConversationContextManager
 from .processors.simple_processor import SimpleProcessor
 from .processors.complex_processor import ComplexProcessor
 from .tools.tool_orchestrator import ToolOrchestrator
@@ -38,6 +39,7 @@ class EnhancedMealAgent:
         self.simple_processor = SimpleProcessor(self.storage)
         self.complex_processor = ComplexProcessor(self.storage)
         self.response_builder = ResponseBuilder()
+        self.context_manager = ConversationContextManager()
     
     async def process(self, message: ChatMessage) -> AIResponse:
         """
@@ -50,6 +52,29 @@ class EnhancedMealAgent:
             AIResponse with conversational response and actions
         """
         try:
+            # Extract user_id from message context (default to 'default' for now)
+            user_id = message.user_context.get("user_id", "default")
+            
+            # Check for context-dependent responses first
+            context_resolution = self.context_manager.resolve_affirmative_response(
+                user_id, message.content
+            )
+            
+            if context_resolution:
+                # This is a follow-up to a previous suggestion
+                from models.ai_models import AIAction, ActionType
+                
+                response = self.response_builder.success_response(
+                    context_resolution["meal_name"],
+                    context_resolution["date"],
+                    context_resolution["meal_type"]
+                )
+                
+                # Clear the context after use
+                self.context_manager.clear_context(user_id)
+                
+                return response
+            
             # Get available meals using tools
             meal_names, meals = await self.orchestrator.get_available_meals()
             
@@ -60,6 +85,10 @@ class EnhancedMealAgent:
             complexity = await self.complexity_detector.detect(
                 message.content, meal_names
             )
+            
+            # Store reference to context manager in processors
+            self.simple_processor.context_manager = self.context_manager
+            self.complex_processor.context_manager = self.context_manager
             
             if complexity == "simple":
                 return await self.simple_processor.process(message, meal_names)

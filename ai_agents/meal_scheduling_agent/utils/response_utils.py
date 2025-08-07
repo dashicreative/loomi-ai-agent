@@ -49,6 +49,26 @@ class ResponseBuilder:
             model_used="enhanced_meal_agent"
         )
     
+    def success_response(self, meal_name: str, target_date: str, meal_type: str) -> AIResponse:
+        """Create success response for scheduled meal"""
+        natural_date = self.format_natural_date(target_date)
+        response = f"I've scheduled {meal_name} for {meal_type} {natural_date}!"
+        
+        action = AIAction(
+            type=ActionType.SCHEDULE_MEAL,
+            parameters={
+                "meal_name": meal_name,
+                "date": target_date,
+                "meal_type": meal_type
+            }
+        )
+        
+        return AIResponse(
+            conversational_response=response,
+            actions=[action],
+            model_used="enhanced_meal_agent"
+        )
+    
     @staticmethod
     def format_natural_date(iso_date: str) -> str:
         """

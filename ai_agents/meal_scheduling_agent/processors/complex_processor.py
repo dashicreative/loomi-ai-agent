@@ -3,6 +3,7 @@ Complex Processor - Handles multi-task, batch, and ambiguous requests using tool
 """
 
 from typing import List
+from datetime import date
 
 from models.ai_models import ChatMessage, AIResponse, AIAction, ActionType
 from storage.local_storage import LocalStorage
@@ -12,6 +13,7 @@ from ..parsers.fallback_parser import FallbackParser
 from ..tools.tool_orchestrator import ToolOrchestrator
 from .batch_executor import BatchExecutor
 from ..utils.response_utils import ResponseBuilder
+from ..utils.date_utils import DateUtils
 
 
 class ComplexProcessor:
@@ -27,6 +29,7 @@ class ComplexProcessor:
         self.fallback_parser = FallbackParser()
         self.batch_executor = BatchExecutor(storage)
         self.response_builder = ResponseBuilder()
+        self.date_utils = DateUtils()
     
     async def process(
         self, 
@@ -43,6 +46,9 @@ class ComplexProcessor:
         Returns:
             AIResponse with the result
         """
+        # Store message for context access
+        self._current_message = message
+        
         # Check for clear schedule requests first
         request_lower = message.content.lower()
         if any(keyword in request_lower for keyword in ["clear", "remove all", "delete all", "unschedule"]):
@@ -87,6 +93,8 @@ class ComplexProcessor:
         
         # Execute batch scheduling using tools
         result = await self.batch_executor.execute_batch_schedule(batch_action, available_meals)
+        # Store the original request for context tracking
+        result["original_request"] = message.content
         
         # If execution failed but we have helpful LLM response, use that instead
         if not result["success"] and llm_response_text:
@@ -173,6 +181,25 @@ class ComplexProcessor:
                     if meal_names:
                         suggestions = meal_names[:3]
                         error_msg += f"How about {', '.join(suggestions[:-1])} or {suggestions[-1]} instead?"
+                
+                # Store context for follow-up responses if we have suggestions
+                if suggestions and hasattr(self, 'context_manager') and self.context_manager:
+                    # Extract date and meal_type from the error task info
+                    task_info = first_error.get("task", {})
+                    original_date = task_info.get("target_date") or first_error.get("date")
+                    original_meal_type = task_info.get("meal_type") or first_error.get("meal_type", "dinner")
+                    
+                    # Extract user_id from message context
+                    user_id = self._current_message.user_context.get("user_id", "default") if hasattr(self, '_current_message') else "default"
+                    
+                    self.context_manager.store_suggestions(
+                        user_id=user_id,
+                        suggestions=suggestions,
+                        original_request=result.get("original_request", ""),
+                        requested_meal=unavailable_meal,
+                        date=original_date,
+                        meal_type=original_meal_type
+                    )
             else:
                 # Other types of errors
                 error_reasons = [e.get("reason", "Unknown error") for e in result["errors"][:3]]
@@ -190,18 +217,39 @@ class ComplexProcessor:
         
         # Determine date range
         date_range = None
-        if "week" in request_lower or "this week" in request_lower:
+        start_date = None
+        end_date = None
+        
+        # Check for specific date references
+        if "tomorrow" in request_lower:
+            # Clear only tomorrow
+            tomorrow = self.date_utils.get_tomorrow()
+            start_date = tomorrow
+            end_date = tomorrow
+        elif "today" in request_lower:
+            # Clear only today
+            today = date.today().isoformat()
+            start_date = today
+            end_date = today
+        elif "week" in request_lower or "this week" in request_lower:
             date_range = "week"
         elif "month" in request_lower or "this month" in request_lower:
             date_range = "month"
         elif "all" in request_lower or "everything" in request_lower:
             date_range = "all"
         else:
-            # Default to week if not specified
-            date_range = "week"
+            # If no specific range mentioned, ask for clarification or default to today
+            # For safety, default to just today instead of entire week
+            today = date.today().isoformat()
+            start_date = today
+            end_date = today
         
         # Execute clear operation
-        result = await self.orchestrator.clear_schedule(date_range=date_range)
+        result = await self.orchestrator.clear_schedule(
+            date_range=date_range,
+            start_date=start_date,
+            end_date=end_date
+        )
         
         if result["success"]:
             cleared_count = result["cleared_count"]
@@ -211,11 +259,26 @@ class ComplexProcessor:
             elif cleared_count == 1:
                 response = "I've cleared 1 scheduled meal."
             else:
-                time_phrase = {
-                    "week": "for this week",
-                    "month": "for this month",
-                    "all": ""
-                }.get(date_range, "for this week")
+                # Determine time phrase based on what was actually cleared
+                if start_date and end_date:
+                    if start_date == end_date:
+                        # Single day was cleared
+                        if start_date == date.today().isoformat():
+                            time_phrase = "for today"
+                        elif start_date == self.date_utils.get_tomorrow():
+                            time_phrase = "for tomorrow"
+                        else:
+                            time_phrase = f"for {start_date}"
+                    else:
+                        # Date range was cleared
+                        time_phrase = f"from {start_date} to {end_date}"
+                else:
+                    # Range-based clearing
+                    time_phrase = {
+                        "week": "for this week",
+                        "month": "for this month",
+                        "all": ""
+                    }.get(date_range, "")
                 
                 response = f"I've cleared {cleared_count} scheduled meals {time_phrase}."
             
