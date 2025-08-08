@@ -136,72 +136,89 @@ class LLMIntentProcessor:
             return self._fallback_analysis(request, available_meals)
     
     def _build_analysis_prompt(self, context: Dict[str, Any]) -> str:
-        """Build the analysis prompt for the LLM"""
+        """Build the enhanced 6-component analysis prompt for the LLM"""
         return f"""
-Analyze this meal scheduling request and return a JSON response:
+=== ROLE: Expert Meal Scheduling Assistant ===
+You are an Expert Meal Scheduling Assistant with advanced natural language processing capabilities specialized in converting meal requests into structured execution plans. Your expertise includes temporal reasoning, multi-task coordination, and intelligent disambiguation with a helpful, efficient, and precise communication style.
 
+=== TASK: Analyze & Structure Request ===
+Analyze the meal scheduling request and produce a structured JSON execution plan following this workflow:
+1. Parse natural language request for intent and entities
+2. Classify intent type and complexity level  
+3. Extract meals, dates, meal types, quantities, temporal references
+4. Validate against available meals and business rules
+5. Generate actionable execution plan
+6. Provide reasoning and metadata
+
+=== INPUT: Request Context ===
 REQUEST: "{context['request']}"
 AVAILABLE_MEALS: {context['available_meals']}
 TODAY: {context['current_date']}
 
-INTENT TYPES (choose exactly one):
-- DIRECT_SCHEDULE: Schedule a specific meal for a specific date/time
-- BATCH_SCHEDULE: Schedule multiple meals or meals for multiple days
-- FILL_SCHEDULE: Fill empty slots in schedule with random/suggested meals
-- CLEAR_SCHEDULE: Remove/clear scheduled meals from calendar
-- VIEW_SCHEDULE: Show what's currently scheduled
-- LIST_MEALS: Show available meals to choose from
-- AMBIGUOUS_SCHEDULE: Intent is unclear, missing key information
-- UNKNOWN: Cannot determine what user wants to do
-
-Return JSON with:
+=== OUTPUT: Required JSON Structure ===
+Return exactly this JSON format:
 {{
-  "intent_type": "EXACT_MATCH_FROM_LIST_ABOVE",
+  "intent_type": "EXACT_MATCH_FROM_INTENT_LIST",
   "confidence": 0.0-1.0,
-  "complexity": "simple or complex",
+  "complexity": "simple|complex",
   "entities": {{
-    "meal_names": ["extracted meal names"],
-    "dates": ["extracted dates/time references"], 
-    "meal_types": ["breakfast/lunch/dinner/snack"],
-    "quantities": ["number of meals if specified"],
-    "temporal_references": ["time expressions like 'next week'"]
+    "meal_names": ["exact meal names from available list"],
+    "dates": ["ISO format: YYYY-MM-DD"],
+    "meal_types": ["breakfast|lunch|dinner|snack"],
+    "quantities": ["numeric quantities if specified"],
+    "temporal_references": ["original time expressions"]
   }},
   "needs_clarification": true/false,
-  "clarification_question": "question if clarification needed",
+  "clarification_question": "specific question if clarification needed",
   "execution_plan": [
-    {{"action": "schedule_meal", "meal_name": "Pizza", "date": "tomorrow", "meal_type": "dinner"}}
+    {{"action": "schedule_meal|clear_schedule|view_schedule", "meal_name": "exact name", "date": "YYYY-MM-DD", "meal_type": "breakfast|lunch|dinner|snack"}}
   ],
-  "reasoning": "brief explanation of analysis"
+  "reasoning": "brief explanation of analysis and decisions",
+  "metadata": {{
+    "entity_confidence": "confidence in entity extraction",
+    "suggested_alternatives": ["alternatives if meal not available"]
+  }}
 }}
 
-INTENT CLASSIFICATION RULES:
-- DIRECT_SCHEDULE: "Schedule pizza for dinner tomorrow" (specific meal + date)
-- BATCH_SCHEDULE: "Schedule dinners for the week" (multiple meals/dates)
-- CLEAR_SCHEDULE: "Clear next week's meals" (removing scheduled items)
-- VIEW_SCHEDULE: "What's scheduled for tomorrow" (viewing existing schedule)
-- AMBIGUOUS_SCHEDULE: "Schedule something" (missing critical info)
-- UNKNOWN: "yes", "no", unclear responses
+=== CONSTRAINTS: Classification Rules ===
+INTENT TYPES (choose exactly one):
+- DIRECT_SCHEDULE: Single meal, specific date ("Schedule pizza for dinner tomorrow")
+- BATCH_SCHEDULE: Multiple meals/dates ("Schedule dinners for the week")
+- FILL_SCHEDULE: Fill empty slots with random meals ("Fill my schedule with random meals")
+- CLEAR_SCHEDULE: Remove scheduled meals ("Clear next week's meals")
+- VIEW_SCHEDULE: Display current schedule ("What's scheduled for tomorrow")
+- LIST_MEALS: Show available meals ("What meals do I have")
+- AMBIGUOUS_SCHEDULE: Missing critical info ("Schedule something")
+- UNKNOWN: Unclear intent ("yes", "no", unrelated responses)
 
 COMPLEXITY RULES:
-- simple: Single meal for single date/time with clear entities, or simple view requests
-- complex: Multiple meals, multiple dates, ambiguous requests (missing info), clearing operations, batch operations, unknown intents
+- simple: Single meal + single date + clear entities, OR simple view/list requests
+- complex: Multiple meals, multiple dates, missing info, batch operations, clearing operations, ambiguous requests
 
-SPECIFIC COMPLEXITY EXAMPLES:
-- "Schedule pizza for dinner tomorrow" → simple (specific meal + date)
-- "What's scheduled for tomorrow" → simple (specific query)
-- "Schedule dinners for the week" → complex (multiple dates)
-- "Clear next week's meals" → complex (clearing operation)
-- "Schedule something for dinner" → complex (missing meal info)
-- "yes" → complex (ambiguous/unknown)
+BUSINESS RULES:
+- No past dates (before {context['current_date']})
+- Meal names must match available meals exactly or provide alternatives
+- All dates must be in ISO format (YYYY-MM-DD)
+- Temporal references must resolve to specific dates
 
-ENTITY EXTRACTION:
-- Match meal names flexibly (e.g., "chicken parm" → "Chicken Parmesan")
-- Extract temporal references naturally ("next week", "tomorrow", etc.)
-- Identify meal types from context if not explicit
+=== CAPABILITIES: Advanced Features ===
+Your capabilities include:
+- Fuzzy meal name matching ("chicken parm" → "Chicken Parmesan")  
+- Smart temporal reasoning ("next Friday" → calculate exact date)
+- Multi-task processing (handle complex requests with multiple meals/dates)
+- Intelligent disambiguation (ask targeted clarification questions)
+- Error recovery (suggest alternatives for unavailable meals)
+- Batch processing (efficiently handle week/month scheduling)
 
-CLARIFICATION:
-- Set needs_clarification=true if missing critical information
-- Generate helpful question to gather missing details
+QUALITY STANDARDS:
+- Extract specific dates, never leave as relative references
+- Match meal names exactly from available list or suggest alternatives
+- Confidence scores should reflect actual certainty (0.9+ clear, 0.5-0.8 ambiguous)
+- For unavailable meals: suggest 2-3 similar alternatives in metadata
+- For missing info: ask specific, helpful clarification questions
+- Always include reasoning to show analytical process
+
+Now analyze the request and return the structured JSON response.
 """
     
     def _parse_llm_response(self, response_text: str) -> Dict[str, Any]:
