@@ -40,6 +40,7 @@ class AIResponse(BaseModel):
     actions: List[AIAction] = Field(default_factory=list, description="Actions to execute")
     model_used: str = Field(..., description="AI model that generated response", alias="modelUsed")
     preview_message: Optional[str] = Field(None, description="Preview of actions", alias="previewMessage")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata for internal processing")
     
     model_config = {
         "populate_by_name": True,

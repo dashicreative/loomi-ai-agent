@@ -40,6 +40,9 @@ class EnhancedMealAgent:
         
         # Simple conversation history (per user)
         self.conversation_history = {}
+        
+        # Token estimation (rough approximation - 4 chars per token)
+        self.max_history_chars = 12000  # ~3000 tokens for safety
     
     async def process(self, message: ChatMessage) -> AIResponse:
         """
@@ -94,17 +97,42 @@ class EnhancedMealAgent:
             # Get conversation history for this user
             user_history = self.conversation_history.get(user_id, [])
             
+            # Check if conversation is too long (token limit safeguard)
+            history_size = sum(len(turn.get("user", "")) + len(turn.get("agent", "")) for turn in user_history)
+            if history_size > self.max_history_chars:
+                # Clear history and inform user
+                user_history = []
+                self.conversation_history[user_id] = []
+                return AIResponse(
+                    conversational_response="Let's start fresh! My memory was getting a bit full, so I've recharged. How can I help you with your meal scheduling today?",
+                    actions=[],
+                    model_used="enhanced_meal_agent"
+                )
+            
+            # Check for questions about old conversations
+            if user_history == [] and any(phrase in message.content.lower() for phrase in ["last time", "previous", "earlier", "yesterday we", "remember when"]):
+                return AIResponse(
+                    conversational_response=f"I don't store our previous conversations, but I'm here to help tailor responses to your needs and make your food life amazing! What can I help you schedule today?",
+                    actions=[],
+                    model_used="enhanced_meal_agent"
+                )
+            
             # Process using LLM-first DirectProcessor with conversation history
             response = await self.processor.process(message, meal_names, user_history)
             
-            # Update conversation history (keep last 10 turns)
-            user_history.append({
-                "user": message.content,
-                "agent": response.conversational_response
-            })
-            if len(user_history) > 10:
-                user_history = user_history[-10:]
-            self.conversation_history[user_id] = user_history
+            # Check if this is a conversation closure
+            if hasattr(response, 'metadata') and response.metadata and response.metadata.get('clear_conversation'):
+                # Clear conversation history for this user
+                self.conversation_history[user_id] = []
+            else:
+                # Update conversation history (keep last 10 turns)
+                user_history.append({
+                    "user": message.content,
+                    "agent": response.conversational_response
+                })
+                if len(user_history) > 10:
+                    user_history = user_history[-10:]
+                self.conversation_history[user_id] = user_history
             
             # Check if processor generated suggestions that need context storage
             # (Preserve existing conversation context functionality for suggestion follow-ups)

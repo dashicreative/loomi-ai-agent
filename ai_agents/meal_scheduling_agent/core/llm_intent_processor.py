@@ -33,6 +33,7 @@ class IntentType(Enum):
     LIST_MEALS = "list_meals"
     AMBIGUOUS_SCHEDULE = "ambiguous_schedule"
     NEEDS_CLARIFICATION = "needs_clarification"
+    CONVERSATION_CLOSURE = "conversation_closure"
     UNKNOWN = "unknown"
 
 
@@ -201,6 +202,12 @@ INTENT TYPES (choose exactly one):
 - AMBIGUOUS_SCHEDULE: Missing critical info ("Schedule something")
 - UNKNOWN: Unclear intent ("yes", "no", unrelated responses)
 
+SPECIAL CASE - Conversation Closure:
+If user responds "no", "I'm done", "that's all", "nothing else" to "Do you need any other schedule-related assistance?":
+- Set intent_type="CONVERSATION_CLOSURE"
+- Set clarification_question="Great! Have a wonderful meal planning experience. Feel free to come back anytime!"
+- This signals the end of the current conversation session
+
 COMPLEXITY RULES:
 - simple: Single meal + single date + clear entities, OR simple view/list requests
 - complex: Multiple meals, multiple dates, missing info, batch operations, clearing operations, ambiguous requests
@@ -295,6 +302,7 @@ Now analyze the request and return the structured JSON response.
             "LIST_MEALS": "list_meals",
             "AMBIGUOUS_SCHEDULE": "ambiguous_schedule",
             "NEEDS_CLARIFICATION": "needs_clarification",
+            "CONVERSATION_CLOSURE": "conversation_closure",
             "UNKNOWN": "unknown",
             # Alternative mappings
             "SCHEDULE_MEAL": "direct_schedule",

@@ -80,6 +80,8 @@ class DirectProcessor:
                 return await self._direct_view_schedule(context)
             elif context.intent_type == IntentType.LIST_MEALS:
                 return await self._direct_list_meals()
+            elif context.intent_type == IntentType.CONVERSATION_CLOSURE:
+                return self._create_closure_response(context)
             else:
                 return self._create_unknown_response(context)
                 
@@ -103,6 +105,18 @@ class DirectProcessor:
             conversational_response=context.clarification_question or fallback_msg,
             actions=[],
             model_used="enhanced_meal_agent"
+        )
+    
+    def _create_closure_response(self, context: LLMRequestContext) -> AIResponse:
+        """Create response for conversation closure"""
+        closure_msg = context.clarification_question or "Great! Have a wonderful meal planning experience. Feel free to come back anytime!"
+        
+        return AIResponse(
+            conversational_response=closure_msg,
+            actions=[],
+            model_used="enhanced_meal_agent",
+            # Signal to clear conversation history
+            metadata={"clear_conversation": True}
         )
     
     async def _direct_schedule_meal(
@@ -181,6 +195,9 @@ class DirectProcessor:
         # Build response
         natural_date = self.response_builder.format_natural_date(target_date)
         response = f"I've scheduled {meal_obj.name} for {meal_type} {natural_date}!"
+        
+        # Add closure question for single operations
+        response += "\n\nDo you need any other schedule-related assistance?"
         
         # Action already completed by direct storage - no need for iOS to process it
         # Keep action for debugging but mark as completed
@@ -364,6 +381,10 @@ class DirectProcessor:
         else:
             response = f"I've cleared {cleared_count} scheduled meals."
         
+        # Add closure question for action operations
+        if cleared_count > 0:
+            response += "\n\nDo you need any other schedule-related assistance?"
+        
         return AIResponse(
             conversational_response=response,
             actions=[],
@@ -483,6 +504,10 @@ class DirectProcessor:
             response += f"\n\nNote: {len(errors)} tasks had issues."
             for error in errors[:2]:
                 response += f"\n• {error['meal_name']}: {error['reason']}"
+        
+        # Add closure question if any meals were scheduled
+        if scheduled_count > 0:
+            response += "\n\nDo you need any other schedule-related assistance?"
         
         return AIResponse(
             conversational_response=response.strip(),
