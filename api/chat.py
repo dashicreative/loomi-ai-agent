@@ -23,39 +23,30 @@ async def chat(message: ChatMessage):
         # Process the message with the agent
         ai_response = await enhanced_agent.process(message)
         
+        # Create clean chat log for debugging
+        debug_log = f"👤 USER: {message.content}\n🤖 AGENT: {ai_response.conversational_response}"
+        
         # Convert AIResponse to ChatResponse (iOS format)
         chat_response = ChatResponse(
             conversational_response=ai_response.conversational_response,
             actions=ai_response.actions,
-            model_used=ai_response.model_used
+            model_used=ai_response.model_used,
+            debug_chat_log=debug_log
         )
-        
-        # Clean chat log for debugging
-        print("\n" + "="*50)
-        print("💬 CHAT LOG")
-        print("="*50)
-        print(f"👤 USER: {message.content}")
-        print(f"🤖 AGENT: {ai_response.conversational_response}")
-        print("="*50)
         
         return chat_response
         
     except Exception as e:
         # Return error message to iOS app
         error_message = f"Sorry, I encountered an error: {str(e)}"
+        debug_log = f"👤 USER: {message.content}\n🤖 AGENT: {error_message}"
+        
         error_response = ChatResponse(
             conversational_response=error_message,
             actions=[],
-            model_used="error"
+            model_used="error",
+            debug_chat_log=debug_log
         )
-        
-        # Clean chat log for debugging (even errors)
-        print("\n" + "="*50)
-        print("💬 CHAT LOG (ERROR)")
-        print("="*50)
-        print(f"👤 USER: {message.content}")
-        print(f"🤖 AGENT: {error_message}")
-        print("="*50)
         
         return error_response
 

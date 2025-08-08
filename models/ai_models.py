@@ -68,6 +68,7 @@ class ChatResponse(BaseModel):
     actions: List[AIAction] = Field(default_factory=list, description="Actions to perform")
     model_used: str = Field(..., description="Which AI model was used", alias="modelUsed")
     preview_message: Optional[str] = Field(None, description="Preview of what actions will do", alias="previewMessage")
+    debug_chat_log: Optional[str] = Field(None, description="Clean chat log for debugging", alias="debugChatLog")
     
     model_config = {
         "populate_by_name": True
