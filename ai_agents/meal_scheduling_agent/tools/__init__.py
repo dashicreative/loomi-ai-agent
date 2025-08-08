@@ -1,36 +1,12 @@
 """
-Tools module exports
+Tools module - LLM-First Architecture
+
+Note: The tool abstraction layer was eliminated during LLM-first migration.
+The agent now uses direct storage operations instead of tool orchestration.
+Only essential tools remain for specific use cases.
 """
 
-from .production_tools import (
-    BaseTool,
-    LoadMealsTool,
-    FindMealByNameTool,
-    SelectRandomMealsTool,
-    ScheduleSingleMealTool,
-    ParseDateTool,
-    GetDateRangeTool,
-    SuggestAlternativeMealsTool,
-    ExtractMealTypeTool,
-    ClearScheduleTool,
-    ToolRegistry
-)
-from .tool_orchestrator import ToolOrchestrator
-from .temporal_tool import TemporalExtractionTool, DateRangeTool
+# Import remaining tools (if any exist)
+# Most tool functionality moved to direct storage operations in DirectProcessor
 
-__all__ = [
-    'BaseTool',
-    'LoadMealsTool',
-    'FindMealByNameTool',
-    'SelectRandomMealsTool',
-    'ScheduleSingleMealTool',
-    'ParseDateTool',
-    'GetDateRangeTool',
-    'SuggestAlternativeMealsTool',
-    'ExtractMealTypeTool',
-    'ClearScheduleTool',
-    'ToolRegistry',
-    'ToolOrchestrator',
-    'TemporalExtractionTool',
-    'DateRangeTool'
-]
+__all__ = []

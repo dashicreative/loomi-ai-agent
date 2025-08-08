@@ -20,8 +20,20 @@ import asyncio
 import openai
 from openai import AsyncOpenAI
 
-from ..config import get_config
-from .intent_classifier import IntentType  # Keep enum for compatibility
+# Config removed in LLM-first migration - using simple defaults
+from enum import Enum
+
+# Intent type enum (moved here from deleted intent_classifier)
+class IntentType(Enum):
+    DIRECT_SCHEDULE = "direct_schedule"
+    BATCH_SCHEDULE = "batch_schedule" 
+    CLEAR_SCHEDULE = "clear_schedule"
+    FILL_SCHEDULE = "fill_schedule"
+    VIEW_SCHEDULE = "view_schedule"
+    LIST_MEALS = "list_meals"
+    AMBIGUOUS_SCHEDULE = "ambiguous_schedule"
+    NEEDS_CLARIFICATION = "needs_clarification"
+    UNKNOWN = "unknown"
 
 
 @dataclass
@@ -56,7 +68,8 @@ class LLMIntentProcessor:
         Args:
             api_key: OpenAI API key (if not provided, will use env var)
         """
-        self.config = get_config()
+# Simple default config for LLM-first architecture
+        self.config = {"max_retries": 2, "temperature": 0.1}
         
         # Initialize OpenAI client
         self.client = AsyncOpenAI(api_key=api_key) if api_key else AsyncOpenAI()

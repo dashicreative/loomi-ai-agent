@@ -1,19 +1,12 @@
 """
-Configuration module for meal scheduling agent
+Configuration module for meal scheduling agent (LLM-First Architecture)
+
+Note: Most configuration files were eliminated during LLM-first migration.
+The agent now uses LLM context and direct storage operations instead of
+complex configuration-driven behavior.
 """
 
-from .domain_config import DomainConfig, MealSchedulingConfig, RetryConfig, get_config
-from .intent_config import IntentDefinition, IntentConfig, IntentType
-from .tool_config import ToolConfig, get_tool_config_registry
+# LLM-first architecture requires minimal configuration
+# Most functionality is now handled by LLM understanding + direct operations
 
-__all__ = [
-    'DomainConfig',
-    'MealSchedulingConfig',
-    'IntentDefinition',
-    'IntentConfig',
-    'IntentType',
-    'ToolConfig',
-    'RetryConfig',
-    'get_config',
-    'get_tool_config_registry'
-]
+__all__ = []

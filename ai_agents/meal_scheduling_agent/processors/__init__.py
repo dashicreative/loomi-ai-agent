@@ -1,13 +1,9 @@
 """
-Processors module exports
+Processors module exports - LLM-First Architecture
 """
 
-from .simple_processor import SimpleProcessor
-from .complex_processor import ComplexProcessor
-from .batch_executor import BatchExecutor
+from .direct_processor import DirectProcessor
 
 __all__ = [
-    'SimpleProcessor',
-    'ComplexProcessor',
-    'BatchExecutor'
+    'DirectProcessor'
 ]

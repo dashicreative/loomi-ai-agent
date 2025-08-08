@@ -20,8 +20,7 @@ from models.ai_models import ChatMessage, AIResponse, AIAction, ActionType
 from models.scheduled_meal import ScheduledMeal, MealOccasion
 from models.meal import Meal
 from storage.local_storage import LocalStorage
-from ..core.llm_intent_processor import LLMIntentProcessor, LLMRequestContext
-from ..core.intent_classifier import IntentType
+from ..core.llm_intent_processor import LLMIntentProcessor, LLMRequestContext, IntentType
 from ..utils.response_utils import ResponseBuilder
 from ..utils.meal_utils import MealUtils
 
