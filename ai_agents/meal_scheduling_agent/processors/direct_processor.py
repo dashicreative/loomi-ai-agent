@@ -42,7 +42,8 @@ class DirectProcessor:
     async def process(
         self, 
         message: ChatMessage, 
-        available_meals: List[str]
+        available_meals: List[str],
+        conversation_history: Optional[List[Dict]] = None
     ) -> AIResponse:
         """
         Process any meal scheduling request using LLM + Direct Storage
@@ -55,10 +56,11 @@ class DirectProcessor:
             AIResponse with the result
         """
         try:
-            # Use LLM to understand the request
+            # Use LLM to understand the request with conversation history
             context = await self.llm_intent.understand_request(
                 message.content, 
-                available_meals
+                available_meals,
+                conversation_history=conversation_history
             )
             
             # Handle requests based on LLM analysis - Direct execution
@@ -139,7 +141,7 @@ class DirectProcessor:
             if not meal_obj:
                 # Generate suggestions - Direct approach
                 suggestions = [m.name for m in meals[:3]]  # Simple first 3
-                error_msg = f"I don't have {meal_name} available."
+                error_msg = f"You don't have {meal_name} saved."
                 
                 if suggestions:
                     if len(suggestions) > 1:

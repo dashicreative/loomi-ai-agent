@@ -37,6 +37,9 @@ class EnhancedMealAgent:
         self.processor = DirectProcessor(self.storage)
         self.response_builder = ResponseBuilder()
         self.context_manager = ConversationContextManager()
+        
+        # Simple conversation history (per user)
+        self.conversation_history = {}
     
     async def process(self, message: ChatMessage) -> AIResponse:
         """
@@ -88,8 +91,20 @@ class EnhancedMealAgent:
             if not meal_names:
                 return self.response_builder.no_meals_error()
             
-            # Process using LLM-first DirectProcessor (handles all complexity intelligently)
-            response = await self.processor.process(message, meal_names)
+            # Get conversation history for this user
+            user_history = self.conversation_history.get(user_id, [])
+            
+            # Process using LLM-first DirectProcessor with conversation history
+            response = await self.processor.process(message, meal_names, user_history)
+            
+            # Update conversation history (keep last 10 turns)
+            user_history.append({
+                "user": message.content,
+                "agent": response.conversational_response
+            })
+            if len(user_history) > 10:
+                user_history = user_history[-10:]
+            self.conversation_history[user_id] = user_history
             
             # Check if processor generated suggestions that need context storage
             # (Preserve existing conversation context functionality for suggestion follow-ups)

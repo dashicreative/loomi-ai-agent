@@ -161,7 +161,7 @@ class UnifiedProcessor:
         else:
             # Handle suggestions from orchestrator
             suggestions = result.get("suggestions", [])
-            error_msg = f"I don't have {meal_name} available."
+            error_msg = f"You don't have {meal_name} saved."
             
             if suggestions:
                 if len(suggestions) > 1:

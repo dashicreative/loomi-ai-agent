@@ -86,7 +86,7 @@ class LLMIntentProcessor:
             "UNKNOWN": "Cannot determine what user wants to do"
         }
     
-    async def understand_request(self, request: str, available_meals: List[str], current_schedule: Optional[Dict] = None) -> LLMRequestContext:
+    async def understand_request(self, request: str, available_meals: List[str], current_schedule: Optional[Dict] = None, conversation_history: Optional[List[Dict]] = None) -> LLMRequestContext:
         """
         Analyze user request with LLM to understand intent, extract entities, and determine complexity
         
@@ -103,7 +103,8 @@ class LLMIntentProcessor:
             "request": request,
             "available_meals": available_meals[:20],  # Limit to prevent token overflow
             "current_date": datetime.now().isoformat()[:10],
-            "intent_types": self.intent_descriptions
+            "intent_types": self.intent_descriptions,
+            "conversation_history": conversation_history or []
         }
         
         if current_schedule:
@@ -137,23 +138,32 @@ class LLMIntentProcessor:
     
     def _build_analysis_prompt(self, context: Dict[str, Any]) -> str:
         """Build the enhanced 6-component analysis prompt for the LLM"""
+        # Format conversation history if present
+        history_text = ""
+        if context.get('conversation_history'):
+            history_text = "\n\nCONVERSATION HISTORY:\n"
+            for turn in context['conversation_history'][-5:]:  # Last 5 turns
+                history_text += f"User: {turn.get('user', '')}\n"
+                history_text += f"Agent: {turn.get('agent', '')}\n"
+        
         return f"""
 === ROLE: Expert Meal Scheduling Assistant ===
-You are an Expert Meal Scheduling Assistant with advanced natural language processing capabilities specialized in converting meal requests into structured execution plans. Your expertise includes temporal reasoning, multi-task coordination, and intelligent disambiguation with a helpful, efficient, and precise communication style.
+You are an Expert Meal Scheduling Assistant with STRICT meal validation capabilities. You MUST validate all meal requests against the AVAILABLE_MEALS list. Your expertise includes temporal reasoning, multi-task coordination, and maintaining conversation context. IMPORTANT: Always refer to meals as "your saved meals" or "your meals" - never "my meals" or "our meals" as you are an assistant helping users manage THEIR meal collection.
 
 === TASK: Analyze & Structure Request ===
-Analyze the meal scheduling request and produce a structured JSON execution plan following this workflow:
+Analyze the meal scheduling request and produce a structured JSON execution plan following this STRICT workflow:
 1. Parse natural language request for intent and entities
-2. Classify intent type and complexity level  
-3. Extract meals, dates, meal types, quantities, temporal references
-4. Validate against available meals and business rules
-5. Generate actionable execution plan
-6. Provide reasoning and metadata
+2. CRITICAL: Validate ALL meal names against AVAILABLE_MEALS - NEVER suggest meals not in the list
+3. Consider conversation history for context (e.g., if user says "pepperoni" after asking about "pizza")
+4. Classify intent type and complexity level  
+5. Extract ONLY valid meals from available list, dates, meal types, quantities
+6. Generate actionable execution plan or appropriate clarification
+7. Provide reasoning and metadata
 
 === INPUT: Request Context ===
 REQUEST: "{context['request']}"
 AVAILABLE_MEALS: {context['available_meals']}
-TODAY: {context['current_date']}
+TODAY: {context['current_date']}{history_text}
 
 === OUTPUT: Required JSON Structure ===
 Return exactly this JSON format:
@@ -187,7 +197,7 @@ INTENT TYPES (choose exactly one):
 - FILL_SCHEDULE: Fill empty slots with random meals ("Fill my schedule with random meals")
 - CLEAR_SCHEDULE: Remove scheduled meals ("Clear next week's meals")
 - VIEW_SCHEDULE: Display current schedule ("What's scheduled for tomorrow")
-- LIST_MEALS: Show available meals ("What meals do I have")
+- LIST_MEALS: Show available meals ("What meals do I have saved")
 - AMBIGUOUS_SCHEDULE: Missing critical info ("Schedule something")
 - UNKNOWN: Unclear intent ("yes", "no", unrelated responses)
 
@@ -195,11 +205,16 @@ COMPLEXITY RULES:
 - simple: Single meal + single date + clear entities, OR simple view/list requests
 - complex: Multiple meals, multiple dates, missing info, batch operations, clearing operations, ambiguous requests
 
-BUSINESS RULES:
+CRITICAL BUSINESS RULES:
+- MEAL VALIDATION: If a requested meal is NOT in AVAILABLE_MEALS, you MUST:
+  1. Set needs_clarification=true
+  2. Set clarification_question to inform user the meal doesn't exist
+  3. Suggest 2-3 similar meals from AVAILABLE_MEALS in metadata.suggested_alternatives
+  4. NEVER ask "which type of X" for non-existent meals
+  5. Example: "You don't have pizza saved. How about Lasagna or Chicken Parmesan instead?"
 - No past dates (before {context['current_date']})
-- Meal names must match available meals exactly or provide alternatives
 - All dates must be in ISO format (YYYY-MM-DD)
-- Temporal references must resolve to specific dates
+- Consider conversation history for context (user saying "pepperoni" after "pizza" discussion)
 
 === CAPABILITIES: Advanced Features ===
 Your capabilities include:
@@ -217,6 +232,20 @@ QUALITY STANDARDS:
 - For unavailable meals: suggest 2-3 similar alternatives in metadata
 - For missing info: ask specific, helpful clarification questions
 - Always include reasoning to show analytical process
+
+CRITICAL EXAMPLES:
+1. User: "Schedule pizza for tomorrow"
+   Available meals: ["Lasagna", "Chicken Parmesan", "Steak Dinner"]
+   CORRECT: needs_clarification=true, clarification_question="You don't have pizza saved. How about Lasagna or Chicken Parmesan instead?"
+   WRONG: "Which type of pizza would you like?"
+
+2. User: "pepperoni" (after previous pizza discussion)
+   CORRECT: Understand from context this relates to pizza type, but still validate against available meals
+   CORRECT: "You don't have pizza saved. Would you like to schedule one of your saved meals instead?"
+
+3. User: "Schedule chicken parm for dinner"
+   Available meals: ["Chicken Parmesan", "Steak Dinner"]
+   CORRECT: Match to "Chicken Parmesan" via fuzzy matching
 
 Now analyze the request and return the structured JSON response.
 """
