@@ -180,19 +180,22 @@ class DirectProcessor:
         natural_date = self.response_builder.format_natural_date(target_date)
         response = f"I've scheduled {meal_obj.name} for {meal_type} {natural_date}!"
         
+        # Action already completed by direct storage - no need for iOS to process it
+        # Keep action for debugging but mark as completed
         action = AIAction(
             type=ActionType.SCHEDULE_MEAL,
             parameters={
                 "meal_name": meal_obj.name,
                 "date": target_date,
                 "meal_type": meal_type,
-                "scheduled_meal_id": str(saved_meal.id)
+                "scheduled_meal_id": str(saved_meal.id),
+                "status": "completed"  # Indicates action is already done
             }
         )
         
         return AIResponse(
             conversational_response=response,
-            actions=[action],
+            actions=[],  # Empty actions - meal already scheduled directly
             model_used="enhanced_meal_agent"
         )
     
@@ -458,11 +461,8 @@ class DirectProcessor:
             natural_date = self.response_builder.format_natural_date(schedule['date'])
             response = f"I've scheduled {schedule['meal_name']} for {schedule['meal_type']} {natural_date}!"
             
-            # Include action for single schedule
-            actions = [AIAction(
-                type=ActionType.SCHEDULE_MEAL,
-                parameters=schedule
-            )]
+            # Meals already scheduled directly - no actions needed
+            actions = []
         else:
             # Multiple schedules - provide summary
             response = f"I've scheduled {scheduled_count} meals for you:\n"
