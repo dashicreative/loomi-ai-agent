@@ -30,15 +30,33 @@ async def chat(message: ChatMessage):
             model_used=ai_response.model_used
         )
         
+        # Clean chat log for debugging
+        print("\n" + "="*50)
+        print("💬 CHAT LOG")
+        print("="*50)
+        print(f"👤 USER: {message.content}")
+        print(f"🤖 AGENT: {ai_response.conversational_response}")
+        print("="*50)
+        
         return chat_response
         
     except Exception as e:
         # Return error message to iOS app
+        error_message = f"Sorry, I encountered an error: {str(e)}"
         error_response = ChatResponse(
-            conversational_response=f"Sorry, I encountered an error: {str(e)}",
+            conversational_response=error_message,
             actions=[],
             model_used="error"
         )
+        
+        # Clean chat log for debugging (even errors)
+        print("\n" + "="*50)
+        print("💬 CHAT LOG (ERROR)")
+        print("="*50)
+        print(f"👤 USER: {message.content}")
+        print(f"🤖 AGENT: {error_message}")
+        print("="*50)
+        
         return error_response
 
 
