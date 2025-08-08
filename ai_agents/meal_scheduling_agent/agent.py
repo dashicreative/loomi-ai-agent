@@ -64,6 +64,15 @@ class EnhancedMealAgent:
                 # This is a follow-up to a previous suggestion
                 from models.ai_models import AIAction, ActionType
                 
+                # Check if this is a clarification request (negative response)
+                if context_resolution.get("action") == "clarify":
+                    return AIResponse(
+                        conversational_response=context_resolution["message"],
+                        actions=[],
+                        model_used="enhanced_meal_agent"
+                    )
+                
+                # Otherwise, it's a positive response to schedule a meal
                 response = self.response_builder.success_response(
                     context_resolution["meal_name"],
                     context_resolution["date"],

@@ -117,19 +117,51 @@ class ToolOrchestrator:
     
     async def parse_date_string(self, date_string: str) -> Optional[str]:
         """
-        Parse a natural language date to ISO format
+        Parse a natural language date to ISO format using temporal reasoning
         
         Returns:
             ISO date string or None if parsing fails
         """
-        result = await self.tools.execute_tool(
-            "parse_date",
-            date_string=date_string
-        )
+        # Use the new temporal extraction tool
+        result = await self.temporal_tool.execute(text=date_string)
         
-        if result["success"]:
-            return result["iso_date"]
-        return None
+        if result.status.value == "success" and result.data.get("success"):
+            # For single day references, return the start date
+            return result.data.get("start_date")
+        else:
+            # Fall back to legacy date parser if needed
+            legacy_result = await self.tools.execute_tool(
+                "parse_date",
+                date_string=date_string
+            )
+            
+            if legacy_result["success"]:
+                return legacy_result["iso_date"]
+            else:
+                return None
+    
+    async def extract_temporal_context(self, text: str) -> Dict[str, Any]:
+        """
+        Extract full temporal context from natural language
+        
+        This provides richer temporal understanding than simple date parsing,
+        including date ranges, confidence scores, and metadata.
+        
+        Args:
+            text: Natural language text containing temporal references
+            
+        Returns:
+            Dictionary with temporal context information
+        """
+        result = await self.temporal_tool.execute(text=text)
+        
+        if result.status.value == "success":
+            return result.data
+        else:
+            return {
+                "success": False,
+                "error": result.error or "Failed to extract temporal context"
+            }
     
     async def get_batch_dates(self, pattern: str) -> List[str]:
         """

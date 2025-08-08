@@ -7,6 +7,7 @@ from .ambiguity_detector import AmbiguityDetector
 from .intent_classifier import IntentClassifier, Intent, Entity
 from .base_tool import BaseTool, ToolResult, ToolMetrics
 from .conversation_context import ConversationContextManager, ConversationContext, ContextType
+from .temporal_reasoner import TemporalReasoner, TemporalContext, TemporalReference
 
 __all__ = [
     'ComplexityDetector', 
@@ -19,5 +20,8 @@ __all__ = [
     'ToolMetrics',
     'ConversationContextManager',
     'ConversationContext',
-    'ContextType'
+    'ContextType',
+    'TemporalReasoner',
+    'TemporalContext',
+    'TemporalReference'
 ]

@@ -3,7 +3,7 @@ Complex Processor - Handles multi-task, batch, and ambiguous requests using tool
 """
 
 from typing import List
-from datetime import date
+from datetime import date, timedelta
 
 from models.ai_models import ChatMessage, AIResponse, AIAction, ActionType
 from storage.local_storage import LocalStorage
@@ -30,6 +30,8 @@ class ComplexProcessor:
         self.batch_executor = BatchExecutor(storage)
         self.response_builder = ResponseBuilder()
         self.date_utils = DateUtils()
+        self.temporal_reasoner = TemporalReasoner()
+        self.context_manager = None  # Will be set by the main agent
     
     async def process(
         self, 
@@ -212,37 +214,39 @@ class ComplexProcessor:
         )
     
     async def _handle_clear_schedule(self, message: ChatMessage) -> AIResponse:
-        """Handle clear schedule requests"""
-        request_lower = message.content.lower()
+        """Handle clear schedule requests using universal temporal reasoning"""
+        # Use temporal reasoner to understand the time reference
+        temporal_context = self.temporal_reasoner.interpret(message.content)
         
-        # Determine date range
+        # Determine date range based on temporal context
         date_range = None
         start_date = None
         end_date = None
         
-        # Check for specific date references
-        if "tomorrow" in request_lower:
-            # Clear only tomorrow
-            tomorrow = self.date_utils.get_tomorrow()
-            start_date = tomorrow
-            end_date = tomorrow
-        elif "today" in request_lower:
-            # Clear only today
-            today = date.today().isoformat()
-            start_date = today
-            end_date = today
-        elif "week" in request_lower or "this week" in request_lower:
-            date_range = "week"
-        elif "month" in request_lower or "this month" in request_lower:
-            date_range = "month"
-        elif "all" in request_lower or "everything" in request_lower:
+        if temporal_context.reference_type == TemporalReference.ALL_TIME:
             date_range = "all"
-        else:
-            # If no specific range mentioned, ask for clarification or default to today
-            # For safety, default to just today instead of entire week
+        elif temporal_context.reference_type == TemporalReference.RELATIVE_WEEK:
+            # For "this week", use the legacy date_range parameter for backward compatibility
+            if temporal_context.metadata.get("week") == "this":
+                date_range = "week"
+            else:
+                # For other week references (next week, last week), use specific dates
+                start_date, end_date = temporal_context.get_date_range()
+        elif temporal_context.reference_type == TemporalReference.RELATIVE_MONTH:
+            # For "this month", use the legacy date_range parameter
+            if temporal_context.metadata.get("month") == "this":
+                date_range = "month"
+            else:
+                # For other month references, use specific dates
+                start_date, end_date = temporal_context.get_date_range()
+        elif temporal_context.reference_type == TemporalReference.AMBIGUOUS:
+            # If ambiguous, default to today for safety
             today = date.today().isoformat()
             start_date = today
             end_date = today
+        else:
+            # For all other cases (specific dates, relative days, etc.), use the resolved dates
+            start_date, end_date = temporal_context.get_date_range()
         
         # Execute clear operation
         result = await self.orchestrator.clear_schedule(
@@ -259,28 +263,14 @@ class ComplexProcessor:
             elif cleared_count == 1:
                 response = "I've cleared 1 scheduled meal."
             else:
-                # Determine time phrase based on what was actually cleared
-                if start_date and end_date:
-                    if start_date == end_date:
-                        # Single day was cleared
-                        if start_date == date.today().isoformat():
-                            time_phrase = "for today"
-                        elif start_date == self.date_utils.get_tomorrow():
-                            time_phrase = "for tomorrow"
-                        else:
-                            time_phrase = f"for {start_date}"
-                    else:
-                        # Date range was cleared
-                        time_phrase = f"from {start_date} to {end_date}"
-                else:
-                    # Range-based clearing
-                    time_phrase = {
-                        "week": "for this week",
-                        "month": "for this month",
-                        "all": ""
-                    }.get(date_range, "")
+                # Use temporal reasoner to generate natural description
+                time_description = self.temporal_reasoner.describe_context(temporal_context)
                 
-                response = f"I've cleared {cleared_count} scheduled meals {time_phrase}."
+                # Format the response based on what was cleared
+                if temporal_context.reference_type == TemporalReference.ALL_TIME:
+                    response = f"I've cleared all {cleared_count} scheduled meals."
+                else:
+                    response = f"I've cleared {cleared_count} scheduled meals for {time_description}."
             
             return AIResponse(
                 conversational_response=response.strip(),

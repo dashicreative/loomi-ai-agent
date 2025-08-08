@@ -16,6 +16,7 @@ from .production_tools import (
     ToolRegistry
 )
 from .tool_orchestrator import ToolOrchestrator
+from .temporal_tool import TemporalExtractionTool, DateRangeTool
 
 __all__ = [
     'BaseTool',
@@ -29,5 +30,7 @@ __all__ = [
     'ExtractMealTypeTool',
     'ClearScheduleTool',
     'ToolRegistry',
-    'ToolOrchestrator'
+    'ToolOrchestrator',
+    'TemporalExtractionTool',
+    'DateRangeTool'
 ]

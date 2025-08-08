@@ -16,6 +16,7 @@ class ContextType(Enum):
     DATE_CLARIFICATION = "date_clarification"
     MEAL_TYPE_CLARIFICATION = "meal_type_clarification"
     CONFIRMATION_PENDING = "confirmation_pending"
+    LAST_ACTION = "last_action"  # Track last action for corrections
 
 
 @dataclass
@@ -135,6 +136,24 @@ class ConversationContextManager:
         
         response_lower = response.lower().strip()
         
+        # Check for negative/correction responses first
+        negative_responses = {
+            "no", "nope", "not", "wrong", "incorrect", "that's not",
+            "didn't mean", "not what i", "undo", "cancel"
+        }
+        
+        if any(neg in response_lower for neg in negative_responses):
+            # User is correcting or canceling
+            if context.context_type == ContextType.LAST_ACTION:
+                # They want to undo the last action
+                return {
+                    "action": "clarify",
+                    "message": "I apologize for the confusion. What would you like me to do instead?",
+                    "previous_action": context.data.get("action_type"),
+                    "needs_clarification": True
+                }
+            return None  # Clear context and ask for clarification
+        
         # Check for affirmative responses
         affirmative_responses = {
             "yes", "yeah", "yep", "sure", "ok", "okay", 
@@ -212,6 +231,33 @@ class ConversationContextManager:
                 }
         
         return None
+    
+    def store_last_action(
+        self,
+        user_id: str,
+        action_type: str,
+        action_data: Dict[str, Any]
+    ) -> None:
+        """
+        Store the last action performed for potential correction
+        
+        Args:
+            user_id: Unique user identifier
+            action_type: Type of action performed
+            action_data: Data about the action
+        """
+        context = ConversationContext(
+            context_type=ContextType.LAST_ACTION,
+            data={
+                "action_type": action_type,
+                "action_data": action_data,
+                "timestamp": datetime.now().isoformat()
+            },
+            timestamp=datetime.now(),
+            expires_at=datetime.now() + self.context_ttl,
+            user_request=action_data.get("original_request", "")
+        )
+        self.contexts[user_id] = context
     
     def clear_context(self, user_id: str) -> None:
         """Clear context for a user"""

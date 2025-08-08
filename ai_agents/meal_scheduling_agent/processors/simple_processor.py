@@ -11,6 +11,7 @@ from ..parsers.parser_models import ScheduleTask, BatchScheduleAction
 from ..tools.tool_orchestrator import ToolOrchestrator
 from ..utils.response_utils import ResponseBuilder
 from .batch_executor import BatchExecutor
+from ..core.temporal_reasoner import TemporalReasoner
 
 
 class SimpleProcessor:
@@ -23,6 +24,7 @@ class SimpleProcessor:
         self.orchestrator = ToolOrchestrator(storage)
         self.response_builder = ResponseBuilder()
         self.batch_executor = BatchExecutor(storage)
+        self.temporal_reasoner = TemporalReasoner()
     
     async def process(
         self, 
@@ -100,7 +102,7 @@ class SimpleProcessor:
     
     async def _extract_simple_date(self, content: str) -> str:
         """
-        Extract date from simple request using tools
+        Extract date from simple request using temporal reasoning
         
         Args:
             content: User request content
@@ -108,30 +110,14 @@ class SimpleProcessor:
         Returns:
             ISO formatted date string
         """
-        content_lower = content.lower()
+        # Use temporal reasoner for consistent date extraction
+        temporal_context = self.temporal_reasoner.interpret(content)
         
-        # Try common patterns
-        if "tomorrow" in content_lower:
-            result = await self.orchestrator.parse_date_string("tomorrow")
-            if result:
-                return result
+        # Get the start date (for single day references)
+        start_date, _ = temporal_context.get_date_range()
         
-        # Check for weekday patterns
-        weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-        
-        # Check for "next" weekday patterns
-        for weekday in weekdays:
-            if f"next {weekday}" in content_lower:
-                result = await self.orchestrator.parse_date_string(f"next {weekday}")
-                if result:
-                    return result
-        
-        # Check for regular weekday patterns
-        for weekday in weekdays:
-            if weekday in content_lower:
-                result = await self.orchestrator.parse_date_string(weekday)
-                if result:
-                    return result
-        
-        # Default to today
-        return date.today().isoformat()
+        if start_date:
+            return start_date
+        else:
+            # Default to today if no date could be extracted
+            return date.today().isoformat()
