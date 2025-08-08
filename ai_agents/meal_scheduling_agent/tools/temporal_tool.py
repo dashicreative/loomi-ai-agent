@@ -7,7 +7,7 @@ This tool provides consistent temporal understanding across all agent operations
 from typing import Dict, Any, Optional
 from datetime import date, timedelta
 
-from ..core.base_tool import BaseTool, ToolResult, ToolResultStatus
+from ..core.base_tool import BaseTool, ToolResult
 from ..core.temporal_reasoner import TemporalReasoner, TemporalReference
 
 
@@ -26,7 +26,7 @@ class TemporalExtractionTool(BaseTool):
         )
         self.temporal_reasoner = TemporalReasoner()
     
-    async def _execute_impl(self, **kwargs) -> ToolResult:
+    async def _execute(self, **kwargs) -> Dict[str, Any]:
         """
         Extract temporal information from text
         
@@ -41,10 +41,10 @@ class TemporalExtractionTool(BaseTool):
         context_date = kwargs.get("context_date")
         
         if not text:
-            return ToolResult(
-                status=ToolResultStatus.ERROR,
-                error="No text provided for temporal extraction"
-            )
+            return {
+                "success": False,
+                "error": "No text provided for temporal extraction"
+            }
         
         # Use custom reference date if provided
         if context_date:
@@ -86,10 +86,7 @@ class TemporalExtractionTool(BaseTool):
             result_data["success"] = False
             result_data["error"] = f"Could not interpret temporal reference: '{text}'"
         
-        return ToolResult(
-            status=ToolResultStatus.SUCCESS,
-            data=result_data
-        )
+        return result_data
     
     def _validate_params(self, **kwargs) -> Optional[str]:
         """Validate input parameters"""
@@ -110,7 +107,7 @@ class DateRangeTool(BaseTool):
         )
         self.temporal_reasoner = TemporalReasoner()
     
-    async def _execute_impl(self, **kwargs) -> ToolResult:
+    async def _execute(self, **kwargs) -> Dict[str, Any]:
         """
         Perform date range operations
         
@@ -169,16 +166,13 @@ class DateRangeTool(BaseTool):
                         "shifted_by": days
                     }
             
-            return ToolResult(
-                status=ToolResultStatus.SUCCESS,
-                data=result_data
-            )
+            return result_data
             
         except Exception as e:
-            return ToolResult(
-                status=ToolResultStatus.ERROR,
-                error=f"Date operation failed: {str(e)}"
-            )
+            return {
+                "success": False,
+                "error": f"Date operation failed: {str(e)}"
+            }
     
     def _includes_weekend(self, start_date: date, end_date: date) -> bool:
         """Check if date range includes weekend days"""

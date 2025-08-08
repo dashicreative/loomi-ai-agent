@@ -11,6 +11,7 @@ from datetime import date
 from storage.local_storage import LocalStorage
 from models.meal import Meal
 from .production_tools import ToolRegistry
+from .temporal_tool import TemporalExtractionTool
 
 
 class ToolOrchestrator:
@@ -24,6 +25,7 @@ class ToolOrchestrator:
     def __init__(self, storage: LocalStorage):
         self.storage = storage
         self.tools = ToolRegistry(storage)
+        self.temporal_tool = TemporalExtractionTool()
     
     async def get_available_meals(self) -> Tuple[List[str], List[Meal]]:
         """
@@ -125,7 +127,7 @@ class ToolOrchestrator:
         # Use the new temporal extraction tool
         result = await self.temporal_tool.execute(text=date_string)
         
-        if result.status.value == "success" and result.data.get("success"):
+        if result.success and result.data.get("success"):
             # For single day references, return the start date
             return result.data.get("start_date")
         else:
@@ -155,7 +157,7 @@ class ToolOrchestrator:
         """
         result = await self.temporal_tool.execute(text=text)
         
-        if result.status.value == "success":
+        if result.success:
             return result.data
         else:
             return {
