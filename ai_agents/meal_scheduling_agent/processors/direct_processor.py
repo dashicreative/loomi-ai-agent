@@ -730,17 +730,24 @@ class DirectProcessor:
         if match1:
             suggestions_text = match1.group(1)
         else:
-            # Pattern 2: "Here are some options: X, Y, Z!" (LIST_MEALS format)
+            # Pattern 2: "Here are some options: X, Y, Z!" (old LIST_MEALS format - still supported)
             pattern2 = r"here are (?:some )?(?:other )?options?: (.+?)(?:\!|\?|$)"
             match2 = re.search(pattern2, clarification_msg.lower())
             
             if match2:
                 suggestions_text = match2.group(1)
             else:
-                return []
+                # Pattern 3: "We could also go with X, Y, or Z if you'd like?" (new conversational format)
+                pattern3 = r"(?:we could (?:also )?go with|you (?:might|could) (?:enjoy|like|try)|how about trying) (.+?)(?:\?|!|if you|$)"
+                match3 = re.search(pattern3, clarification_msg.lower())
+                
+                if match3:
+                    suggestions_text = match3.group(1)
+                else:
+                    return []
         
-        # Split on "or", "and", and commas
-        suggestions = re.split(r'\s*(?:,\s*|\s+or\s+|\s+and\s+)\s*', suggestions_text)
+        # Split on "or", "and", and commas, handling "maybe" and other conversational words
+        suggestions = re.split(r'\s*(?:,\s*|\s+or\s+(?:maybe\s+)?|\s+and\s+|\s+maybe\s+)\s*', suggestions_text)
         
         # Clean up each suggestion (remove articles, punctuation)
         cleaned_suggestions = []
