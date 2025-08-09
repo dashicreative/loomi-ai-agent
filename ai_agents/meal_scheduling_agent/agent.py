@@ -43,6 +43,11 @@ class EnhancedMealAgent:
         
         # Token estimation (rough approximation - 4 chars per token)
         self.max_history_chars = 12000  # ~3000 tokens for safety
+        
+        # Auto-cycle tracking (per user)
+        self.user_last_activity = {}  # Track last activity timestamp
+        self.user_has_successful_action = {}  # Track if user has at least one successful action
+        self.auto_cycle_minutes = 10  # Auto clear after 10 minutes of inactivity
     
     async def process(self, message: ChatMessage) -> AIResponse:
         """
@@ -57,6 +62,16 @@ class EnhancedMealAgent:
         try:
             # Extract user_id from message context (default to 'default' for now)
             user_id = message.user_context.get("user_id", "default")
+            
+            # Check for auto-cycle timeout
+            if self._should_auto_cycle(user_id):
+                self._clear_user_context(user_id)
+                # Log auto-cycle for debugging
+                print(f"[Auto-cycle] Cleared context for user {user_id} after {self.auto_cycle_minutes} minutes of inactivity")
+            
+            # Update last activity timestamp
+            from datetime import datetime
+            self.user_last_activity[user_id] = datetime.now()
             
             # Check for context-dependent responses first (preserve existing functionality)
             context_resolution = self.context_manager.resolve_affirmative_response(
@@ -120,10 +135,14 @@ class EnhancedMealAgent:
             # Process using LLM-first DirectProcessor with conversation history
             response = await self.processor.process(message, meal_names, user_history)
             
+            # Check if response indicates a successful action was taken
+            if self._is_successful_action(response):
+                self.user_has_successful_action[user_id] = True
+            
             # Check if this is a conversation closure
             if hasattr(response, 'metadata') and response.metadata and response.metadata.get('clear_conversation'):
                 # Clear conversation history for this user
-                self.conversation_history[user_id] = []
+                self._clear_user_context(user_id)
             else:
                 # Update conversation history (keep last 10 turns)
                 user_history.append({
@@ -185,3 +204,63 @@ class EnhancedMealAgent:
             "performance_improvement": "3.4x faster than tool abstraction",
             "code_reduction": "~60% fewer lines than rule-based architecture"
         }
+    
+    def _should_auto_cycle(self, user_id: str) -> bool:
+        """
+        Check if conversation should auto-cycle after 10 minutes of inactivity
+        
+        Args:
+            user_id: User identifier
+            
+        Returns:
+            True if context should be cleared due to inactivity
+        """
+        # No auto-cycle if user hasn't had any successful actions yet
+        if not self.user_has_successful_action.get(user_id, False):
+            return False
+        
+        # No auto-cycle if no last activity recorded
+        if user_id not in self.user_last_activity:
+            return False
+        
+        # Check if 10 minutes have passed since last activity
+        from datetime import datetime, timedelta
+        last_activity = self.user_last_activity[user_id]
+        time_since_activity = datetime.now() - last_activity
+        
+        return time_since_activity > timedelta(minutes=self.auto_cycle_minutes)
+    
+    def _is_successful_action(self, response: AIResponse) -> bool:
+        """
+        Check if response indicates a successful action was taken
+        
+        Args:
+            response: The AI response to check
+            
+        Returns:
+            True if a successful action was taken
+        """
+        # Check for successful scheduling/clearing/etc indicators
+        success_indicators = [
+            "I've scheduled",
+            "I've chosen",
+            "I've cleared",
+            "scheduled for",
+            "Your schedule",
+            "Here's what's scheduled",
+            "Here are your saved meals"
+        ]
+        
+        response_text = response.conversational_response.lower()
+        return any(indicator.lower() in response_text for indicator in success_indicators)
+    
+    def _clear_user_context(self, user_id: str) -> None:
+        """
+        Clear all conversation context for a user
+        
+        Args:
+            user_id: User identifier
+        """
+        self.conversation_history[user_id] = []
+        self.user_has_successful_action[user_id] = False
+        # Keep last_activity to track when context was cleared
