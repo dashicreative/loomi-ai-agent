@@ -65,9 +65,10 @@ class DirectProcessor:
                 conversation_history=conversation_history
             )
             
+            
             # Handle requests based on LLM analysis - Direct execution
             if context.needs_clarification:
-                return self._create_clarification_response(context)
+                return self._create_clarification_response(context, user_id)
             
             # Route to appropriate direct handler with user_id
             if context.intent_type == IntentType.DIRECT_SCHEDULE:
@@ -92,8 +93,28 @@ class DirectProcessor:
         except Exception as e:
             return self.response_builder.unexpected_error(str(e))
     
-    def _create_clarification_response(self, context: LLMRequestContext) -> AIResponse:
+    def _create_clarification_response(self, context: LLMRequestContext, user_id: str = "default") -> AIResponse:
         """Create response requesting clarification"""
+        
+        # Check if clarification includes suggestions that should be stored for follow-up
+        clarification_msg = context.clarification_question or ""
+        
+        # If the clarification message contains meal suggestions (e.g., "How about X or Y instead?")
+        if "how about" in clarification_msg.lower() and "instead" in clarification_msg.lower():
+            # Extract suggestions from the clarification message
+            suggestions = self._extract_suggestions_from_clarification(clarification_msg)
+            
+            if suggestions and self.context_manager:
+                # Store suggestions for follow-up handling
+                self.context_manager.store_suggestions(
+                    user_id=user_id,
+                    suggestions=suggestions,
+                    original_request="schedule meal",
+                    requested_meal="unknown",  # Original meal was not found
+                    date=None,  # Will need to be asked for later
+                    meal_type="dinner"  # Default
+                )
+        
         return AIResponse(
             conversational_response=context.clarification_question,
             actions=[],
@@ -187,6 +208,13 @@ class DirectProcessor:
                         date = entities.get("dates", [None])[0]
                         meal_type = entities.get("meal_types", ["dinner"])[0]
                         
+                        print(f"🔧 [DEBUG] Storing suggestions in context:")
+                        print(f"   - user_id: {user_id}")
+                        print(f"   - suggestions: {suggestions}")
+                        print(f"   - meal_name: {meal_name}")
+                        print(f"   - date: {date}")
+                        print(f"   - meal_type: {meal_type}")
+                        
                         self.context_manager.store_suggestions(
                             user_id=user_id,
                             suggestions=suggestions,
@@ -195,6 +223,10 @@ class DirectProcessor:
                             date=date,
                             meal_type=meal_type
                         )
+                        
+                        print(f"✅ [DEBUG] Context stored successfully for user {user_id}")
+                    else:
+                        print(f"❌ [DEBUG] No context_manager available - suggestions NOT stored!")
                 
                 return AIResponse(
                     conversational_response=error_msg,
@@ -564,8 +596,17 @@ class DirectProcessor:
         )
     
     async def _direct_list_meals(self, conversation_history: Optional[List[Dict]] = None, context: Optional[LLMRequestContext] = None) -> AIResponse:
-        """Direct meal listing with context-aware filtering and 7-meal maximum"""
-        # Direct storage call
+        """LLM-driven meal listing with intelligent suggestions"""
+        # Check if LLM provided a clarification question (intelligent response)
+        if context and context.clarification_question:
+            # Use the LLM's intelligent response instead of hard-coded logic
+            return AIResponse(
+                conversational_response=context.clarification_question,
+                actions=[],
+                model_used="enhanced_meal_agent"
+            )
+        
+        # Fallback: If LLM didn't provide response, use basic meal list
         meals = self.storage.load_meals()
         
         if not meals:
@@ -575,63 +616,10 @@ class DirectProcessor:
                 model_used="enhanced_meal_agent"
             )
         
-        # Determine context from LLM analysis first, then fallback to conversation history
-        occasion_context = None
-        
-        # Check if LLM provided context in metadata
-        if context and hasattr(context, 'entities') and context.entities:
-            meal_types = context.entities.get('meal_types', [])
-            if meal_types:
-                occasion_context = meal_types[0]  # Use first meal type from LLM
-        
-        # If LLM didn't provide context, analyze conversation history
-        if not occasion_context:
-            occasion_context = self._determine_occasion_context(conversation_history)
-        
-        # Filter meals by occasion if context is detected
-        if occasion_context:
-            filtered_meals = [meal for meal in meals if meal.occasion.value == occasion_context]
-            if filtered_meals:
-                meals = filtered_meals
-                context_note = f" for {occasion_context}"
-            else:
-                # No meals for this occasion, show all but mention context
-                context_note = f" (no {occasion_context} meals found, showing all)"
-        else:
-            context_note = ""
-        
-        # Check if this is a follow-up to previous suggestions (exclude already suggested meals)
-        excluded_meals = self._get_previously_suggested_meals(conversation_history)
-        if excluded_meals:
-            # Filter out previously suggested meals
-            meals = [meal for meal in meals if meal.name not in excluded_meals]
-            if context_note:
-                context_note += f" (excluding {', '.join(excluded_meals)})"
-            else:
-                context_note = f" (other options besides {', '.join(excluded_meals)})"
-        
-        # Apply 7-meal maximum constraint
-        max_meals = 7
-        meal_names = [meal.name for meal in meals[:max_meals]]
-        
-        if len(meal_names) == 0:
-            if excluded_meals:
-                response = "I've shown you all your available options! Would you like me to help you with something else?"
-            else:
-                response = f"You don't have any saved meals{context_note}."
-        elif len(meals) <= max_meals:
-            meal_list = ", ".join(meal_names)
-            if excluded_meals:
-                response = f"Here are some other options: {meal_list}!"
-            else:
-                response = f"Here are your saved meals{context_note}: {meal_list}."
-        else:
-            meal_list = ", ".join(meal_names)
-            remaining = len(meals) - max_meals
-            if excluded_meals:
-                response = f"Here are some other options: {meal_list}... and {remaining} more!"
-            else:
-                response = f"Here are your saved meals{context_note}: {meal_list}... and {remaining} more."
+        # Simple fallback response (should rarely be used)
+        meal_names = [meal.name for meal in meals[:3]]  # Max 3 for fallback
+        meal_list = ", ".join(meal_names)
+        response = f"Here are some options: {meal_list}."
         
         return AIResponse(
             conversational_response=response,
@@ -715,6 +703,32 @@ class DirectProcessor:
                             suggested_meals.append(cleaned)
         
         return list(set(suggested_meals))  # Remove duplicates
+    
+    def _extract_suggestions_from_clarification(self, clarification_msg: str) -> List[str]:
+        """Extract meal suggestions from clarification message"""
+        # Pattern to match "How about X or Y instead?" or "How about X instead?"
+        import re
+        pattern = r"how about (.+?)(?:instead|\?)"
+        match = re.search(pattern, clarification_msg.lower())
+        
+        if match:
+            suggestions_text = match.group(1)
+            
+            # Split on "or", "and", and commas
+            suggestions = re.split(r'\s*(?:,\s*|\s+or\s+|\s+and\s+)\s*', suggestions_text)
+            
+            # Clean up each suggestion (remove articles, punctuation)
+            cleaned_suggestions = []
+            for suggestion in suggestions:
+                cleaned = re.sub(r'^(a|an|the)\s+', '', suggestion.strip(' ,.?!'))
+                if cleaned and len(cleaned) > 1:  # Avoid single letters
+                    # Capitalize properly for matching
+                    cleaned = ' '.join(word.capitalize() for word in cleaned.split())
+                    cleaned_suggestions.append(cleaned)
+            
+            return cleaned_suggestions
+        
+        return []
     
     def _find_meal_direct(self, meal_name: str, meals: List[Meal]) -> Optional[Meal]:
         """Direct meal finding - no tool utilities"""

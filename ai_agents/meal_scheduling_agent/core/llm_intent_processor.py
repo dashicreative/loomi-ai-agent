@@ -198,7 +198,7 @@ Return exactly this JSON format:
     "temporal_references": ["original time expressions"]
   }},
   "needs_clarification": true/false,
-  "clarification_question": "specific question if clarification needed",
+  "clarification_question": "specific question if clarification needed OR meal suggestions for LIST_MEALS",
   "execution_plan": [
     {{"action": "schedule_meal|clear_schedule|view_schedule", "meal_name": "exact name", "date": "YYYY-MM-DD", "meal_type": "breakfast|lunch|dinner|snack"}}
   ],
@@ -219,7 +219,12 @@ INTENT TYPES (choose exactly one):
 - AUTONOMOUS_SCHEDULE: User delegates meal choice to agent ("you choose", "pick for me", "surprise me")
 - CLEAR_SCHEDULE: Remove scheduled meals ("Clear next week's meals")
 - VIEW_SCHEDULE: Display current schedule ("What's scheduled for tomorrow")
-- LIST_MEALS: Show available meals ("What meals do I have saved")
+- LIST_MEALS: Show available meals ("What meals do I have saved") 
+  * SPECIAL: For LIST_MEALS, provide intelligent meal suggestions in clarification_question
+  * ALWAYS limit to 2-3 smart suggestions, NEVER list all meals
+  * Context-aware: If rejecting suggestions, exclude previously suggested meals
+  * General requests: Pick 2-3 diverse meals as examples
+  * Use helpful tone: "Here are some options: X, Y, Z!" or "Here are some other options: X, Y, Z!"
 - AMBIGUOUS_SCHEDULE: Missing critical info ("Schedule something")
 - UNKNOWN: Unclear intent ("yes", "no", unrelated responses)
 
@@ -336,14 +341,20 @@ CRITICAL EXAMPLES:
    User: "Schedule me cheesecake" → Agent: "You don't have cheesecake. How about Chicken Parmesan or Lasagna?" → User: "No, what are some other suggestions"
    ANALYSIS: User rejected previous suggestions (Chicken Parmesan, Lasagna) and wants more options
    CONTEXT: Still about scheduling meals, maintain helpful attitude
-   RESULT: intent_type="LIST_MEALS", show remaining meals excluding already suggested ones
-   TONE: "Here are some other options: Steak Dinner, Egg Tacos..." (enthusiastic, helpful)
+   RESULT: intent_type="LIST_MEALS", clarification_question="Here are some other options: Steak Dinner, Egg Tacos, Pancakes!"
+   IMPORTANT: Provide exactly 2-3 smart meal suggestions in clarification_question, excluding already suggested ones
 
 10. Gentle Rejection Example:
     User: "Schedule me pizza" → Agent: "How about Lasagna?" → User: "No, maybe something else"
     ANALYSIS: Soft rejection, wants alternatives but not demanding
-    RESULT: intent_type="LIST_MEALS", gentle tone showing more options
-    TONE: "Of course! Here are some other meals you might like: ..." (understanding, supportive)
+    RESULT: intent_type="LIST_MEALS", clarification_question="Of course! Here are some other meals you might like: Steak Dinner, Grilled Chicken Wraps!"
+    IMPORTANT: Provide 2-3 gentle meal suggestions in clarification_question
+
+11. General Meal Listing Example:
+    User: "What meals can I schedule?"
+    ANALYSIS: General request for available meals
+    RESULT: intent_type="LIST_MEALS", clarification_question="Here are some options: Chicken Parmesan, Steak Dinner, Egg Tacos!"
+    IMPORTANT: Pick 2-3 diverse meals as examples, NEVER list all available meals
 
 Now analyze the request and return the structured JSON response.
 """

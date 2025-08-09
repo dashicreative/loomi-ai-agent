@@ -131,6 +131,7 @@ class ConversationContextManager:
             Resolved action data or None if no context
         """
         context = self.get_context(user_id)
+        
         if not context:
             return None
         
@@ -228,6 +229,26 @@ class ConversationContextManager:
                     "date": context.data.get("date"),
                     "meal_type": context.data.get("meal_type"),
                     "original_request": context.user_request
+                }
+        
+        # Check if this is a date response for completing a scheduling profile
+        if (context.context_type == ContextType.MEAL_SUGGESTIONS and 
+            context.data.get("date") is None and 
+            suggestions):
+            
+            # Check if response looks like a date
+            date_words = ["today", "tomorrow", "monday", "tuesday", "wednesday", 
+                         "thursday", "friday", "saturday", "sunday", "next"]
+            
+            if any(date_word in response_lower for date_word in date_words):
+                # Complete the scheduling profile with the first suggestion and provided date
+                return {
+                    "action": "schedule",
+                    "meal_name": suggestions[0],  # Use first suggestion
+                    "date": response.strip(),     # Use the date response
+                    "meal_type": context.data.get("meal_type", "dinner"),
+                    "original_request": context.user_request,
+                    "date_provided": True  # Flag indicating date was just provided
                 }
         
         return None
