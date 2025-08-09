@@ -84,7 +84,7 @@ class DirectProcessor:
             elif context.intent_type == IntentType.VIEW_SCHEDULE:
                 return await self._direct_view_schedule(context)
             elif context.intent_type == IntentType.LIST_MEALS:
-                return await self._direct_list_meals(conversation_history, context)
+                return await self._direct_list_meals(conversation_history, context, user_id)
             elif context.intent_type == IntentType.CONVERSATION_CLOSURE:
                 return self._create_closure_response(context)
             else:
@@ -99,21 +99,32 @@ class DirectProcessor:
         # Check if clarification includes suggestions that should be stored for follow-up
         clarification_msg = context.clarification_question or ""
         
-        # If the clarification message contains meal suggestions (e.g., "How about X or Y instead?")
+        # Check for meal suggestions in clarification messages
+        suggestions_found = False
+        
+        # Pattern 1: "How about X or Y instead?" (original scheduling suggestions)
         if "how about" in clarification_msg.lower() and "instead" in clarification_msg.lower():
-            # Extract suggestions from the clarification message
             suggestions = self._extract_suggestions_from_clarification(clarification_msg)
-            
-            if suggestions and self.context_manager:
-                # Store suggestions for follow-up handling
-                self.context_manager.store_suggestions(
-                    user_id=user_id,
-                    suggestions=suggestions,
-                    original_request="schedule meal",
-                    requested_meal="unknown",  # Original meal was not found
-                    date=None,  # Will need to be asked for later
-                    meal_type="dinner"  # Default
-                )
+            suggestions_found = True
+        
+        # Pattern 2: "Here are some options: X, Y, Z!" (LIST_MEALS responses)
+        elif "here are" in clarification_msg.lower() and "options" in clarification_msg.lower():
+            suggestions = self._extract_suggestions_from_clarification(clarification_msg)
+            suggestions_found = True
+        
+        else:
+            suggestions = []
+        
+        if suggestions_found and suggestions and self.context_manager:
+            # Store suggestions for follow-up handling
+            self.context_manager.store_suggestions(
+                user_id=user_id,
+                suggestions=suggestions,
+                original_request="list meals" if context.intent_type == IntentType.LIST_MEALS else "schedule meal",
+                requested_meal="unknown",
+                date=None,  # User will provide date when they select a meal
+                meal_type="dinner"  # Default
+            )
         
         return AIResponse(
             conversational_response=context.clarification_question,
@@ -208,13 +219,6 @@ class DirectProcessor:
                         date = entities.get("dates", [None])[0]
                         meal_type = entities.get("meal_types", ["dinner"])[0]
                         
-                        print(f"🔧 [DEBUG] Storing suggestions in context:")
-                        print(f"   - user_id: {user_id}")
-                        print(f"   - suggestions: {suggestions}")
-                        print(f"   - meal_name: {meal_name}")
-                        print(f"   - date: {date}")
-                        print(f"   - meal_type: {meal_type}")
-                        
                         self.context_manager.store_suggestions(
                             user_id=user_id,
                             suggestions=suggestions,
@@ -223,10 +227,6 @@ class DirectProcessor:
                             date=date,
                             meal_type=meal_type
                         )
-                        
-                        print(f"✅ [DEBUG] Context stored successfully for user {user_id}")
-                    else:
-                        print(f"❌ [DEBUG] No context_manager available - suggestions NOT stored!")
                 
                 return AIResponse(
                     conversational_response=error_msg,
@@ -595,10 +595,25 @@ class DirectProcessor:
             model_used="enhanced_meal_agent"
         )
     
-    async def _direct_list_meals(self, conversation_history: Optional[List[Dict]] = None, context: Optional[LLMRequestContext] = None) -> AIResponse:
+    async def _direct_list_meals(self, conversation_history: Optional[List[Dict]] = None, context: Optional[LLMRequestContext] = None, user_id: str = "default") -> AIResponse:
         """LLM-driven meal listing with intelligent suggestions"""
+        
         # Check if LLM provided a clarification question (intelligent response)
         if context and context.clarification_question:
+            # Extract suggestions from the LLM response and store them for follow-up
+            suggestions = self._extract_suggestions_from_clarification(context.clarification_question)
+            
+            if suggestions and self.context_manager:
+                # Store new suggestions for follow-up handling
+                self.context_manager.store_suggestions(
+                    user_id=user_id,
+                    suggestions=suggestions,
+                    original_request="list meals",
+                    requested_meal="unknown",
+                    date=None,  # User will provide date when they select a meal
+                    meal_type="dinner"  # Default
+                )
+            
             # Use the LLM's intelligent response instead of hard-coded logic
             return AIResponse(
                 conversational_response=context.clarification_question,
@@ -706,29 +721,37 @@ class DirectProcessor:
     
     def _extract_suggestions_from_clarification(self, clarification_msg: str) -> List[str]:
         """Extract meal suggestions from clarification message"""
-        # Pattern to match "How about X or Y instead?" or "How about X instead?"
         import re
-        pattern = r"how about (.+?)(?:instead|\?)"
-        match = re.search(pattern, clarification_msg.lower())
         
-        if match:
-            suggestions_text = match.group(1)
-            
-            # Split on "or", "and", and commas
-            suggestions = re.split(r'\s*(?:,\s*|\s+or\s+|\s+and\s+)\s*', suggestions_text)
-            
-            # Clean up each suggestion (remove articles, punctuation)
-            cleaned_suggestions = []
-            for suggestion in suggestions:
-                cleaned = re.sub(r'^(a|an|the)\s+', '', suggestion.strip(' ,.?!'))
-                if cleaned and len(cleaned) > 1:  # Avoid single letters
-                    # Capitalize properly for matching
-                    cleaned = ' '.join(word.capitalize() for word in cleaned.split())
-                    cleaned_suggestions.append(cleaned)
-            
-            return cleaned_suggestions
+        # Pattern 1: "How about X or Y instead?" (original format)
+        pattern1 = r"how about (.+?)(?:instead|\?)"
+        match1 = re.search(pattern1, clarification_msg.lower())
         
-        return []
+        if match1:
+            suggestions_text = match1.group(1)
+        else:
+            # Pattern 2: "Here are some options: X, Y, Z!" (LIST_MEALS format)
+            pattern2 = r"here are (?:some )?(?:other )?options?: (.+?)(?:\!|\?|$)"
+            match2 = re.search(pattern2, clarification_msg.lower())
+            
+            if match2:
+                suggestions_text = match2.group(1)
+            else:
+                return []
+        
+        # Split on "or", "and", and commas
+        suggestions = re.split(r'\s*(?:,\s*|\s+or\s+|\s+and\s+)\s*', suggestions_text)
+        
+        # Clean up each suggestion (remove articles, punctuation)
+        cleaned_suggestions = []
+        for suggestion in suggestions:
+            cleaned = re.sub(r'^(a|an|the)\s+', '', suggestion.strip(' ,.?!'))
+            if cleaned and len(cleaned) > 1:  # Avoid single letters
+                # Capitalize properly for matching
+                cleaned = ' '.join(word.capitalize() for word in cleaned.split())
+                cleaned_suggestions.append(cleaned)
+        
+        return cleaned_suggestions
     
     def _find_meal_direct(self, meal_name: str, meals: List[Meal]) -> Optional[Meal]:
         """Direct meal finding - no tool utilities"""
