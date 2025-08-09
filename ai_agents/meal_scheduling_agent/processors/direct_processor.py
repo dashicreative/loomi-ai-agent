@@ -69,7 +69,7 @@ class DirectProcessor:
             
             # Route to appropriate direct handler
             if context.intent_type == IntentType.DIRECT_SCHEDULE:
-                return await self._direct_schedule_meal(context, available_meals)
+                return await self._direct_schedule_meal(context, available_meals, conversation_history)
             elif context.intent_type == IntentType.BATCH_SCHEDULE:
                 return await self._direct_batch_schedule(context, available_meals)
             elif context.intent_type == IntentType.FILL_SCHEDULE:
@@ -81,7 +81,7 @@ class DirectProcessor:
             elif context.intent_type == IntentType.VIEW_SCHEDULE:
                 return await self._direct_view_schedule(context)
             elif context.intent_type == IntentType.LIST_MEALS:
-                return await self._direct_list_meals()
+                return await self._direct_list_meals(conversation_history, context)
             elif context.intent_type == IntentType.CONVERSATION_CLOSURE:
                 return self._create_closure_response(context)
             else:
@@ -124,7 +124,8 @@ class DirectProcessor:
     async def _direct_schedule_meal(
         self, 
         context: LLMRequestContext, 
-        available_meals: List[str]
+        available_meals: List[str],
+        conversation_history: Optional[List[Dict]] = None
     ) -> AIResponse:
         """Direct meal scheduling - no tool abstraction"""
         entities = context.entities
@@ -155,8 +156,20 @@ class DirectProcessor:
             meal_obj = self.meal_utils.find_meal_by_fuzzy_name(meal_name, meals)
             
             if not meal_obj:
-                # Generate suggestions - Direct approach
-                suggestions = [m.name for m in meals[:3]]  # Simple first 3
+                # Generate context-aware suggestions with 7-meal maximum
+                occasion_context = self._determine_occasion_context(conversation_history)
+                
+                # Filter suggestions by context if available
+                suggestion_meals = meals
+                if occasion_context:
+                    context_filtered = [m for m in meals if m.occasion.value == occasion_context]
+                    if context_filtered:
+                        suggestion_meals = context_filtered
+                
+                # Apply 7-meal maximum and get suggestions
+                max_suggestions = min(3, len(suggestion_meals))
+                suggestions = [m.name for m in suggestion_meals[:max_suggestions]]
+                
                 error_msg = f"You don't have {meal_name} saved."
                 
                 if suggestions:
@@ -532,8 +545,8 @@ class DirectProcessor:
             model_used="enhanced_meal_agent"
         )
     
-    async def _direct_list_meals(self) -> AIResponse:
-        """Direct meal listing - no tool abstraction"""
+    async def _direct_list_meals(self, conversation_history: Optional[List[Dict]] = None, context: Optional[LLMRequestContext] = None) -> AIResponse:
+        """Direct meal listing with context-aware filtering and 7-meal maximum"""
         # Direct storage call
         meals = self.storage.load_meals()
         
@@ -544,21 +557,96 @@ class DirectProcessor:
                 model_used="enhanced_meal_agent"
             )
         
-        meal_names = [meal.name for meal in meals]
+        # Determine context from LLM analysis first, then fallback to conversation history
+        occasion_context = None
         
-        if len(meal_names) <= 10:
-            meal_list = ", ".join(meal_names)
-            response = f"Here are your saved meals: {meal_list}."
+        # Check if LLM provided context in metadata
+        if context and hasattr(context, 'entities') and context.entities:
+            meal_types = context.entities.get('meal_types', [])
+            if meal_types:
+                occasion_context = meal_types[0]  # Use first meal type from LLM
+        
+        # If LLM didn't provide context, analyze conversation history
+        if not occasion_context:
+            occasion_context = self._determine_occasion_context(conversation_history)
+        
+        # Filter meals by occasion if context is detected
+        if occasion_context:
+            filtered_meals = [meal for meal in meals if meal.occasion.value == occasion_context]
+            if filtered_meals:
+                meals = filtered_meals
+                context_note = f" for {occasion_context}"
+            else:
+                # No meals for this occasion, show all but mention context
+                context_note = f" (no {occasion_context} meals found, showing all)"
         else:
-            # Show first 10 and indicate there are more
-            meal_list = ", ".join(meal_names[:10])
-            response = f"Here are some of your saved meals: {meal_list}... and {len(meal_names) - 10} more."
+            context_note = ""
+        
+        # Apply 7-meal maximum constraint
+        max_meals = 7
+        meal_names = [meal.name for meal in meals[:max_meals]]
+        
+        if len(meal_names) == 0:
+            response = f"You don't have any saved meals{context_note}."
+        elif len(meals) <= max_meals:
+            meal_list = ", ".join(meal_names)
+            response = f"Here are your saved meals{context_note}: {meal_list}."
+        else:
+            meal_list = ", ".join(meal_names)
+            remaining = len(meals) - max_meals
+            response = f"Here are your saved meals{context_note}: {meal_list}... and {remaining} more."
         
         return AIResponse(
             conversational_response=response,
             actions=[],
             model_used="enhanced_meal_agent"
         )
+    
+    def _determine_occasion_context(self, conversation_history: Optional[List[Dict]] = None) -> Optional[str]:
+        """Determine meal occasion context from conversation history"""
+        if not conversation_history:
+            return None
+        
+        # Look through recent conversation turns for occasion mentions
+        occasions = ["breakfast", "lunch", "dinner", "snack"]
+        
+        # Check last few turns for occasion context
+        for turn in conversation_history[-3:]:  # Check last 3 turns
+            user_msg = turn.get("user", "").lower()
+            agent_msg = turn.get("agent", "").lower()
+            
+            for occasion in occasions:
+                if occasion in user_msg or occasion in agent_msg:
+                    return occasion
+        
+        # If no explicit occasion found, try to infer from meal names mentioned
+        # Common meal patterns that suggest dinner (most common default)
+        dinner_indicators = ["pizza", "pasta", "steak", "chicken", "beef", "pork", "salmon", "lasagna"]
+        breakfast_indicators = ["pancakes", "eggs", "cereal", "oatmeal", "bagel", "toast", "waffle"]
+        lunch_indicators = ["sandwich", "salad", "soup", "wrap", "burger"]
+        
+        for turn in conversation_history[-2:]:  # Check last 2 turns for meal mentions
+            user_msg = turn.get("user", "").lower()
+            
+            # Check for dinner indicators
+            if any(indicator in user_msg for indicator in dinner_indicators):
+                return "dinner"
+            # Check for breakfast indicators  
+            elif any(indicator in user_msg for indicator in breakfast_indicators):
+                return "breakfast"
+            # Check for lunch indicators
+            elif any(indicator in user_msg for indicator in lunch_indicators):
+                return "lunch"
+        
+        # Default to dinner as it's the most common meal people schedule
+        # Only return default if there's been at least some meal-related conversation
+        meal_related_words = ["schedule", "meal", "eat", "cook", "available"]
+        for turn in conversation_history[-2:]:
+            user_msg = turn.get("user", "").lower()
+            if any(word in user_msg for word in meal_related_words):
+                return "dinner"  # Default context
+        
+        return None
     
     def _find_meal_direct(self, meal_name: str, meals: List[Meal]) -> Optional[Meal]:
         """Direct meal finding - no tool utilities"""
