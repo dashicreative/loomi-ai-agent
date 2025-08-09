@@ -600,19 +600,38 @@ class DirectProcessor:
         else:
             context_note = ""
         
+        # Check if this is a follow-up to previous suggestions (exclude already suggested meals)
+        excluded_meals = self._get_previously_suggested_meals(conversation_history)
+        if excluded_meals:
+            # Filter out previously suggested meals
+            meals = [meal for meal in meals if meal.name not in excluded_meals]
+            if context_note:
+                context_note += f" (excluding {', '.join(excluded_meals)})"
+            else:
+                context_note = f" (other options besides {', '.join(excluded_meals)})"
+        
         # Apply 7-meal maximum constraint
         max_meals = 7
         meal_names = [meal.name for meal in meals[:max_meals]]
         
         if len(meal_names) == 0:
-            response = f"You don't have any saved meals{context_note}."
+            if excluded_meals:
+                response = "I've shown you all your available options! Would you like me to help you with something else?"
+            else:
+                response = f"You don't have any saved meals{context_note}."
         elif len(meals) <= max_meals:
             meal_list = ", ".join(meal_names)
-            response = f"Here are your saved meals{context_note}: {meal_list}."
+            if excluded_meals:
+                response = f"Here are some other options: {meal_list}!"
+            else:
+                response = f"Here are your saved meals{context_note}: {meal_list}."
         else:
             meal_list = ", ".join(meal_names)
             remaining = len(meals) - max_meals
-            response = f"Here are your saved meals{context_note}: {meal_list}... and {remaining} more."
+            if excluded_meals:
+                response = f"Here are some other options: {meal_list}... and {remaining} more!"
+            else:
+                response = f"Here are your saved meals{context_note}: {meal_list}... and {remaining} more."
         
         return AIResponse(
             conversational_response=response,
@@ -665,6 +684,37 @@ class DirectProcessor:
                 return "dinner"  # Default context
         
         return None
+    
+    def _get_previously_suggested_meals(self, conversation_history: Optional[List[Dict]] = None) -> List[str]:
+        """Extract previously suggested meals from conversation history"""
+        if not conversation_history:
+            return []
+        
+        suggested_meals = []
+        
+        # Look for "How about" patterns in agent responses
+        for turn in conversation_history[-3:]:  # Check last 3 turns
+            agent_msg = turn.get("agent", "")
+            
+            # Pattern: "How about X or Y instead?" or "How about X instead?"
+            if "how about" in agent_msg.lower():
+                # Extract meal names between "How about" and "instead"
+                import re
+                pattern = r"how about (.+?)(?:instead|\?)"
+                match = re.search(pattern, agent_msg.lower())
+                if match:
+                    suggestions_text = match.group(1)
+                    # Split on "or", "and", and commas
+                    suggestions = re.split(r'\s*(?:,\s*|\s+or\s+|\s+and\s+)\s*', suggestions_text)
+                    # Clean up each suggestion (remove articles, punctuation)
+                    for suggestion in suggestions:
+                        cleaned = re.sub(r'^(a|an|the)\s+', '', suggestion.strip(' ,.?!'))
+                        if cleaned and len(cleaned) > 1:  # Avoid single letters
+                            # Capitalize properly for matching
+                            cleaned = ' '.join(word.capitalize() for word in cleaned.split())
+                            suggested_meals.append(cleaned)
+        
+        return list(set(suggested_meals))  # Remove duplicates
     
     def _find_meal_direct(self, meal_name: str, meals: List[Meal]) -> Optional[Meal]:
         """Direct meal finding - no tool utilities"""
