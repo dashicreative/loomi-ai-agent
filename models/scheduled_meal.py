@@ -1,4 +1,4 @@
-from datetime import date as DateType
+from datetime import date as DateType, datetime
 from uuid import UUID
 from pydantic import BaseModel, Field
 from .base import BaseEntity
@@ -9,6 +9,7 @@ class ScheduledMeal(BaseEntity):
     meal_id: UUID = Field(..., description="ID of the meal being scheduled", alias="mealId")
     date: DateType = Field(..., description="Date when meal is scheduled")
     occasion: MealOccasion = Field(..., description="Meal occasion (breakfast, lunch, dinner, snack)")
+    created_at: datetime = Field(default_factory=datetime.now, description="When this meal was scheduled (for preference tracking)", alias="createdAt")
     
     model_config = {
         "use_enum_values": True,

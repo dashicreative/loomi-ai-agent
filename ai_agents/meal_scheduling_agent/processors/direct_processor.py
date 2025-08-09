@@ -74,6 +74,8 @@ class DirectProcessor:
                 return await self._direct_batch_schedule(context, available_meals)
             elif context.intent_type == IntentType.FILL_SCHEDULE:
                 return await self._direct_fill_schedule(context, available_meals)
+            elif context.intent_type == IntentType.AUTONOMOUS_SCHEDULE:
+                return await self._direct_autonomous_schedule(context, available_meals)
             elif context.intent_type == IntentType.CLEAR_SCHEDULE:
                 return await self._direct_clear_schedule(context)
             elif context.intent_type == IntentType.VIEW_SCHEDULE:
@@ -334,6 +336,114 @@ class DirectProcessor:
                 })
         
         return self._build_batch_response_direct(scheduled_meals, [])
+    
+    async def _direct_autonomous_schedule(
+        self, 
+        context: LLMRequestContext, 
+        available_meals: List[str]
+    ) -> AIResponse:
+        """Direct autonomous meal scheduling based on user preferences"""
+        entities = context.entities
+        dates = entities.get("dates", [date.today().isoformat()])
+        meal_types = entities.get("meal_types", ["dinner"])
+        
+        # Load meals - Direct storage call
+        meals = self.storage.load_meals()
+        
+        if not meals:
+            return AIResponse(
+                conversational_response="No meals available to choose from.",
+                actions=[],
+                model_used="enhanced_meal_agent"
+            )
+        
+        scheduled_meals = []
+        
+        # Use preference-based recommendations for autonomous scheduling
+        for i, target_date in enumerate(dates):
+            meal_type = meal_types[i % len(meal_types)]
+            
+            # Get recommended meals based on user preferences
+            recommended_meals = self.storage.get_recommended_meals(occasion=meal_type, count=1)
+            
+            if recommended_meals:
+                meal_name = recommended_meals[0]
+                # Find the actual meal object
+                meal_obj = None
+                for meal in meals:
+                    if meal.name == meal_name:
+                        meal_obj = meal
+                        break
+                
+                if meal_obj:
+                    # Create scheduled meal - Direct creation
+                    occasion_mapping = {
+                        "breakfast": MealOccasion.breakfast,
+                        "lunch": MealOccasion.lunch,
+                        "dinner": MealOccasion.dinner,
+                        "snack": MealOccasion.snack
+                    }
+                    occasion = occasion_mapping.get(meal_type.lower(), MealOccasion.dinner)
+                    
+                    scheduled_meal = ScheduledMeal(
+                        meal_id=meal_obj.id,
+                        date=datetime.fromisoformat(target_date).date(),
+                        occasion=occasion
+                    )
+                    
+                    # Direct storage save
+                    saved_meal = self.storage.add_scheduled_meal(scheduled_meal)
+                    scheduled_meals.append({
+                        "meal_name": meal_obj.name,
+                        "date": target_date,
+                        "meal_type": meal_type,
+                        "scheduled_meal_id": str(saved_meal.id)
+                    })
+        
+        # Build response for autonomous scheduling
+        if not scheduled_meals:
+            return AIResponse(
+                conversational_response="I couldn't schedule any meals autonomously.",
+                actions=[],
+                model_used="enhanced_meal_agent"
+            )
+        
+        if len(scheduled_meals) == 1:
+            schedule = scheduled_meals[0]
+            natural_date = self.response_builder.format_natural_date(schedule['date'])
+            response = f"I've chosen {schedule['meal_name']} for your {schedule['meal_type']} {natural_date}! "
+            
+            # Check if this was based on preferences
+            preferences = self.storage.get_meal_preferences()
+            if preferences and schedule['meal_name'] in preferences:
+                frequency = preferences[schedule['meal_name']]['frequency']
+                if frequency > 1:
+                    response += f"This was one of your favorites - you've scheduled it {frequency} times recently."
+                else:
+                    response += "This looked like a great choice based on your meal collection."
+            else:
+                response += "I picked this randomly from your saved meals."
+        else:
+            response = f"I've chosen {len(scheduled_meals)} meals for you:\\n"
+            for schedule in scheduled_meals:
+                natural_date = self.response_builder.format_natural_date(schedule['date'])
+                response += f"• {schedule['meal_name']} ({schedule['meal_type']}) {natural_date}\\n"
+            
+            # Add some context about the selection
+            preferences = self.storage.get_meal_preferences()
+            if preferences:
+                response += "\\nThese choices were based on your scheduling history and preferences."
+            else:
+                response += "\\nI made random selections from your saved meals."
+        
+        # Add closure question
+        response += "\\n\\nDo you need any other schedule-related assistance?"
+        
+        return AIResponse(
+            conversational_response=response.strip(),
+            actions=[],  # Actions already completed
+            model_used="enhanced_meal_agent"
+        )
     
     async def _direct_clear_schedule(self, context: LLMRequestContext) -> AIResponse:
         """Direct schedule clearing - no tool abstraction"""

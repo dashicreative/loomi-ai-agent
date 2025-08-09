@@ -29,6 +29,7 @@ class IntentType(Enum):
     BATCH_SCHEDULE = "batch_schedule" 
     CLEAR_SCHEDULE = "clear_schedule"
     FILL_SCHEDULE = "fill_schedule"
+    AUTONOMOUS_SCHEDULE = "autonomous_schedule"
     VIEW_SCHEDULE = "view_schedule"
     LIST_MEALS = "list_meals"
     AMBIGUOUS_SCHEDULE = "ambiguous_schedule"
@@ -196,6 +197,7 @@ INTENT TYPES (choose exactly one):
 - DIRECT_SCHEDULE: Single meal, specific date ("Schedule pizza for dinner tomorrow")
 - BATCH_SCHEDULE: Multiple meals/dates ("Schedule dinners for the week")
 - FILL_SCHEDULE: Fill empty slots with random meals ("Fill my schedule with random meals")
+- AUTONOMOUS_SCHEDULE: User delegates meal choice to agent ("you choose", "pick for me", "surprise me")
 - CLEAR_SCHEDULE: Remove scheduled meals ("Clear next week's meals")
 - VIEW_SCHEDULE: Display current schedule ("What's scheduled for tomorrow")
 - LIST_MEALS: Show available meals ("What meals do I have saved")
@@ -254,6 +256,14 @@ CRITICAL EXAMPLES:
    Available meals: ["Chicken Parmesan", "Steak Dinner"]
    CORRECT: Match to "Chicken Parmesan" via fuzzy matching
 
+4. User: "You choose" or "Pick for me" or "Surprise me"
+   CORRECT: intent_type="AUTONOMOUS_SCHEDULE", extract dates/meal_types from context
+   CORRECT: Let the agent use preference data to select appropriate meals
+
+5. User: "Yes can you schedule me meals for next week? Just my dinners for each day" followed by "You choose"
+   CORRECT: intent_type="AUTONOMOUS_SCHEDULE", dates=[next 7 days], meal_types=["dinner"]
+   CORRECT: Agent will use preference-based selection for each day
+
 Now analyze the request and return the structured JSON response.
 """
     
@@ -298,6 +308,7 @@ Now analyze the request and return the structured JSON response.
             "BATCH_SCHEDULE": "batch_schedule", 
             "CLEAR_SCHEDULE": "clear_schedule",
             "FILL_SCHEDULE": "fill_schedule",
+            "AUTONOMOUS_SCHEDULE": "autonomous_schedule",
             "VIEW_SCHEDULE": "view_schedule",
             "LIST_MEALS": "list_meals",
             "AMBIGUOUS_SCHEDULE": "ambiguous_schedule",
@@ -308,6 +319,7 @@ Now analyze the request and return the structured JSON response.
             "SCHEDULE_MEAL": "direct_schedule",
             "SCHEDULE": "direct_schedule", 
             "BATCH": "batch_schedule",
+            "AUTONOMOUS": "autonomous_schedule",
             "CLEAR": "clear_schedule",
             "VIEW": "view_schedule",
             "SHOW": "view_schedule",

@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime, date, timedelta
 
 from models.meal import Meal
@@ -200,6 +200,109 @@ class LocalStorage:
     def get_data_directory(self) -> Path:
         """Get the data directory path"""
         return self.data_directory
+    
+    def get_meal_preferences(self, days: int = 60) -> Dict[str, Dict[str, Any]]:
+        """Get meal scheduling preferences based on historical data
+        
+        Args:
+            days: Number of days to look back for preference analysis
+            
+        Returns:
+            Dictionary with meal preferences including frequency and recency data
+        """
+        from datetime import timedelta
+        
+        # Load all scheduled meals
+        scheduled_meals = self.load_scheduled_meals()
+        
+        # Filter to last N days
+        cutoff_date = date.today() - timedelta(days=days)
+        recent_meals = [sm for sm in scheduled_meals if hasattr(sm, 'created_at') and sm.created_at.date() >= cutoff_date]
+        
+        # If no created_at timestamps, fall back to scheduled date
+        if not recent_meals:
+            recent_meals = [sm for sm in scheduled_meals if sm.date >= cutoff_date]
+        
+        # Load meals for name mapping
+        meals = self.load_meals()
+        meal_lookup = {meal.id: meal.name for meal in meals}
+        
+        # Calculate preferences
+        preferences = {}
+        for sm in recent_meals:
+            meal_name = meal_lookup.get(sm.meal_id, "Unknown Meal")
+            
+            if meal_name not in preferences:
+                preferences[meal_name] = {
+                    "frequency": 0,
+                    "last_scheduled": None,
+                    "occasions": {},
+                    "meal_id": sm.meal_id
+                }
+            
+            preferences[meal_name]["frequency"] += 1
+            
+            # Track most recent scheduling
+            schedule_date = sm.created_at.date() if hasattr(sm, 'created_at') else sm.date
+            if not preferences[meal_name]["last_scheduled"] or schedule_date > preferences[meal_name]["last_scheduled"]:
+                preferences[meal_name]["last_scheduled"] = schedule_date
+            
+            # Track occasion preferences
+            occasion = sm.occasion.value if hasattr(sm.occasion, 'value') else str(sm.occasion)
+            preferences[meal_name]["occasions"][occasion] = preferences[meal_name]["occasions"].get(occasion, 0) + 1
+        
+        return preferences
+    
+    def get_recommended_meals(self, occasion: str = "dinner", count: int = 3) -> List[str]:
+        """Get meal recommendations based on user preferences
+        
+        Args:
+            occasion: Meal occasion (breakfast, lunch, dinner, snack)
+            count: Number of recommendations to return
+            
+        Returns:
+            List of recommended meal names
+        """
+        import random
+        
+        preferences = self.get_meal_preferences()
+        meals = self.load_meals()
+        
+        if not preferences:
+            # New user - return random meals
+            return [meal.name for meal in random.sample(meals, min(count, len(meals)))]
+        
+        # Score meals based on frequency and recency
+        scored_meals = []
+        for meal_name, pref_data in preferences.items():
+            # Base score from frequency
+            frequency_score = pref_data["frequency"]
+            
+            # Bonus for occasion preference
+            occasion_score = pref_data["occasions"].get(occasion, 0) * 2
+            
+            # Recency penalty (prefer meals not scheduled recently)
+            recency_penalty = 0
+            if pref_data["last_scheduled"]:
+                days_since = (date.today() - pref_data["last_scheduled"]).days
+                if days_since < 7:
+                    recency_penalty = max(0, 7 - days_since) * 0.5
+            
+            total_score = frequency_score + occasion_score - recency_penalty
+            scored_meals.append((meal_name, total_score))
+        
+        # Sort by score and return top recommendations
+        scored_meals.sort(key=lambda x: x[1], reverse=True)
+        recommended = [meal[0] for meal in scored_meals[:count]]
+        
+        # Fill remaining slots with random meals if needed
+        if len(recommended) < count:
+            all_meal_names = [meal.name for meal in meals]
+            remaining_meals = [name for name in all_meal_names if name not in recommended]
+            additional = random.sample(remaining_meals, min(count - len(recommended), len(remaining_meals)))
+            recommended.extend(additional)
+        
+        return recommended[:count]
     
     def file_exists(self, filename: str) -> bool:
         """Check if a data file exists"""
