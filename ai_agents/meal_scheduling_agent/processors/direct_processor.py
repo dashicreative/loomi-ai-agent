@@ -145,7 +145,7 @@ class DirectProcessor:
     
     def _create_closure_response(self, context: LLMRequestContext) -> AIResponse:
         """Create response for conversation closure"""
-        closure_msg = context.clarification_question or "Great! Have a wonderful meal planning experience. Feel free to come back anytime!"
+        closure_msg = context.clarification_question or "Awesome! I'm always here to help!"
         
         return AIResponse(
             conversational_response=closure_msg,

@@ -231,7 +231,7 @@ INTENT TYPES (choose exactly one):
 SPECIAL CASE - Conversation Closure:
 If user responds "no", "I'm done", "that's all", "nothing else" to "Do you need any other schedule-related assistance?":
 - Set intent_type="CONVERSATION_CLOSURE"
-- Set clarification_question="Great! Have a wonderful meal planning experience. Feel free to come back anytime!"
+- Set clarification_question="Awesome! I'm always here to help!"
 - This signals the end of the current conversation session
 
 CONVERSATIONAL FLOW PATTERNS:
