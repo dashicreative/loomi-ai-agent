@@ -33,17 +33,19 @@ class DirectProcessor:
     storage methods based on LLM understanding.
     """
     
-    def __init__(self, storage: LocalStorage):
+    def __init__(self, storage: LocalStorage, context_manager=None):
         self.storage = storage
         self.llm_intent = LLMIntentProcessor()
         self.response_builder = ResponseBuilder()
         self.meal_utils = MealUtils()
+        self.context_manager = context_manager  # For storing suggestions
     
     async def process(
         self, 
         message: ChatMessage, 
         available_meals: List[str],
-        conversation_history: Optional[List[Dict]] = None
+        conversation_history: Optional[List[Dict]] = None,
+        user_id: str = "default"
     ) -> AIResponse:
         """
         Process any meal scheduling request using LLM + Direct Storage
@@ -67,9 +69,9 @@ class DirectProcessor:
             if context.needs_clarification:
                 return self._create_clarification_response(context)
             
-            # Route to appropriate direct handler
+            # Route to appropriate direct handler with user_id
             if context.intent_type == IntentType.DIRECT_SCHEDULE:
-                return await self._direct_schedule_meal(context, available_meals, conversation_history)
+                return await self._direct_schedule_meal(context, available_meals, conversation_history, user_id)
             elif context.intent_type == IntentType.BATCH_SCHEDULE:
                 return await self._direct_batch_schedule(context, available_meals)
             elif context.intent_type == IntentType.FILL_SCHEDULE:
@@ -125,7 +127,8 @@ class DirectProcessor:
         self, 
         context: LLMRequestContext, 
         available_meals: List[str],
-        conversation_history: Optional[List[Dict]] = None
+        conversation_history: Optional[List[Dict]] = None,
+        user_id: str = "default"
     ) -> AIResponse:
         """Direct meal scheduling - no tool abstraction"""
         entities = context.entities
@@ -177,6 +180,21 @@ class DirectProcessor:
                         error_msg += f" How about {', '.join(suggestions[:-1])} or {suggestions[-1]} instead?"
                     else:
                         error_msg += f" How about {suggestions[0]} instead?"
+                    
+                    # Store suggestions in context for follow-up handling
+                    if self.context_manager:
+                        # Extract date and meal_type from entities for context
+                        date = entities.get("dates", [None])[0]
+                        meal_type = entities.get("meal_types", ["dinner"])[0]
+                        
+                        self.context_manager.store_suggestions(
+                            user_id=user_id,
+                            suggestions=suggestions,
+                            original_request=f"schedule {meal_name}",
+                            requested_meal=meal_name,
+                            date=date,
+                            meal_type=meal_type
+                        )
                 
                 return AIResponse(
                     conversational_response=error_msg,

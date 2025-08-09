@@ -159,14 +159,24 @@ CORE CAPABILITIES:
 - Adaptive responses based on established conversation themes
 
 === TASK: Analyze & Structure Request ===
-Analyze the meal scheduling request and produce a structured JSON execution plan following this STRICT workflow:
-1. Parse natural language request for intent and entities
-2. CRITICAL: Validate ALL meal names against AVAILABLE_MEALS - NEVER suggest meals not in the list
-3. Consider conversation history for context (e.g., if user says "pepperoni" after asking about "pizza")
-4. Classify intent type and complexity level  
-5. Extract ONLY valid meals from available list, dates, meal types, quantities
-6. Generate actionable execution plan or appropriate clarification
-7. Provide reasoning and metadata
+Analyze the meal scheduling request using the SCHEDULING PROFILE concept:
+
+SCHEDULING PROFILE REQUIREMENTS:
+1. MEAL (required) - Which meal to schedule
+2. DATE (required) - When to schedule it
+3. QUANTITY (optional, default=1) - Number of batches
+
+WORKFLOW:
+1. Parse request and check conversation history for context
+2. CRITICAL: If user says "yes", "sure", "ok" after agent suggestions:
+   - This is NOT conversation closure
+   - Extract suggested meal from conversation (usually first suggestion)
+   - Build scheduling profile with that meal
+3. Identify what's present in the scheduling profile
+4. If profile is incomplete (missing meal or date), set needs_clarification=true
+5. CRITICAL: Validate ALL meal names against AVAILABLE_MEALS
+6. Generate execution plan or appropriate clarification
+7. Provide reasoning showing complete profile status
 
 === INPUT: Request Context ===
 REQUEST: "{context['request']}"
@@ -217,6 +227,15 @@ If user responds "no", "I'm done", "that's all", "nothing else" to "Do you need 
 - Set intent_type="CONVERSATION_CLOSURE"
 - Set clarification_question="Great! Have a wonderful meal planning experience. Feel free to come back anytime!"
 - This signals the end of the current conversation session
+
+AFFIRMATIVE RESPONSES:
+When user says "yes", "sure", "ok", "sounds good" etc:
+- Check conversation history for previously suggested meals
+- If agent suggested specific meals, treat as acceptance of first suggestion
+- If scheduling profile is incomplete, ask for missing information:
+  - Missing meal: "Which meal would you like to schedule?"
+  - Missing date: "When would you like to schedule [meal]?"
+- DO NOT treat as conversation closure unless explicitly ending conversation
 
 COMPLEXITY RULES:
 - simple: Single meal + single date + clear entities, OR simple view/list requests
@@ -287,6 +306,18 @@ CRITICAL EXAMPLES:
    APPROACH: Analyze conversation - user mentioned "different dinner" indicating dinner context
    REASONING: Since user specifically asked for dinner options, filter suggestions to dinner meals only
    RESULT: intent_type="LIST_MEALS" with dinner context filtering applied
+
+7. Scheduling Profile Example:
+   User: "Schedule me pizza" → Agent: "You don't have pizza. How about Lasagna or Chicken Parmesan?" → User: "Sure"
+   SCHEDULING PROFILE: Meal=Lasagna (first suggestion), Date=missing
+   REASONING: User accepted suggestion but profile missing date
+   RESULT: intent_type="DIRECT_SCHEDULE", needs_clarification=true, clarification_question="When would you like to schedule Lasagna?"
+
+8. Complete Profile Example:
+   User: "Schedule chicken parmesan for tomorrow dinner"
+   SCHEDULING PROFILE: Meal=Chicken Parmesan ✓, Date=tomorrow ✓, Quantity=1 (default) ✓
+   REASONING: Profile complete, can execute directly
+   RESULT: intent_type="DIRECT_SCHEDULE", needs_clarification=false, execute scheduling
 
 Now analyze the request and return the structured JSON response.
 """

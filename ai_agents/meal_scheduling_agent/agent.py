@@ -34,9 +34,9 @@ class EnhancedMealAgent:
         self.storage = LocalStorage()
         
         # Initialize LLM-first components
-        self.processor = DirectProcessor(self.storage)
-        self.response_builder = ResponseBuilder()
         self.context_manager = ConversationContextManager()
+        self.processor = DirectProcessor(self.storage, self.context_manager)
+        self.response_builder = ResponseBuilder()
         
         # Simple conversation history (per user)
         self.conversation_history = {}
@@ -91,10 +91,24 @@ class EnhancedMealAgent:
                     )
                 
                 # Otherwise, it's a positive response to schedule a meal
+                # Check if we have all required information (scheduling profile)
+                meal_name = context_resolution["meal_name"]
+                date = context_resolution["date"]
+                meal_type = context_resolution["meal_type"]
+                
+                # If date is missing, ask for it
+                if not date:
+                    return AIResponse(
+                        conversational_response=f"When would you like to schedule {meal_name}?",
+                        actions=[],
+                        model_used="enhanced_meal_agent"
+                    )
+                
+                # We have complete profile, proceed with scheduling
                 response = self.response_builder.success_response(
-                    context_resolution["meal_name"],
-                    context_resolution["date"],
-                    context_resolution["meal_type"]
+                    meal_name,
+                    date,
+                    meal_type
                 )
                 
                 # Clear the context after use
@@ -133,7 +147,7 @@ class EnhancedMealAgent:
                 )
             
             # Process using LLM-first DirectProcessor with conversation history
-            response = await self.processor.process(message, meal_names, user_history)
+            response = await self.processor.process(message, meal_names, user_history, user_id)
             
             # Check if response indicates a successful action was taken
             if self._is_successful_action(response):
