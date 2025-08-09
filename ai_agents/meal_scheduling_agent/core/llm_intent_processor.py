@@ -193,26 +193,26 @@ Return exactly this JSON format:
   "intent_type": "EXACT_MATCH_FROM_INTENT_LIST",
   "confidence": 0.0-1.0,
   "complexity": "simple|complex",
-  "entities": {{
+  "entities": {{{{
     "meal_names": ["exact meal names from available list"],
     "dates": ["ISO format: YYYY-MM-DD"],
     "meal_types": ["breakfast|lunch|dinner|snack"],
     "quantities": ["numeric quantities if specified"],
     "temporal_references": ["original time expressions"]
-  }},
+  }}}},
   "needs_clarification": true/false,
   "clarification_question": "specific question if clarification needed OR meal suggestions for LIST_MEALS",
   "execution_plan": [
-    {{"action": "schedule_meal|clear_schedule|view_schedule", "meal_name": "exact name", "date": "YYYY-MM-DD", "meal_type": "breakfast|lunch|dinner|snack"}}
+    {{{{"action": "schedule_meal|clear_schedule|view_schedule", "meal_name": "exact name", "date": "YYYY-MM-DD", "meal_type": "breakfast|lunch|dinner|snack"}}}}
   ],
   "reasoning": "brief explanation of analysis and decisions",
-  "metadata": {{
+  "metadata": {{{{
     "entity_confidence": "confidence in entity extraction",
     "suggested_alternatives": ["alternatives if meal not available"],
     "occasion_context": "detected meal occasion from conversation history",
     "context_filtering_required": true/false
-  }}
-}}
+  }}}}
+}}}}
 
 === CONSTRAINTS: Classification Rules ===
 INTENT TYPES (choose exactly one):
@@ -220,8 +220,13 @@ INTENT TYPES (choose exactly one):
 - BATCH_SCHEDULE: Multiple meals/dates ("Schedule dinners for the week")
 - FILL_SCHEDULE: Fill empty slots with random meals ("Fill my schedule with random meals")
 - AUTONOMOUS_SCHEDULE: User delegates meal choice to agent ("you choose", "pick for me", "surprise me")
-- CLEAR_SCHEDULE: Remove scheduled meals ("Clear next week's meals")
-- VIEW_SCHEDULE: Display current schedule ("What's scheduled for tomorrow")
+- CLEAR_SCHEDULE: Remove/delete/clear scheduled meals ("Clear my schedule", "Remove all meals", "Delete my schedule for the month")
+  * Keywords: clear, remove, delete, cancel, wipe, empty
+  * CRITICAL: This is about REMOVING existing scheduled meals, NOT scheduling new ones
+  * Time ranges: today, week, month, specific dates, all/entire
+- VIEW_SCHEDULE: Display/show/check current schedule ("What's scheduled for tomorrow", "Show me this month's meals")
+  * Keywords: show, view, what's scheduled, check, display, see
+  * CRITICAL: This is about VIEWING existing schedule, NOT scheduling new meals
 - LIST_MEALS: Show available meals ("What meals do I have saved") 
   * SPECIAL: For LIST_MEALS, provide intelligent meal suggestions in clarification_question
   * ALWAYS limit to 2-3 smart suggestions, NEVER list all meals
@@ -307,8 +312,16 @@ QUALITY STANDARDS:
 CRITICAL EXAMPLES:
 1. User: "Schedule pizza for tomorrow"
    Available meals: ["Lasagna", "Chicken Parmesan", "Steak Dinner"]
-   CORRECT: needs_clarification=true, clarification_question="You don't have pizza saved. How about Lasagna or Chicken Parmesan instead?"
+   CORRECT: intent_type="DIRECT_SCHEDULE", needs_clarification=true, clarification_question="You don't have pizza saved. How about Lasagna or Chicken Parmesan instead?"
    WRONG: "Which type of pizza would you like?"
+
+1a. User: "Clear my entire meal schedule for the month"
+   CORRECT: intent_type="CLEAR_SCHEDULE", entities={{"temporal_references": ["month"]}}
+   WRONG: intent_type="DIRECT_SCHEDULE" or asking "What meal would you like to schedule?"
+
+1b. User: "What meals are scheduled for this month?"
+   CORRECT: intent_type="VIEW_SCHEDULE", entities={{"temporal_references": ["month"]}}
+   WRONG: intent_type="VIEW_SCHEDULE" with entities={{"dates": ["today"]}} or suggesting meals to schedule
 
 2. User: "pepperoni" (after previous pizza discussion)
    CORRECT: Understand from context this relates to pizza type, but still validate against available meals
