@@ -216,7 +216,7 @@ class DirectProcessor:
                     # Store suggestions in context for follow-up handling
                     if self.context_manager:
                         # Extract date and meal_type from entities for context
-                        date = entities.get("dates", [None])[0]
+                        extracted_date = entities.get("dates", [None])[0]
                         meal_type = entities.get("meal_types", ["dinner"])[0]
                         
                         self.context_manager.store_suggestions(
@@ -224,7 +224,7 @@ class DirectProcessor:
                             suggestions=suggestions,
                             original_request=f"schedule {meal_name}",
                             requested_meal=meal_name,
-                            date=date,
+                            date=extracted_date,
                             meal_type=meal_type
                         )
                 
