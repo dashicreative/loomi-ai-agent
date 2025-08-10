@@ -627,21 +627,55 @@ class DirectProcessor:
                         response += f"  • {meal['meal_name']} ({occasion_name})\n"
         
         elif any("week" in ref.lower() for ref in temporal_refs):
-            # View week - implement similar logic
-            response = "Week view not yet implemented. Showing today instead.\n"
-            target_date = date.today()
-            scheduled_meals = self.storage.get_scheduled_meals_by_date(target_date)
+            # View current week
+            from datetime import date as date_module
+            today = date_module.today()
             
-            if not scheduled_meals:
-                natural_date = self.response_builder.format_natural_date(target_date.isoformat())
-                response = f"No meals scheduled for {natural_date}."
+            # Calculate week boundaries (Monday to Sunday)
+            days_since_monday = today.weekday()
+            week_start = today - timedelta(days=days_since_monday)
+            week_end = week_start + timedelta(days=6)
+            
+            # Get all meals in the week range
+            all_scheduled = self.storage.load_scheduled_meals()
+            week_meals = []
+            
+            # Also load meal details for display
+            meals = self.storage.load_meals()
+            meal_lookup = {meal.id: meal for meal in meals}
+            
+            for scheduled_meal in all_scheduled:
+                if week_start <= scheduled_meal.date <= week_end:
+                    meal_obj = meal_lookup.get(scheduled_meal.meal_id)
+                    if meal_obj:
+                        week_meals.append({
+                            'date': scheduled_meal.date.isoformat(),
+                            'meal_name': meal_obj.name,
+                            'meal_occasion': scheduled_meal.occasion,
+                            'weekday': scheduled_meal.date.strftime('%A')
+                        })
+            
+            if not week_meals:
+                response = f"No meals scheduled for this week ({week_start.strftime('%B %d')} - {week_end.strftime('%B %d')})."
             else:
-                natural_date = self.response_builder.format_natural_date(target_date.isoformat())
-                response = f"Here's what's scheduled for {natural_date}:\n"
+                response = f"Here's what's scheduled for this week ({week_start.strftime('%B %d')} - {week_end.strftime('%B %d')}):\n"
                 
-                for meal in scheduled_meals:
-                    occasion_name = meal.meal_occasion.value.replace('_', ' ').title()
-                    response += f"• {meal.meal_name} ({occasion_name})\n"
+                # Group by date
+                meals_by_date = {}
+                for meal in week_meals:
+                    meal_date = meal['date']
+                    if meal_date not in meals_by_date:
+                        meals_by_date[meal_date] = []
+                    meals_by_date[meal_date].append(meal)
+                
+                # Sort dates and display
+                for meal_date in sorted(meals_by_date.keys()):
+                    date_obj = datetime.fromisoformat(meal_date).date()
+                    response += f"\n{date_obj.strftime('%A, %B %d')}:\n"
+                    for meal in meals_by_date[meal_date]:
+                        # meal_occasion is already a MealOccasion enum value
+                        occasion_name = str(meal['meal_occasion']).replace('_', ' ').title()
+                        response += f"  • {meal['meal_name']} ({occasion_name})\n"
         
         else:
             # Get specific date from entities or default to today
@@ -661,9 +695,15 @@ class DirectProcessor:
                 natural_date = self.response_builder.format_natural_date(target_date.isoformat())
                 response = f"Here's what's scheduled for {natural_date}:\n"
                 
-                for meal in scheduled_meals:
-                    occasion_name = meal.meal_occasion.value.replace('_', ' ').title()
-                    response += f"• {meal.meal_name} ({occasion_name})\n"
+                # Load meal details to get names
+                meals = self.storage.load_meals()
+                meal_lookup = {meal.id: meal for meal in meals}
+                
+                for scheduled_meal in scheduled_meals:
+                    meal_obj = meal_lookup.get(scheduled_meal.meal_id)
+                    if meal_obj:
+                        occasion_name = scheduled_meal.occasion.value.replace('_', ' ').title()
+                        response += f"• {meal_obj.name} ({occasion_name})\n"
         
         return AIResponse(
             conversational_response=response.strip(),
