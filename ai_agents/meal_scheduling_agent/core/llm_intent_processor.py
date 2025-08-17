@@ -223,15 +223,17 @@ EXAMPLES OF CORRECT FILTERING:
 CRITICAL: Accurately calculate dates from temporal expressions using the provided TODAY date.
 
 WEEKDAY CALCULATION RULES:
-- Monday = 0, Tuesday = 1, Wednesday = 2, Thursday = 3, Friday = 4, Saturday = 5, Sunday = 6
+- Sunday = 0, Monday = 1, Tuesday = 2, Wednesday = 3, Thursday = 4, Friday = 5, Saturday = 6
 - "next [weekday]" = the next occurrence of that weekday (if today is Sunday and user says "next Tuesday", that's in 2 days)
 - "this [weekday]" = this week's occurrence (if already passed, treat as "next [weekday]")
+- "this week" = Sunday to Saturday, starting from today (Sunday) if today is Sunday
 
 CALCULATION EXAMPLES (TODAY is {context['current_date']}):
 - Today is Sunday (2025-08-17): "next Tuesday" = 2025-08-19 (Tuesday, +2 days)
 - Today is Sunday (2025-08-17): "next Friday" = 2025-08-22 (Friday, +5 days)  
 - Today is Sunday (2025-08-17): "tomorrow" = 2025-08-18 (Monday, +1 day)
-- Today is Sunday (2025-08-17): "next week" = dates starting 2025-08-18
+- Today is Sunday (2025-08-17): "this week" = 2025-08-17 (today) to 2025-08-23 (Saturday)
+- Today is Sunday (2025-08-17): "next week" = 2025-08-24 (Sunday) to 2025-08-30 (Saturday)
 
 VALIDATION: Always double-check that your calculated date matches the requested weekday name.
 

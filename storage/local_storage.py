@@ -134,10 +134,10 @@ class LocalStorage:
             return original_count
         
         elif date_range == "week":
-            # Clear meals for current week (Monday to Sunday)
+            # Clear meals for current week (Sunday to Saturday)
             today = date.today()
-            days_since_monday = today.weekday()  # Monday is 0
-            start_of_week = today - timedelta(days=days_since_monday)
+            days_since_sunday = (today.weekday() + 1) % 7  # Convert Monday=0 to Sunday=0
+            start_of_week = today - timedelta(days=days_since_sunday)
             end_of_week = start_of_week + timedelta(days=6)
             
             filtered_meals = [sm for sm in scheduled_meals if not (start_of_week <= sm.date <= end_of_week)]

@@ -613,9 +613,9 @@ class DirectProcessor:
             from datetime import date as date_module
             today = date_module.today()
             
-            # Calculate week boundaries (Monday to Sunday)
-            days_since_monday = today.weekday()
-            week_start = today - timedelta(days=days_since_monday)
+            # Calculate week boundaries (Sunday to Saturday)
+            days_since_sunday = (today.weekday() + 1) % 7  # Convert Monday=0 to Sunday=0
+            week_start = today - timedelta(days=days_since_sunday)
             week_end = week_start + timedelta(days=6)
             
             # Get all meals in the week range
