@@ -474,33 +474,15 @@ class DirectProcessor:
         if len(scheduled_meals) == 1:
             schedule = scheduled_meals[0]
             natural_date = self.response_builder.format_natural_date(schedule['date'])
-            response = f"I've chosen {schedule['meal_name']} for your {schedule['meal_type']} {natural_date}! "
-            
-            # Check if this was based on preferences
-            preferences = self.storage.get_meal_preferences()
-            if preferences and schedule['meal_name'] in preferences:
-                frequency = preferences[schedule['meal_name']]['frequency']
-                if frequency > 1:
-                    response += f"This was one of your favorites - you've scheduled it {frequency} times recently."
-                else:
-                    response += "This looked like a great choice based on your meal collection."
-            else:
-                response += "I picked this randomly from your saved meals."
+            response = f"I've chosen {schedule['meal_name']} for your {schedule['meal_type']} {natural_date}!"
         else:
-            response = f"I've chosen {len(scheduled_meals)} meals for you:\\n"
+            response = f"I've chosen {len(scheduled_meals)} meals for you:\n"
             for schedule in scheduled_meals:
                 natural_date = self.response_builder.format_natural_date(schedule['date'])
-                response += f"• {schedule['meal_name']} ({schedule['meal_type']}) {natural_date}\\n"
-            
-            # Add some context about the selection
-            preferences = self.storage.get_meal_preferences()
-            if preferences:
-                response += "\\nThese choices were based on your scheduling history and preferences."
-            else:
-                response += "\\nI made random selections from your saved meals."
+                response += f"• {schedule['meal_name']} ({schedule['meal_type']}) {natural_date}\n"
         
         # Add closure question
-        response += "\\n\\nDo you need any other schedule-related assistance?"
+        response += "\n\nDo you need any other schedule-related assistance?"
         
         return AIResponse(
             conversational_response=response.strip(),
