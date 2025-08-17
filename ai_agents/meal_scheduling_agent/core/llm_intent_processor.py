@@ -88,7 +88,7 @@ class LLMIntentProcessor:
             "UNKNOWN": "Cannot determine what user wants to do"
         }
     
-    async def understand_request(self, request: str, available_meals: List[str], current_schedule: Optional[Dict] = None, conversation_history: Optional[List[Dict]] = None) -> LLMRequestContext:
+    async def understand_request(self, request: str, available_meals: List[str], current_schedule: Optional[Dict] = None, conversation_history: Optional[List[Dict]] = None, task_queue_state: Optional[Dict] = None) -> LLMRequestContext:
         """
         Analyze user request with LLM to understand intent, extract entities, and determine complexity
         
@@ -96,6 +96,8 @@ class LLMIntentProcessor:
             request: User's natural language request
             available_meals: List of available meal names
             current_schedule: Optional current schedule context
+            conversation_history: Previous conversation context
+            task_queue_state: Current task queue state for persistence
             
         Returns:
             LLMRequestContext with full analysis
@@ -106,7 +108,8 @@ class LLMIntentProcessor:
             "available_meals": available_meals[:20],  # Limit to prevent token overflow
             "current_date": datetime.now().isoformat()[:10],
             "intent_types": self.intent_descriptions,
-            "conversation_history": conversation_history or []
+            "conversation_history": conversation_history or [],
+            "task_queue_state": task_queue_state or {"has_active_request": False}
         }
         
         if current_schedule:
@@ -148,6 +151,26 @@ class LLMIntentProcessor:
                 history_text += f"User: {turn.get('user', '')}\n"
                 history_text += f"Agent: {turn.get('agent', '')}\n"
         
+        # Format task queue state if present
+        task_queue_text = ""
+        task_state = context.get('task_queue_state', {})
+        if task_state.get('has_active_request', False):
+            task_queue_text = f"\n\nTASK QUEUE STATE:\n"
+            task_queue_text += f"Original Request: {task_state.get('original_request', 'N/A')}\n"
+            task_queue_text += f"Pending Tasks: {task_state.get('pending_count', 0)}\n"
+            
+            current_task = task_state.get('current_task')
+            if current_task:
+                task_queue_text += f"Current Task: {current_task.original_request_part} "
+                task_queue_text += f"(Status: {current_task.status.value})\n"
+            
+            # Show task list for context
+            if task_state.get('tasks'):
+                task_queue_text += "All Tasks:\n"
+                for task in task_state['tasks']:
+                    status_icon = "✅" if task['status'] == 'completed' else "🔄" if task['status'] == 'in_progress' else "⏳"
+                    task_queue_text += f"  {status_icon} {task['original_part']} ({task['status']})\n"
+        
         return f"""
 === ROLE: Expert Meal Scheduling Assistant ===
 You are a HELPFUL, FRIENDLY Expert Meal Scheduling Assistant equipped with full conversation context awareness. You excel at conversational flow and gracefully handling user feedback. Your personality is supportive and solution-oriented - when users reject suggestions, you enthusiastically offer alternatives rather than giving up. IMPORTANT: Always refer to meals as "your saved meals" or "your meals" - never "my meals" or "our meals" as you are an assistant helping users manage THEIR meal collection.
@@ -181,8 +204,16 @@ SCHEDULING PROFILE REQUIREMENTS:
 
 🚫 NEVER AUTO-SELECT: Always ask for clarification when specific meal name is missing, even if only one meal of that occasion exists
 
+🔧 TASK QUEUE INTEGRATION:
+You have access to a task queue system for systematic multi-task management:
+- ALWAYS check TASK QUEUE STATE first before processing requests
+- If current_task exists, prioritize completing it
+- If user provides clarification for current_task, complete it and continue with pending tasks
+- For new multi-task requests, break them into individual tasks
+- NEVER lose track of pending tasks due to clarification interruptions
+
 WORKFLOW:
-1. Parse request and check conversation history for context
+1. Parse request and check TASK QUEUE STATE + conversation history for context
 2. CRITICAL: If user says "yes", "sure", "ok" after agent suggestions:
    - This is NOT conversation closure
    - Extract suggested meal from conversation (usually first suggestion)
@@ -253,7 +284,7 @@ VALIDATION: Always double-check that your calculated date matches the requested 
 === INPUT: Request Context ===
 REQUEST: "{context['request']}"
 AVAILABLE_MEALS: {context['available_meals']}
-TODAY: {context['current_date']}{history_text}
+TODAY: {context['current_date']}{history_text}{task_queue_text}
 
 === OUTPUT: Required JSON Structure ===
 Return exactly this JSON format:
@@ -546,6 +577,21 @@ CRITICAL EXAMPLES:
     CORRECT: intent_type="DIRECT_SCHEDULE", entities={{"meal_names": ["Steak Dinner"], "dates": ["2025-08-18"], "meal_types": ["dinner"]}}, execution_plan=[{{"action": "schedule_meal", "meal_name": "Steak Dinner", "date": "2025-08-18", "meal_type": "dinner"}}], clarification_question="I've scheduled Steak Dinner for tomorrow! Now, what breakfast would you like for Tuesday? Here are some suggestions: • Egg Tacos • Pancakes"
     WRONG: Treating "Yes" as general help request: "How can I help you with your meals?" (loses track of pending Tuesday breakfast)
     REASONING: Must systematically track and complete ALL tasks from original multi-task request, even through clarification interruptions
+
+22. CRITICAL: Task Queue Integration Example:
+    TASK QUEUE STATE:
+    Original Request: "Schedule dinner tomorrow and breakfast Tuesday"
+    Current Task: dinner tomorrow (Status: pending)
+    All Tasks:
+      ⏳ dinner tomorrow (pending)
+      ⏳ breakfast Tuesday (pending)
+    
+    User: "Yes" (confirming Steak Dinner)
+    ANALYSIS: User confirmed meal for current_task. Check task queue - there's a pending breakfast Tuesday task
+    CORRECT: Complete current task (dinner tomorrow) + continue with next pending task (breakfast Tuesday)
+    CORRECT: intent_type="DIRECT_SCHEDULE", execution_plan=[{{"action": "schedule_meal", "meal_name": "Steak Dinner", "date": "2025-08-18", "meal_type": "dinner"}}], clarification_question="I've scheduled Steak Dinner for tomorrow! Now, what breakfast would you like for Tuesday? Here are some suggestions: • Egg Tacos • Pancakes"
+    WRONG: Ignoring task queue and treating as standalone "Yes": "How can I help you with your meals?"
+    REASONING: Task queue ensures systematic completion of all tasks from original multi-task request
 
 Now analyze the request and return the structured JSON response.
 """

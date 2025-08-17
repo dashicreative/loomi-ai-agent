@@ -23,6 +23,7 @@ from storage.local_storage import LocalStorage
 from ..core.llm_intent_processor import LLMIntentProcessor, LLMRequestContext, IntentType
 from ..utils.response_utils import ResponseBuilder
 from ..utils.meal_utils import MealUtils
+from ..utils.task_queue import TaskQueueManager, TaskDetails, TaskType, TaskStatus
 
 
 class DirectProcessor:
@@ -38,7 +39,7 @@ class DirectProcessor:
         self.llm_intent = LLMIntentProcessor()
         self.response_builder = ResponseBuilder()
         self.meal_utils = MealUtils()
-        # Context manager removed - using LLM conversation history approach
+        self.task_queue = TaskQueueManager()  # LLM-first task persistence
     
     async def process(
         self, 
@@ -58,13 +59,22 @@ class DirectProcessor:
             AIResponse with the result
         """
         try:
-            # Use LLM to understand the request with conversation history
+            # STEP 1: Check task queue state for context
+            task_queue_summary = self.task_queue.get_queue_summary(user_id)
+            current_task = self.task_queue.get_current_task(user_id)
+            
+            # STEP 2: Use LLM to understand the request with full context
             context = await self.llm_intent.understand_request(
                 message.content, 
                 available_meals,
-                conversation_history=conversation_history
+                conversation_history=conversation_history,
+                task_queue_state=task_queue_summary
             )
             
+            # STEP 3: Handle task queue operations based on LLM analysis
+            if self._is_multi_task_request(context):
+                # Break down multi-task request into individual tasks
+                self._create_task_queue_from_context(user_id, message.content, context)
             
             # Handle requests based on LLM analysis - Direct execution
             if context.needs_clarification:
@@ -235,9 +245,15 @@ class DirectProcessor:
         # Direct storage save
         saved_meal = self.storage.add_scheduled_meal(scheduled_meal)
         
-        # Build response - use LLM clarification if available (for multi-task continuations)
-        if context.clarification_question:
-            # Use LLM's response which may include multi-task continuation
+        # Build response - check for task queue continuation first
+        task_queue_summary = self.task_queue.get_queue_summary(user_id)
+        if task_queue_summary.get('has_active_request', False):
+            # Use task queue completion logic for systematic multi-task handling
+            response = self._complete_current_task_and_continue(
+                user_id, meal_obj.name, target_date, meal_type
+            )
+        elif context.clarification_question:
+            # Use LLM's response for other clarification scenarios
             response = context.clarification_question
         else:
             # Default single-task response
@@ -900,3 +916,83 @@ class DirectProcessor:
             actions=actions,
             model_used="enhanced_meal_agent"
         )
+    
+    # === TASK QUEUE MANAGEMENT METHODS ===
+    
+    def _is_multi_task_request(self, context: LLMRequestContext) -> bool:
+        """
+        Check if this is a multi-task request that should be broken into queue
+        
+        Args:
+            context: LLM analysis context
+            
+        Returns:
+            True if request contains multiple tasks
+        """
+        entities = context.entities
+        dates = entities.get("dates", [])
+        meal_types = entities.get("meal_types", [])
+        
+        # Multi-task if multiple dates OR multiple meal types for same date
+        return len(dates) > 1 or len(meal_types) > 1
+    
+    def _create_task_queue_from_context(self, user_id: str, original_request: str, context: LLMRequestContext):
+        """
+        Create task queue from LLM analysis of multi-task request
+        
+        Args:
+            user_id: User identifier
+            original_request: Original request text
+            context: LLM analysis context
+        """
+        # Create task queue from entities
+        task_ids = self.task_queue.parse_multi_task_request(
+            user_id=user_id,
+            request_text=original_request,
+            entities=context.entities
+        )
+        
+        return task_ids
+    
+    def _complete_current_task_and_continue(self, user_id: str, meal_name: str, date: str, meal_type: str) -> str:
+        """
+        Complete current task and get next task clarification
+        
+        Args:
+            user_id: User identifier
+            meal_name: Meal that was scheduled
+            date: Date scheduled
+            meal_type: Meal occasion
+            
+        Returns:
+            Clarification question for next task or completion message
+        """
+        current_task = self.task_queue.get_current_task(user_id)
+        if current_task:
+            # Update and complete current task
+            self.task_queue.update_task(
+                user_id, 
+                current_task.task_id,
+                meal_name=meal_name,
+                status=TaskStatus.COMPLETED
+            )
+            self.task_queue.complete_task(user_id, current_task.task_id)
+        
+        # Check for next pending task
+        next_task = self.task_queue.get_current_task(user_id)
+        if next_task:
+            # Format natural date for next task
+            natural_date = self.response_builder.format_natural_date(next_task.date)
+            occasion = next_task.meal_occasion or "meal"
+            
+            # Get meal suggestions for next task occasion
+            meals = self.storage.load_meals()
+            filtered_meals = [meal for meal in meals if meal.occasion.value == occasion] if occasion != "meal" else meals
+            suggestions = [meal.name for meal in filtered_meals[:3]]
+            
+            suggestion_text = "\n".join(f"• {meal}" for meal in suggestions)
+            
+            return f"I've scheduled {meal_name} for {self.response_builder.format_natural_date(date)}'s {meal_type}! Now, what {occasion} would you like for {natural_date}? Here are some suggestions from your meals:\n{suggestion_text}"
+        else:
+            # All tasks complete
+            return f"I've scheduled {meal_name} for {self.response_builder.format_natural_date(date)}'s {meal_type}! All your requested meals have been scheduled. Do you need any other assistance?"
