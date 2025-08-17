@@ -68,24 +68,13 @@ class DirectProcessor:
             task_queue_summary = self.task_queue.get_queue_summary(user_id)
             current_task = self.task_queue.get_current_task(user_id)
             
-            # STEP 3: Process the current task with full context
-            if current_task:
-                # Process current task from queue
-                current_task_request = f"Schedule {current_task.meal_occasion or 'meal'} {current_task.original_request_part}"
-                context = await self.llm_intent.understand_request(
-                    current_task_request,
-                    available_meals,
-                    conversation_history=conversation_history,
-                    task_queue_state=task_queue_summary
-                )
-            else:
-                # Process standalone request
-                context = await self.llm_intent.understand_request(
-                    message.content, 
-                    available_meals,
-                    conversation_history=conversation_history,
-                    task_queue_state=task_queue_summary
-                )
+            # STEP 3: Process the user's message with task queue context
+            context = await self.llm_intent.understand_request(
+                message.content, 
+                available_meals,
+                conversation_history=conversation_history,
+                task_queue_state=task_queue_summary
+            )
             
             # Handle requests based on LLM analysis - Direct execution
             if context.needs_clarification:
