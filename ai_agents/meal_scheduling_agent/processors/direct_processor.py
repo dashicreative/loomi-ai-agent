@@ -981,9 +981,13 @@ class DirectProcessor:
             occasion = self._extract_meal_occasion(task_text)
             date_part = self._extract_date_reference(task_text)
             
+            # Convert date reference to actual date
+            actual_date = self._convert_date_reference_to_iso(date_part)
+            
             task_details = TaskDetails(
                 task_type=TaskType.SCHEDULE_MEAL,
                 meal_occasion=occasion,
+                date=actual_date,
                 original_request_part=date_part,
                 clarification_needed=True  # Always need meal selection
             )
@@ -1010,6 +1014,39 @@ class DirectProcessor:
             if pattern in task_lower:
                 return pattern
         return "today"  # default
+    
+    def _convert_date_reference_to_iso(self, date_reference: str) -> str:
+        """Convert date reference (like 'tuesday') to ISO date format"""
+        from datetime import date, timedelta
+        
+        today = date.today()
+        date_ref_lower = date_reference.lower()
+        
+        if date_ref_lower == "today":
+            return today.isoformat()
+        elif date_ref_lower == "tomorrow":
+            return (today + timedelta(days=1)).isoformat()
+        else:
+            # Handle weekday names
+            weekdays = {
+                "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+                "friday": 4, "saturday": 5, "sunday": 6
+            }
+            
+            if date_ref_lower in weekdays:
+                target_weekday = weekdays[date_ref_lower]
+                current_weekday = today.weekday()
+                
+                # Calculate days until target weekday
+                days_ahead = (target_weekday - current_weekday) % 7
+                if days_ahead == 0:  # If it's the same weekday, assume next week
+                    days_ahead = 7
+                
+                target_date = today + timedelta(days=days_ahead)
+                return target_date.isoformat()
+        
+        # Fallback to tomorrow
+        return (today + timedelta(days=1)).isoformat()
     
     def _create_task_queue_from_context(self, user_id: str, original_request: str, context: LLMRequestContext):
         """
