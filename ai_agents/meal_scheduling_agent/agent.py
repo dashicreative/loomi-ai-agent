@@ -9,7 +9,7 @@ from typing import List
 
 from models.ai_models import ChatMessage, AIResponse
 from storage.local_storage import LocalStorage
-from .core.conversation_context import ConversationContextManager
+# ConversationContextManager removed - using LLM-first approach with conversation history
 from .processors.direct_processor import DirectProcessor
 from .utils.response_utils import ResponseBuilder
 from .exceptions.meal_exceptions import MealAgentError
@@ -33,9 +33,8 @@ class EnhancedMealAgent:
     def __init__(self):
         self.storage = LocalStorage()
         
-        # Initialize LLM-first components
-        self.context_manager = ConversationContextManager()
-        self.processor = DirectProcessor(self.storage, self.context_manager)
+        # Initialize LLM-first components  
+        self.processor = DirectProcessor(self.storage)
         self.response_builder = ResponseBuilder()
         
         # Simple conversation history (per user)
@@ -76,52 +75,7 @@ class EnhancedMealAgent:
             # Get conversation history for this user (needed for context priority check)
             user_history = self.conversation_history.get(user_id, [])
             
-            # Check for context-dependent responses first (preserve existing functionality)
-            # BUT: If we have conversation history, prioritize LLM-first DirectProcessor
-            if not user_history:  # Only use old context manager if no conversation history
-                context_resolution = self.context_manager.resolve_affirmative_response(
-                    user_id, message.content
-                )
-            else:
-                context_resolution = None  # Let DirectProcessor handle with conversation context
-            
-            if context_resolution:
-                # This is a follow-up to a previous suggestion
-                from models.ai_models import AIAction, ActionType
-                
-                # Check if this is a clarification request (negative response)
-                if context_resolution.get("action") == "clarify":
-                    return AIResponse(
-                        conversational_response=context_resolution["message"],
-                        actions=[],
-                        model_used="enhanced_meal_agent"
-                    )
-                
-                # Otherwise, it's a positive response to schedule a meal
-                # Check if we have all required information (scheduling profile)
-                meal_name = context_resolution["meal_name"]
-                date = context_resolution["date"]
-                meal_type = context_resolution["meal_type"]
-                
-                # If date is missing, ask for it
-                if not date:
-                    return AIResponse(
-                        conversational_response=f"When would you like to schedule {meal_name}?",
-                        actions=[],
-                        model_used="enhanced_meal_agent"
-                    )
-                
-                # We have complete profile, proceed with scheduling
-                response = self.response_builder.success_response(
-                    meal_name,
-                    date,
-                    meal_type
-                )
-                
-                # Clear the context after use
-                self.context_manager.clear_context(user_id)
-                
-                return response
+            # Use LLM-first DirectProcessor for all conversation handling
             
             # Get available meals using direct storage calls
             meals = self.storage.load_meals()

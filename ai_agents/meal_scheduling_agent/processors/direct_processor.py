@@ -33,12 +33,12 @@ class DirectProcessor:
     storage methods based on LLM understanding.
     """
     
-    def __init__(self, storage: LocalStorage, context_manager=None):
+    def __init__(self, storage: LocalStorage):
         self.storage = storage
         self.llm_intent = LLMIntentProcessor()
         self.response_builder = ResponseBuilder()
         self.meal_utils = MealUtils()
-        self.context_manager = context_manager  # For storing suggestions
+        # Context manager removed - using LLM conversation history approach
     
     async def process(
         self, 
@@ -115,16 +115,7 @@ class DirectProcessor:
         else:
             suggestions = []
         
-        if suggestions_found and suggestions and self.context_manager:
-            # Store suggestions for follow-up handling
-            self.context_manager.store_suggestions(
-                user_id=user_id,
-                suggestions=suggestions,
-                original_request="list meals" if context.intent_type == IntentType.LIST_MEALS else "schedule meal",
-                requested_meal="unknown",
-                date=None,  # User will provide date when they select a meal
-                meal_type="dinner"  # Default
-            )
+        # Suggestions are now handled via conversation history instead of context manager
         
         return AIResponse(
             conversational_response=context.clarification_question,
@@ -213,20 +204,7 @@ class DirectProcessor:
                     else:
                         error_msg += f" How about {suggestions[0]} instead?"
                     
-                    # Store suggestions in context for follow-up handling
-                    if self.context_manager:
-                        # Extract date and meal_type from entities for context
-                        extracted_date = entities.get("dates", [None])[0]
-                        meal_type = entities.get("meal_types", ["dinner"])[0]
-                        
-                        self.context_manager.store_suggestions(
-                            user_id=user_id,
-                            suggestions=suggestions,
-                            original_request=f"schedule {meal_name}",
-                            requested_meal=meal_name,
-                            date=extracted_date,
-                            meal_type=meal_type
-                        )
+                    # Suggestions are now handled via conversation history instead of context manager
                 
                 return AIResponse(
                     conversational_response=error_msg,
@@ -710,16 +688,7 @@ class DirectProcessor:
             # Extract suggestions from the LLM response and store them for follow-up
             suggestions = self._extract_suggestions_from_clarification(context.clarification_question)
             
-            if suggestions and self.context_manager:
-                # Store new suggestions for follow-up handling
-                self.context_manager.store_suggestions(
-                    user_id=user_id,
-                    suggestions=suggestions,
-                    original_request="list meals",
-                    requested_meal="unknown",
-                    date=None,  # User will provide date when they select a meal
-                    meal_type="dinner"  # Default
-                )
+            # Suggestions are now handled via conversation history instead of context manager
             
             # Use the LLM's intelligent response instead of hard-coded logic
             return AIResponse(
