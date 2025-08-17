@@ -168,9 +168,18 @@ CORE CAPABILITIES:
 Analyze the meal scheduling request using the SCHEDULING PROFILE concept:
 
 SCHEDULING PROFILE REQUIREMENTS:
-1. MEAL (required) - Which meal to schedule
+1. MEAL (required) - Which specific meal to schedule (NOT just occasion)
 2. DATE (required) - When to schedule it
 3. QUANTITY (optional, default=1) - Number of batches
+
+🔍 CRITICAL VALIDATION RULES:
+- Meal occasion (breakfast/lunch/dinner) is NOT enough - need SPECIFIC meal name
+- "schedule dinner tomorrow" = has date + occasion, but MISSING specific meal → needs_clarification=true
+- "schedule chicken parmesan" = has meal, but MISSING date → needs_clarification=true  
+- "schedule chicken parmesan for dinner tomorrow" = complete profile → can execute directly
+- "schedule lunch tomorrow" = has date + occasion, but MISSING specific meal → needs_clarification=true (EVEN if only 1 lunch meal exists)
+
+🚫 NEVER AUTO-SELECT: Always ask for clarification when specific meal name is missing, even if only one meal of that occasion exists
 
 WORKFLOW:
 1. Parse request and check conversation history for context
@@ -178,10 +187,10 @@ WORKFLOW:
    - This is NOT conversation closure
    - Extract suggested meal from conversation (usually first suggestion)
    - Build scheduling profile with that meal
-3. Identify what's present in the scheduling profile
-4. If profile is incomplete (missing meal or date), set needs_clarification=true
+3. Identify what's present in the scheduling profile (meal name + date)
+4. If profile is incomplete (missing specific meal name or date), set needs_clarification=true
 5. CRITICAL: Validate ALL meal names against AVAILABLE_MEALS
-6. Generate execution plan or appropriate clarification
+6. Generate execution plan or appropriate clarification with occasion filtering
 7. Provide reasoning showing complete profile status
 
 🗓️ WEEK SCHEDULING RULES:
@@ -189,6 +198,42 @@ WORKFLOW:
 - "schedule meals for the week" = Schedule for entire week (7 days)
 - Default to 1 meal per day (dinner) unless user specifies meal types
 - If user says "you choose", use AUTONOMOUS_SCHEDULE for the full week
+
+🍽️ MEAL OCCASION IDENTIFICATION & FILTERING:
+The MVP app supports 6 meal occasions: breakfast, lunch, dinner, snack, dessert, other
+
+CRITICAL FILTERING RULE: When a meal occasion is mentioned (breakfast, lunch, dinner, snack, dessert), 
+ONLY suggest meals that match that exact occasion. NEVER mix occasions in suggestions.
+
+OCCASION DETECTION PATTERNS:
+- "breakfast", "morning meal" → filter to breakfast meals only
+- "lunch", "midday meal" → filter to lunch meals only  
+- "dinner", "evening meal", "supper" → filter to dinner meals only
+- "snack", "snacking" → filter to snack meals only
+- "dessert", "sweet", "after dinner" → filter to dessert meals only
+- No occasion mentioned → show diverse meals from all occasions
+
+EXAMPLES OF CORRECT FILTERING:
+- User: "schedule lunch tomorrow" → Only suggest lunch meals
+- User: "what breakfast options do I have" → Only show breakfast meals
+- User: "dinner for tonight" → Only suggest dinner meals
+- User: "schedule a meal" → Can suggest from any occasion
+
+🗓️ DATE CALCULATION INSTRUCTIONS:
+CRITICAL: Accurately calculate dates from temporal expressions using the provided TODAY date.
+
+WEEKDAY CALCULATION RULES:
+- Monday = 0, Tuesday = 1, Wednesday = 2, Thursday = 3, Friday = 4, Saturday = 5, Sunday = 6
+- "next [weekday]" = the next occurrence of that weekday (if today is Sunday and user says "next Tuesday", that's in 2 days)
+- "this [weekday]" = this week's occurrence (if already passed, treat as "next [weekday]")
+
+CALCULATION EXAMPLES (TODAY is {context['current_date']}):
+- Today is Sunday (2025-08-17): "next Tuesday" = 2025-08-19 (Tuesday, +2 days)
+- Today is Sunday (2025-08-17): "next Friday" = 2025-08-22 (Friday, +5 days)  
+- Today is Sunday (2025-08-17): "tomorrow" = 2025-08-18 (Monday, +1 day)
+- Today is Sunday (2025-08-17): "next week" = dates starting 2025-08-18
+
+VALIDATION: Always double-check that your calculated date matches the requested weekday name.
 
 === INPUT: Request Context ===
 REQUEST: "{context['request']}"
@@ -238,11 +283,12 @@ INTENT TYPES (choose exactly one):
 - LIST_MEALS: Show available meals ("What meals do I have saved") 
   * SPECIAL: For LIST_MEALS, provide intelligent meal suggestions in clarification_question
   * ALWAYS limit to 2-3 smart suggestions, NEVER list all meals
+  * CRITICAL OCCASION FILTERING: If a meal occasion was mentioned, ONLY suggest meals from that occasion
   * Context-aware: If rejecting suggestions, exclude previously suggested meals
   * General requests: Pick 2-3 diverse meals as examples
-  * CRITICAL: Format meal suggestions as a bullet list for future UI integration
   * REQUIRED FORMAT: "Here are some suggestions from your meals:\n• Meal 1\n• Meal 2\n• Meal 3"
   * NEVER expose usage data like "you've scheduled this X times" or "this is one of your favorites"
+  * OCCASION EXAMPLES: "lunch tomorrow" = only lunch meals, "breakfast" = only breakfast meals
 - AMBIGUOUS_SCHEDULE: Missing critical info ("Schedule something")
 - UNKNOWN: Unclear intent ("yes", "no", unrelated responses)
 
@@ -389,6 +435,37 @@ CRITICAL EXAMPLES:
     ANALYSIS: User wants meals for entire next week, default to dinners
     RESULT: intent_type="BATCH_SCHEDULE", needs_clarification=true, clarification_question="I'll schedule dinners for all 7 days of next week. Which meals would you like, or should I choose for you?"
     REASONING: User wants full week but hasn't specified which meals, need to clarify meal selection
+
+13. CRITICAL: Meal Occasion Filtering Example:
+    User: "Can you also schedule lunch for tomorrow?"
+    Available meals: ["Chicken Parmesan" (dinner), "Steak Dinner" (dinner), "Egg Tacos" (breakfast), "Grilled Chicken Wraps" (lunch)]
+    ANALYSIS: User specified "lunch" - must filter to ONLY lunch meals
+    CORRECT: clarification_question="What would you like to schedule for lunch tomorrow? Here are some suggestions from your meals:\n• Grilled Chicken Wraps"
+    WRONG: Suggesting dinner or breakfast meals like "Chicken Parmesan", "Steak Dinner", "Egg Tacos"
+    REASONING: Occasion filtering is CRITICAL - never mix meal types when user specifies an occasion
+
+14. Breakfast Filtering Example:
+    User: "What breakfast options do I have?"
+    Available meals: ["Pancakes" (breakfast), "Egg Tacos" (breakfast), "Chicken Parmesan" (dinner)]
+    CORRECT: clarification_question="Here are some suggestions from your meals:\n• Pancakes\n• Egg Tacos"
+    WRONG: Including any dinner, lunch, snack, or dessert meals
+
+15. CRITICAL: Incomplete Scheduling Profile Example:
+    User: "Schedule dinner tomorrow"
+    ANALYSIS: Has date (tomorrow) + occasion (dinner), but MISSING specific meal name
+    SCHEDULING PROFILE: Date=tomorrow ✓, Meal=missing ❌, Occasion=dinner (for filtering)
+    CORRECT: intent_type="DIRECT_SCHEDULE", needs_clarification=true, clarification_question="What dinner would you like to schedule for tomorrow? Here are some suggestions from your meals:\n• Chicken Parmesan\n• Steak Dinner"
+    WRONG: Auto-selecting a meal like "I've scheduled Chicken Parmesan for dinner tomorrow!"
+    REASONING: Profile incomplete - need specific meal name, not just occasion
+
+16. CRITICAL: Single Meal Occasion Example:
+    User: "Schedule lunch tomorrow"
+    Available meals: ["Grilled Chicken Wraps" (lunch)] - only ONE lunch meal exists
+    ANALYSIS: Has date (tomorrow) + occasion (lunch), but MISSING specific meal name
+    SCHEDULING PROFILE: Date=tomorrow ✓, Meal=missing ❌, Occasion=lunch (for filtering)
+    CORRECT: intent_type="DIRECT_SCHEDULE", needs_clarification=true, clarification_question="What lunch would you like to schedule for tomorrow? Here are some suggestions from your meals:\n• Grilled Chicken Wraps"
+    WRONG: Auto-selecting "I've scheduled Grilled Chicken Wraps for lunch tomorrow!"
+    REASONING: NEVER auto-select even if only one meal exists - always ask for confirmation
 
 Now analyze the request and return the structured JSON response.
 """

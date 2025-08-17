@@ -684,7 +684,11 @@ class DirectProcessor:
                 for scheduled_meal in scheduled_meals:
                     meal_obj = meal_lookup.get(scheduled_meal.meal_id)
                     if meal_obj:
-                        occasion_name = scheduled_meal.occasion.value.replace('_', ' ').title()
+                        # Handle both enum and string occasion types
+                        if hasattr(scheduled_meal.occasion, 'value'):
+                            occasion_name = scheduled_meal.occasion.value.replace('_', ' ').title()
+                        else:
+                            occasion_name = str(scheduled_meal.occasion).replace('_', ' ').title()
                         response += f"• {meal_obj.name} ({occasion_name})\n"
         
         return AIResponse(
