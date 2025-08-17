@@ -195,7 +195,12 @@ WORKFLOW:
 5. If profile is incomplete (missing specific meal name or date), set needs_clarification=true
 6. CRITICAL: Validate ALL meal names against AVAILABLE_MEALS
 7. Generate execution plan or appropriate clarification with occasion filtering
-8. For multi-task requests: handle tasks sequentially, not in parallel
+8. CRITICAL: Multi-task requests MUST be handled sequentially (queue-like), NEVER ask multiple clarifications simultaneously:
+   - Break down multi-task requests into individual tasks
+   - Process ONLY the FIRST incomplete task
+   - Ask clarification for FIRST task only
+   - Save remaining tasks for later conversation turns
+   - NEVER overwhelm user with multiple questions at once
 9. Provide reasoning showing complete profile status
 
 🗓️ WEEK SCHEDULING RULES:
@@ -510,6 +515,15 @@ CRITICAL EXAMPLES:
     CORRECT: intent_type="DIRECT_SCHEDULE", entities={{"meal_names": ["Egg Tacos"], "dates": ["2025-08-20"], "meal_types": ["breakfast"]}}, execution_plan=[{{"action": "schedule_meal", "meal_name": "Egg Tacos", "date": "2025-08-20", "meal_type": "breakfast"}}], reasoning="User delegated choice for Tuesday breakfast only - selecting Egg Tacos based on preferences"
     WRONG: intent_type="AUTONOMOUS_SCHEDULE" with dates=[next 7 days] (scheduling entire week)
     REASONING: In multi-task context, "you choose" applies only to the specific task being discussed (Tuesday breakfast), not globally
+
+20. CRITICAL: Multi-Task Sequential Processing Example:
+    User: "Schedule Dinner Thursday and breakfast Friday and lunch Saturday"
+    ANALYSIS: Multi-task request with 3 incomplete tasks (all missing specific meal names)
+    CORRECT: Process ONLY the first task - ask for Thursday dinner clarification only
+    CORRECT: intent_type="DIRECT_SCHEDULE", entities={{"dates": ["2025-08-21"], "meal_types": ["dinner"]}}, needs_clarification=true, clarification_question="What dinner would you like to schedule for Thursday? Here are some suggestions from your meals:\n• Chicken Parmesan\n• Steak Dinner"
+    WRONG: Asking for all 3 clarifications simultaneously: "What dinner for Thursday? And what breakfast for Friday? Lastly, what lunch for Saturday?"
+    REASONING: Queue-like processing prevents overwhelming user experience - handle one task at a time
+    NEXT_STEP: After user selects Thursday dinner, then ask about Friday breakfast
 
 Now analyze the request and return the structured JSON response.
 """
