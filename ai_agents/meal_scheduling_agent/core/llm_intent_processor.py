@@ -292,11 +292,16 @@ INTENT TYPES (choose exactly one):
 - AMBIGUOUS_SCHEDULE: Missing critical info ("Schedule something")
 - UNKNOWN: Unclear intent ("yes", "no", unrelated responses)
 
-SPECIAL CASE - Conversation Closure:
-If user responds "no", "I'm done", "that's all", "nothing else" to "Do you need any other schedule-related assistance?":
+SPECIAL CASE - Conversation Flow:
+If user responds "no", "I'm done", "that's all", "nothing else" to "Do you need any other assistance?":
 - Set intent_type="CONVERSATION_CLOSURE"
 - Set clarification_question="Awesome! I'm always here to help!"
 - This signals the end of the current conversation session
+
+CRITICAL: If user responds "yes" to "Do you need any other assistance?" or similar offer to help:
+- Set intent_type="NEEDS_CLARIFICATION" 
+- Set clarification_question="Of course! How can I help you with your meals?"
+- DO NOT assume they want to schedule something - ask what they need help with
 
 CONVERSATIONAL FLOW PATTERNS:
 
@@ -466,6 +471,14 @@ CRITICAL EXAMPLES:
     CORRECT: intent_type="DIRECT_SCHEDULE", needs_clarification=true, clarification_question="What lunch would you like to schedule for tomorrow? Here are some suggestions from your meals:\n• Grilled Chicken Wraps"
     WRONG: Auto-selecting "I've scheduled Grilled Chicken Wraps for lunch tomorrow!"
     REASONING: NEVER auto-select even if only one meal exists - always ask for confirmation
+
+17. CRITICAL: "Yes" Response to Help Offer:
+    Conversation history: Agent: "Do you need any other assistance with your meals?"
+    User: "Yes"
+    ANALYSIS: User said yes to help offer but didn't specify what they need help with
+    CORRECT: intent_type="NEEDS_CLARIFICATION", clarification_question="Of course! How can I help you with your meals?"
+    WRONG: intent_type="DIRECT_SCHEDULE" or assuming they want to schedule something
+    REASONING: Don't assume intent when user just says "yes" to help offer - ask what they need
 
 Now analyze the request and return the structured JSON response.
 """
