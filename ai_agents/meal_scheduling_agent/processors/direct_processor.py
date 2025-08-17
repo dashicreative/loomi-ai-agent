@@ -257,12 +257,17 @@ class DirectProcessor:
         # Direct storage save
         saved_meal = self.storage.add_scheduled_meal(scheduled_meal)
         
-        # Build response
-        natural_date = self.response_builder.format_natural_date(target_date)
-        response = f"I've scheduled {meal_obj.name} for {meal_type} {natural_date}!"
-        
-        # Add closure question for single operations
-        response += "\n\nDo you need any other schedule-related assistance?"
+        # Build response - use LLM clarification if available (for multi-task continuations)
+        if context.clarification_question:
+            # Use LLM's response which may include multi-task continuation
+            response = context.clarification_question
+        else:
+            # Default single-task response
+            natural_date = self.response_builder.format_natural_date(target_date)
+            response = f"I've scheduled {meal_obj.name} for {meal_type} {natural_date}!"
+            
+            # Add closure question for single operations
+            response += "\n\nDo you need any other schedule-related assistance?"
         
         # Action already completed by direct storage - no need for iOS to process it
         # Keep action for debugging but mark as completed

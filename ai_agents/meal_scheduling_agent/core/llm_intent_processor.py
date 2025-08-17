@@ -187,11 +187,16 @@ WORKFLOW:
    - This is NOT conversation closure
    - Extract suggested meal from conversation (usually first suggestion)
    - Build scheduling profile with that meal
-3. Identify what's present in the scheduling profile (meal name + date)
-4. If profile is incomplete (missing specific meal name or date), set needs_clarification=true
-5. CRITICAL: Validate ALL meal names against AVAILABLE_MEALS
-6. Generate execution plan or appropriate clarification with occasion filtering
-7. Provide reasoning showing complete profile status
+3. CRITICAL: Multi-task context retention:
+   - If user responds with meal name after agent clarification question, extract temporal context from conversation history
+   - "Let's do steak" after "What dinner for tomorrow?" = Steak Dinner for tomorrow
+   - Complete the first task, then continue with remaining tasks from original request
+4. Identify what's present in the scheduling profile (meal name + date)
+5. If profile is incomplete (missing specific meal name or date), set needs_clarification=true
+6. CRITICAL: Validate ALL meal names against AVAILABLE_MEALS
+7. Generate execution plan or appropriate clarification with occasion filtering
+8. For multi-task requests: handle tasks sequentially, not in parallel
+9. Provide reasoning showing complete profile status
 
 🗓️ WEEK SCHEDULING RULES:
 - "next week's meals" = Schedule meals for ALL 7 days of next week
@@ -481,6 +486,16 @@ CRITICAL EXAMPLES:
     CORRECT: intent_type="NEEDS_CLARIFICATION", clarification_question="Of course! How can I help you with your meals?"
     WRONG: intent_type="DIRECT_SCHEDULE" or assuming they want to schedule something
     REASONING: Don't assume intent when user just says "yes" to help offer - ask what they need
+
+18. CRITICAL: Multi-Task Context Retention:
+    Conversation history: 
+    User: "Schedule me dinner for tomorrow and breakfast for Tuesday"
+    Agent: "What dinner would you like to schedule for tomorrow? Here are some suggestions: • Chicken Parmesan • Steak Dinner"
+    User: "Let's do steak"
+    ANALYSIS: User selected steak from dinner suggestions - context shows steak is for tomorrow's dinner
+    CORRECT: intent_type="DIRECT_SCHEDULE", entities={{"meal_names": ["Steak Dinner"], "dates": ["2025-08-18"], "meal_types": ["dinner"]}}, execution_plan=[{{"action": "schedule_meal", "meal_name": "Steak Dinner", "date": "2025-08-18", "meal_type": "dinner"}}], clarification_question="I've scheduled Steak Dinner for tomorrow's dinner! Now, what breakfast would you like for Tuesday? Here are some suggestions: • Egg Tacos • Pancakes"
+    WRONG: asking "When would you like to schedule your Steak Dinner?" (forgetting tomorrow context)
+    REASONING: Must remember multi-task context - steak was chosen for tomorrow's dinner, now ask about Tuesday's breakfast
 
 Now analyze the request and return the structured JSON response.
 """
