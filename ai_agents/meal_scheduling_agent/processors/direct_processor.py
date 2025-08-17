@@ -59,22 +59,33 @@ class DirectProcessor:
             AIResponse with the result
         """
         try:
-            # STEP 1: Check task queue state for context
+            # STEP 1: Check if this is a new multi-task request and parse it FIRST
+            if self._is_new_multi_task_request(message.content, user_id):
+                # Parse and store individual tasks in queue immediately
+                self._parse_and_queue_multi_task_request(user_id, message.content, available_meals)
+            
+            # STEP 2: Get current task context (either new or existing)
             task_queue_summary = self.task_queue.get_queue_summary(user_id)
             current_task = self.task_queue.get_current_task(user_id)
             
-            # STEP 2: Use LLM to understand the request with full context
-            context = await self.llm_intent.understand_request(
-                message.content, 
-                available_meals,
-                conversation_history=conversation_history,
-                task_queue_state=task_queue_summary
-            )
-            
-            # STEP 3: Handle task queue operations based on LLM analysis
-            if self._is_multi_task_request(context):
-                # Break down multi-task request into individual tasks
-                self._create_task_queue_from_context(user_id, message.content, context)
+            # STEP 3: Process the current task with full context
+            if current_task:
+                # Process current task from queue
+                current_task_request = f"Schedule {current_task.meal_occasion or 'meal'} {current_task.original_request_part}"
+                context = await self.llm_intent.understand_request(
+                    current_task_request,
+                    available_meals,
+                    conversation_history=conversation_history,
+                    task_queue_state=task_queue_summary
+                )
+            else:
+                # Process standalone request
+                context = await self.llm_intent.understand_request(
+                    message.content, 
+                    available_meals,
+                    conversation_history=conversation_history,
+                    task_queue_state=task_queue_summary
+                )
             
             # Handle requests based on LLM analysis - Direct execution
             if context.needs_clarification:
@@ -919,22 +930,97 @@ class DirectProcessor:
     
     # === TASK QUEUE MANAGEMENT METHODS ===
     
-    def _is_multi_task_request(self, context: LLMRequestContext) -> bool:
+    def _is_new_multi_task_request(self, request_text: str, user_id: str) -> bool:
         """
-        Check if this is a multi-task request that should be broken into queue
+        Check if this is a NEW multi-task request (not a clarification for existing tasks)
         
         Args:
-            context: LLM analysis context
+            request_text: User's request text
+            user_id: User identifier
             
         Returns:
-            True if request contains multiple tasks
+            True if this is a new multi-task request
         """
-        entities = context.entities
-        dates = entities.get("dates", [])
-        meal_types = entities.get("meal_types", [])
+        # Check if user already has pending tasks (then this is likely a clarification)
+        existing_tasks = self.task_queue.get_pending_tasks(user_id)
+        if existing_tasks:
+            return False
         
-        # Multi-task if multiple dates OR multiple meal types for same date
-        return len(dates) > 1 or len(meal_types) > 1
+        # Check for multi-task patterns in the request
+        multi_task_indicators = [
+            " and ", " then ", " also ", " plus ",
+            "dinner.*breakfast", "breakfast.*lunch", "lunch.*dinner"
+        ]
+        
+        request_lower = request_text.lower()
+        return any(indicator in request_lower for indicator in multi_task_indicators)
+    
+    def _parse_and_queue_multi_task_request(self, user_id: str, request_text: str, available_meals: List[str]):
+        """
+        Parse multi-task request and create individual tasks in queue
+        
+        Args:
+            user_id: User identifier
+            request_text: Original multi-task request
+            available_meals: Available meal names
+        """
+        # Simple parsing for common patterns
+        # "Schedule dinner tomorrow and breakfast Tuesday" -> 
+        # ["schedule dinner tomorrow", "schedule breakfast Tuesday"]
+        
+        tasks = []
+        
+        # Pattern: "Schedule X and Y"
+        if " and " in request_text.lower():
+            parts = request_text.lower().split(" and ")
+            base_action = "schedule"
+            
+            for i, part in enumerate(parts):
+                part = part.strip()
+                if i == 0:
+                    # First part: "Schedule dinner tomorrow" 
+                    tasks.append(part)
+                else:
+                    # Subsequent parts: "breakfast Tuesday" -> "schedule breakfast Tuesday"
+                    if not part.startswith("schedule"):
+                        part = f"{base_action} {part}"
+                    tasks.append(part)
+        
+        # Create TaskDetails for each parsed task
+        for task_text in tasks:
+            # Extract meal occasion and date from task text
+            occasion = self._extract_meal_occasion(task_text)
+            date_part = self._extract_date_reference(task_text)
+            
+            task_details = TaskDetails(
+                task_type=TaskType.SCHEDULE_MEAL,
+                meal_occasion=occasion,
+                original_request_part=date_part,
+                clarification_needed=True  # Always need meal selection
+            )
+            
+            self.task_queue.add_task(user_id, task_details)
+    
+    def _extract_meal_occasion(self, task_text: str) -> str:
+        """Extract meal occasion from task text"""
+        occasions = ["breakfast", "lunch", "dinner", "snack"]
+        task_lower = task_text.lower()
+        
+        for occasion in occasions:
+            if occasion in task_lower:
+                return occasion
+        return "dinner"  # default
+    
+    def _extract_date_reference(self, task_text: str) -> str:
+        """Extract date reference from task text"""
+        # Simple extraction - look for common date patterns
+        date_patterns = ["tomorrow", "today", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        task_lower = task_text.lower()
+        
+        for pattern in date_patterns:
+            if pattern in task_lower:
+                return pattern
+        return "today"  # default
     
     def _create_task_queue_from_context(self, user_id: str, original_request: str, context: LLMRequestContext):
         """
