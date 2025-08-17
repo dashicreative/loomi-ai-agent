@@ -59,8 +59,13 @@ class EnhancedMealAgent:
             AIResponse with conversational response and actions
         """
         try:
-            # Extract user_id from message context (default to 'default' for now)
+            # Extract user_id from message context 
+            # CRITICAL: iOS app must provide consistent user_id for conversation continuity
             user_id = message.user_context.get("user_id", "default")
+            
+            # Log warning if no user_id provided (debugging aid)
+            if user_id == "default":
+                print(f"[WARNING] No user_id provided - using 'default'. This may cause conversation history conflicts.")
             
             # Check for auto-cycle timeout
             if self._should_auto_cycle(user_id):

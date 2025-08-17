@@ -7,6 +7,16 @@ from ai_agents.meal_scheduling_agent import EnhancedMealAgent
 
 router = APIRouter()
 
+# Persistent agent instance to maintain conversation history across requests
+_enhanced_agent = None
+
+def get_enhanced_agent():
+    """Get singleton enhanced agent instance"""
+    global _enhanced_agent
+    if _enhanced_agent is None:
+        _enhanced_agent = EnhancedMealAgent()
+    return _enhanced_agent
+
 
 @router.post("/", response_model=ChatResponse)
 async def chat(message: ChatMessage):
@@ -17,8 +27,8 @@ async def chat(message: ChatMessage):
     batch scheduling, random meal selection, and complex request handling.
     """
     try:
-        # Initialize the Enhanced Meal Agent
-        enhanced_agent = EnhancedMealAgent()
+        # Get persistent Enhanced Meal Agent instance
+        enhanced_agent = get_enhanced_agent()
         
         # Process the message with the agent
         ai_response = await enhanced_agent.process(message)
