@@ -73,10 +73,17 @@ class EnhancedMealAgent:
             from datetime import datetime
             self.user_last_activity[user_id] = datetime.now()
             
+            # Get conversation history for this user (needed for context priority check)
+            user_history = self.conversation_history.get(user_id, [])
+            
             # Check for context-dependent responses first (preserve existing functionality)
-            context_resolution = self.context_manager.resolve_affirmative_response(
-                user_id, message.content
-            )
+            # BUT: If we have conversation history, prioritize LLM-first DirectProcessor
+            if not user_history:  # Only use old context manager if no conversation history
+                context_resolution = self.context_manager.resolve_affirmative_response(
+                    user_id, message.content
+                )
+            else:
+                context_resolution = None  # Let DirectProcessor handle with conversation context
             
             if context_resolution:
                 # This is a follow-up to a previous suggestion
@@ -122,9 +129,6 @@ class EnhancedMealAgent:
             
             if not meal_names:
                 return self.response_builder.no_meals_error()
-            
-            # Get conversation history for this user
-            user_history = self.conversation_history.get(user_id, [])
             
             # Check if conversation is too long (token limit safeguard)
             history_size = sum(len(turn.get("user", "")) + len(turn.get("agent", "")) for turn in user_history)
