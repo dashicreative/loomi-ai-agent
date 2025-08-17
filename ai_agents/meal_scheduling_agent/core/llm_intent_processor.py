@@ -187,10 +187,13 @@ WORKFLOW:
    - This is NOT conversation closure
    - Extract suggested meal from conversation (usually first suggestion)
    - Build scheduling profile with that meal
-3. CRITICAL: Multi-task context retention:
+3. CRITICAL: Multi-task context retention & task persistence:
    - If user responds with meal name after agent clarification question, extract temporal context from conversation history
    - "Let's do steak" after "What dinner for tomorrow?" = Steak Dinner for tomorrow
-   - Complete the first task, then continue with remaining tasks from original request
+   - SYSTEMATICALLY track ALL pending tasks from original multi-task request
+   - Complete the first task, then IMMEDIATELY continue with remaining tasks from original request
+   - NEVER lose track of pending tasks due to clarification interruptions (typos, confirmations, etc.)
+   - After completing any task, check conversation history for incomplete multi-task components
 4. Identify what's present in the scheduling profile (meal name + date)
 5. If profile is incomplete (missing specific meal name or date), set needs_clarification=true
 6. CRITICAL: Validate ALL meal names against AVAILABLE_MEALS
@@ -280,6 +283,13 @@ Return exactly this JSON format:
 }}}}
 
 === CONSTRAINTS: Classification Rules ===
+
+🚫 ABSOLUTE RULE: NEVER AUTO-SELECT MEALS
+- If specific meal name is missing from user request, ALWAYS set needs_clarification=true
+- NEVER schedule meals without explicit user meal selection
+- This applies even if only ONE meal exists for that occasion
+- "Schedule dinner tomorrow" → MUST ask "What dinner?" (never auto-select)
+
 INTENT TYPES (choose exactly one):
 - DIRECT_SCHEDULE: Single meal, specific date ("Schedule pizza for dinner tomorrow")
 - BATCH_SCHEDULE: Multiple meals/dates ("Schedule dinners for the week")
@@ -524,6 +534,18 @@ CRITICAL EXAMPLES:
     WRONG: Asking for all 3 clarifications simultaneously: "What dinner for Thursday? And what breakfast for Friday? Lastly, what lunch for Saturday?"
     REASONING: Queue-like processing prevents overwhelming user experience - handle one task at a time
     NEXT_STEP: After user selects Thursday dinner, then ask about Friday breakfast
+
+21. CRITICAL: Task Persistence Through Clarification Interruptions:
+    Conversation history:
+    User: "Schedule dinner tomorrow and breakfast Tuesday"
+    Agent: "What dinner would you like to schedule for tomorrow? Here are some suggestions: • Chicken Parmesan • Steak Dinner"
+    User: "Steal" (typo for "Steak")
+    Agent: "It seems like you meant to say 'steak.' Could you please confirm if you want to schedule Steak Dinner?"
+    User: "Yes"
+    ANALYSIS: User confirmed Steak Dinner for tomorrow. CRITICAL: Original request had TWO tasks - dinner tomorrow AND breakfast Tuesday
+    CORRECT: intent_type="DIRECT_SCHEDULE", entities={{"meal_names": ["Steak Dinner"], "dates": ["2025-08-18"], "meal_types": ["dinner"]}}, execution_plan=[{{"action": "schedule_meal", "meal_name": "Steak Dinner", "date": "2025-08-18", "meal_type": "dinner"}}], clarification_question="I've scheduled Steak Dinner for tomorrow! Now, what breakfast would you like for Tuesday? Here are some suggestions: • Egg Tacos • Pancakes"
+    WRONG: Treating "Yes" as general help request: "How can I help you with your meals?" (loses track of pending Tuesday breakfast)
+    REASONING: Must systematically track and complete ALL tasks from original multi-task request, even through clarification interruptions
 
 Now analyze the request and return the structured JSON response.
 """
