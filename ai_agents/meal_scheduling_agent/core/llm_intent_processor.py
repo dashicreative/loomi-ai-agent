@@ -279,7 +279,9 @@ INTENT TYPES (choose exactly one):
 - DIRECT_SCHEDULE: Single meal, specific date ("Schedule pizza for dinner tomorrow")
 - BATCH_SCHEDULE: Multiple meals/dates ("Schedule dinners for the week")
 - FILL_SCHEDULE: Fill empty slots with random meals ("Fill my schedule with random meals")
-- AUTONOMOUS_SCHEDULE: User delegates meal choice to agent ("you choose", "pick for me", "surprise me")
+- AUTONOMOUS_SCHEDULE: User delegates meal choice to agent for MULTIPLE meals/days ("you choose meals for the week", "pick my dinners for next 5 days")
+  * CRITICAL: Only use for bulk/batch autonomous scheduling, NOT single meal delegation
+  * Single meal "you choose" in conversation → use DIRECT_SCHEDULE with agent-selected meal
 - CLEAR_SCHEDULE: Remove/delete/clear scheduled meals ("Clear my schedule", "Remove all meals", "Delete my schedule for the month")
   * Keywords: clear, remove, delete, cancel, wipe, empty
   * CRITICAL: This is about REMOVING existing scheduled meals, NOT scheduling new ones
@@ -397,9 +399,9 @@ CRITICAL EXAMPLES:
    Available meals: ["Chicken Parmesan", "Steak Dinner"]
    CORRECT: Match to "Chicken Parmesan" via fuzzy matching
 
-4. User: "You choose" or "Pick for me" or "Surprise me"
-   CORRECT: intent_type="AUTONOMOUS_SCHEDULE", extract dates/meal_types from context
-   CORRECT: Let the agent use preference data to select appropriate meals
+4. User: "You choose" (standalone, no conversation context)
+   CORRECT: intent_type="AUTONOMOUS_SCHEDULE", dates=[today], meal_types=["dinner"] (defaults)
+   CORRECT: Agent will use preference data to select appropriate meals for entire period
 
 5. User: "Yes can you schedule me meals for next week? Just my dinners for each day" followed by "You choose"
    CORRECT: intent_type="AUTONOMOUS_SCHEDULE", dates=[next 7 days], meal_types=["dinner"]
@@ -496,6 +498,18 @@ CRITICAL EXAMPLES:
     CORRECT: intent_type="DIRECT_SCHEDULE", entities={{"meal_names": ["Steak Dinner"], "dates": ["2025-08-18"], "meal_types": ["dinner"]}}, execution_plan=[{{"action": "schedule_meal", "meal_name": "Steak Dinner", "date": "2025-08-18", "meal_type": "dinner"}}], clarification_question="I've scheduled Steak Dinner for tomorrow's dinner! Now, what breakfast would you like for Tuesday? Here are some suggestions: • Egg Tacos • Pancakes"
     WRONG: asking "When would you like to schedule your Steak Dinner?" (forgetting tomorrow context)
     REASONING: Must remember multi-task context - steak was chosen for tomorrow's dinner, now ask about Tuesday's breakfast
+
+19. CRITICAL: Multi-Task "You Choose" Context:
+    Conversation history:
+    User: "Schedule me dinner for tomorrow and breakfast for Tuesday"
+    Agent: "What dinner would you like to schedule for tomorrow? Here are some suggestions: • Chicken Parmesan • Steak Dinner"
+    User: "Chicken"
+    Agent: "I've scheduled Chicken Parmesan for tomorrow's dinner! Now, what breakfast would you like for Tuesday? Here are some suggestions: • Egg Tacos • Pancakes"
+    User: "You choose"
+    ANALYSIS: "You choose" in multi-task context applies ONLY to the current question (Tuesday breakfast), NOT the entire week
+    CORRECT: intent_type="DIRECT_SCHEDULE", entities={{"meal_names": ["Egg Tacos"], "dates": ["2025-08-20"], "meal_types": ["breakfast"]}}, execution_plan=[{{"action": "schedule_meal", "meal_name": "Egg Tacos", "date": "2025-08-20", "meal_type": "breakfast"}}], reasoning="User delegated choice for Tuesday breakfast only - selecting Egg Tacos based on preferences"
+    WRONG: intent_type="AUTONOMOUS_SCHEDULE" with dates=[next 7 days] (scheduling entire week)
+    REASONING: In multi-task context, "you choose" applies only to the specific task being discussed (Tuesday breakfast), not globally
 
 Now analyze the request and return the structured JSON response.
 """
