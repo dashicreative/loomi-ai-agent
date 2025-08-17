@@ -260,7 +260,7 @@ class TaskQueueManager:
             "tasks": [
                 {
                     "task_id": task.task_id,
-                    "status": task.status.value,
+                    "status": task.status.value if hasattr(task.status, 'value') else str(task.status),
                     "meal_name": task.meal_name,
                     "date": task.date,
                     "occasion": task.meal_occasion,

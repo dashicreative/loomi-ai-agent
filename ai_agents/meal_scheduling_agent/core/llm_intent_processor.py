@@ -162,7 +162,9 @@ class LLMIntentProcessor:
             current_task = task_state.get('current_task')
             if current_task:
                 task_queue_text += f"Current Task: {current_task.original_request_part} "
-                task_queue_text += f"(Status: {current_task.status.value})\n"
+                # Handle both enum and string status values
+                status_val = current_task.status.value if hasattr(current_task.status, 'value') else str(current_task.status)
+                task_queue_text += f"(Status: {status_val})\n"
             
             # Show task list for context
             if task_state.get('tasks'):

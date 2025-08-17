@@ -987,7 +987,15 @@ class DirectProcessor:
             
             # Get meal suggestions for next task occasion
             meals = self.storage.load_meals()
-            filtered_meals = [meal for meal in meals if meal.occasion.value == occasion] if occasion != "meal" else meals
+            if occasion != "meal":
+                # Handle both enum and string occasion values
+                filtered_meals = []
+                for meal in meals:
+                    meal_occasion = meal.occasion.value if hasattr(meal.occasion, 'value') else str(meal.occasion)
+                    if meal_occasion == occasion:
+                        filtered_meals.append(meal)
+            else:
+                filtered_meals = meals
             suggestions = [meal.name for meal in filtered_meals[:3]]
             
             suggestion_text = "\n".join(f"• {meal}" for meal in suggestions)
