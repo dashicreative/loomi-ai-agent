@@ -30,6 +30,7 @@ class IntentType(Enum):
     CLEAR_SCHEDULE = "clear_schedule"
     FILL_SCHEDULE = "fill_schedule"
     AUTONOMOUS_SCHEDULE = "autonomous_schedule"
+    RESCHEDULE_MEAL = "reschedule_meal"
     VIEW_SCHEDULE = "view_schedule"
     LIST_MEALS = "list_meals"
     AMBIGUOUS_SCHEDULE = "ambiguous_schedule"
@@ -82,6 +83,7 @@ class LLMIntentProcessor:
             "BATCH_SCHEDULE": "Schedule multiple meals or meals for multiple days",
             "FILL_SCHEDULE": "Fill empty slots in schedule with random/suggested meals", 
             "CLEAR_SCHEDULE": "Remove/clear scheduled meals from calendar",
+            "RESCHEDULE_MEAL": "Move an existing scheduled meal from one date/time to another",
             "VIEW_SCHEDULE": "Show what's currently scheduled",
             "LIST_MEALS": "Show available meals to choose from",
             "AMBIGUOUS_SCHEDULE": "Intent is unclear, missing key information",
@@ -286,7 +288,8 @@ VALIDATION: Always double-check that your calculated date matches the requested 
 === INPUT: Request Context ===
 REQUEST: "{context['request']}"
 AVAILABLE_MEALS: {context['available_meals']}
-TODAY: {context['current_date']}{history_text}{task_queue_text}
+TODAY: {context['current_date']}
+CURRENT_SCHEDULE: {str(context.get('current_schedule_sample', {}))}{history_text}{task_queue_text}
 
 === OUTPUT: Required JSON Structure ===
 Return exactly this JSON format:
@@ -304,7 +307,7 @@ Return exactly this JSON format:
   "needs_clarification": true/false,
   "clarification_question": "specific question if clarification needed OR meal suggestions for LIST_MEALS",
   "execution_plan": [
-    {{{{"action": "schedule_meal|clear_schedule|view_schedule", "meal_name": "exact name", "date": "YYYY-MM-DD", "meal_type": "breakfast|lunch|dinner|snack"}}}}
+    {{{{"action": "schedule_meal|clear_schedule|view_schedule|reschedule_meal", "meal_name": "exact name", "date": "YYYY-MM-DD", "meal_type": "breakfast|lunch|dinner|snack", "source_date": "YYYY-MM-DD", "dest_date": "YYYY-MM-DD"}}}}
   ],
   "reasoning": "brief explanation of analysis and decisions",
   "metadata": {{{{
@@ -330,6 +333,19 @@ INTENT TYPES (choose exactly one):
 - AUTONOMOUS_SCHEDULE: User delegates meal choice to agent for MULTIPLE meals/days ("you choose meals for the week", "pick my dinners for next 5 days")
   * CRITICAL: Only use for bulk/batch autonomous scheduling, NOT single meal delegation
   * Single meal "you choose" in conversation → use DIRECT_SCHEDULE with agent-selected meal
+- RESCHEDULE_MEAL: Move an existing scheduled meal from one date/time to another ("Move today's dinner to tomorrow", "Reschedule Friday's lunch to Saturday")
+  * Keywords: move, reschedule, change, shift, transfer
+  * CRITICAL: This is about MOVING existing scheduled meals, NOT creating new ones
+  * REQUIRES: ALWAYS extract BOTH source and destination dates in "dates" array
+  * ENTITY EXTRACTION: For "move today's dinner to tomorrow" → dates=["2025-08-18", "2025-08-19"]
+  * VALIDATION: Use CURRENT_SCHEDULE to check what meals exist on source date
+  * LOGIC: If exactly one meal exists for specified occasion on source date, set needs_clarification=false
+  * CLARIFICATION: Only ask for clarification if multiple meals exist for that occasion on source date
+  * CLARIFICATION: If no meals exist on source date, inform user and suggest alternatives
+  * SMART BEHAVIOR: If only one meal exists for specified occasion on source date, proceed with move
+  * SCHEDULE ANALYSIS: Always check CURRENT_SCHEDULE before deciding on clarification needs
+  * DATE EXTRACTION RULE: Extract both source ("today") and destination ("tomorrow") dates even when multiple meals exist
+  * Examples: "reschedule today's dinner to tomorrow", "move Tuesday's breakfast to Wednesday", "change Friday's lunch to Saturday dinner"
 - CLEAR_SCHEDULE: Remove/delete/clear scheduled meals ("Clear my schedule", "Remove all meals", "Delete my schedule for the month")
   * Keywords: clear, remove, delete, cancel, wipe, empty
   * CRITICAL: This is about REMOVING existing scheduled meals, NOT scheduling new ones
@@ -473,7 +489,25 @@ CRITICAL EXAMPLES:
    REASONING: Profile complete, can execute directly
    RESULT: intent_type="DIRECT_SCHEDULE", needs_clarification=false, execute scheduling
 
-9. Rejection + Request for Alternatives Example:
+9. Reschedule Examples:
+   User: "Move today's dinner to tomorrow"
+   CURRENT_SCHEDULE: {{"2025-08-18": [{{"meal_name": "Steak Dinner", "occasion": "dinner"}}]}}
+   RESCHEDULE PROFILE: Source=today/dinner ✓, Destination=tomorrow ✓
+   REASONING: Found exactly one dinner scheduled for today (Steak Dinner), can proceed without clarification
+   RESULT: intent_type="RESCHEDULE_MEAL", entities={{"dates":["2025-08-18","2025-08-19"],"meal_types":["dinner"]}}, needs_clarification=false
+
+   User: "Reschedule Friday's lunch to Saturday"
+   RESCHEDULE PROFILE: Source=Friday/lunch ✓, Destination=Saturday ✓
+   REASONING: Need to check if meal exists on Friday lunch and move to Saturday
+   RESULT: intent_type="RESCHEDULE_MEAL", entities={{"dates":["2025-08-22","2025-08-23"],"meal_types":["lunch"]}}, needs_clarification=false
+
+   User: "Move Tuesday's meal to Wednesday"
+   CURRENT_SCHEDULE: {{"2025-08-20": [{{"meal_name": "Pancakes", "occasion": "breakfast"}}, {{"meal_name": "Chicken Parmesan", "occasion": "dinner"}}]}}
+   RESCHEDULE PROFILE: Source=Tuesday ✓, Destination=Wednesday ✓, Occasion=unclear
+   REASONING: Multiple meals scheduled for Tuesday, need clarification about which specific meal to move
+   RESULT: intent_type="RESCHEDULE_MEAL", needs_clarification=true, clarification_question="Which meal on Tuesday would you like to move? You have Pancakes (breakfast) and Chicken Parmesan (dinner) scheduled."
+
+10. Rejection + Request for Alternatives Example:
    User: "Schedule me cheesecake" → Agent: "You don't have cheesecake. How about Chicken Parmesan or Lasagna?" → User: "No, what are some other suggestions"
    ANALYSIS: User rejected previous suggestions (Chicken Parmesan, Lasagna) and wants more options
    CONTEXT: Still about scheduling meals, maintain helpful attitude
@@ -640,6 +674,7 @@ Now analyze the request and return the structured JSON response.
             "CLEAR_SCHEDULE": "clear_schedule",
             "FILL_SCHEDULE": "fill_schedule",
             "AUTONOMOUS_SCHEDULE": "autonomous_schedule",
+            "RESCHEDULE_MEAL": "reschedule_meal",
             "VIEW_SCHEDULE": "view_schedule",
             "LIST_MEALS": "list_meals",
             "AMBIGUOUS_SCHEDULE": "ambiguous_schedule",
@@ -651,6 +686,8 @@ Now analyze the request and return the structured JSON response.
             "SCHEDULE": "direct_schedule", 
             "BATCH": "batch_schedule",
             "AUTONOMOUS": "autonomous_schedule",
+            "RESCHEDULE": "reschedule_meal",
+            "MOVE": "reschedule_meal",
             "CLEAR": "clear_schedule",
             "VIEW": "view_schedule",
             "SHOW": "view_schedule",

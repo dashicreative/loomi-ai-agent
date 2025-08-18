@@ -68,10 +68,14 @@ class DirectProcessor:
             task_queue_summary = self.task_queue.get_queue_summary(user_id)
             current_task = self.task_queue.get_current_task(user_id)
             
-            # STEP 3: Process the user's message with task queue context
+            # STEP 3: Get current schedule for context
+            current_schedule = self._get_schedule_context()
+            
+            # Process the user's message with task queue context
             context = await self.llm_intent.understand_request(
                 message.content, 
                 available_meals,
+                current_schedule=current_schedule,
                 conversation_history=conversation_history,
                 task_queue_state=task_queue_summary
             )
@@ -89,6 +93,8 @@ class DirectProcessor:
                 return await self._direct_fill_schedule(context, available_meals)
             elif context.intent_type == IntentType.AUTONOMOUS_SCHEDULE:
                 return await self._direct_autonomous_schedule(context, available_meals)
+            elif context.intent_type == IntentType.RESCHEDULE_MEAL:
+                return await self._direct_reschedule_meal(context, available_meals)
             elif context.intent_type == IntentType.CLEAR_SCHEDULE:
                 return await self._direct_clear_schedule(context)
             elif context.intent_type == IntentType.VIEW_SCHEDULE:
@@ -489,6 +495,152 @@ class DirectProcessor:
             model_used="enhanced_meal_agent"
         )
     
+    async def _direct_reschedule_meal(self, context: LLMRequestContext, available_meals: List[str]) -> AIResponse:
+        """Direct meal rescheduling - move existing meal from one date to another"""
+        entities = context.entities
+        
+        # If LLM needs clarification, return it directly
+        if context.needs_clarification:
+            return AIResponse(
+                conversational_response=context.clarification_question or "I need more information to reschedule your meal.",
+                actions=[],
+                model_used="enhanced_meal_agent"
+            )
+        
+        # Extract source and destination dates from entities
+        dates = entities.get("dates", [])
+        meal_types = entities.get("meal_types", ["dinner"])  # Default to dinner if not specified
+        
+        if len(dates) < 2:
+            return AIResponse(
+                conversational_response="I need both the source and destination dates to reschedule a meal. Please specify where to move the meal from and to.",
+                actions=[],
+                model_used="enhanced_meal_agent"
+            )
+        
+        source_date = datetime.fromisoformat(dates[0]).date()
+        dest_date = datetime.fromisoformat(dates[1]).date()
+        meal_occasion = meal_types[0] if meal_types else "dinner"
+        
+        # Map meal_type to MealOccasion enum
+        occasion_mapping = {
+            "breakfast": MealOccasion.breakfast,
+            "lunch": MealOccasion.lunch, 
+            "dinner": MealOccasion.dinner,
+            "snack": MealOccasion.snack
+        }
+        occasion = occasion_mapping.get(meal_occasion.lower(), MealOccasion.dinner)
+        
+        # Find the meal to reschedule on the source date
+        scheduled_meals = self.storage.get_scheduled_meals_by_date(source_date)
+        
+        # Filter by occasion if specified
+        target_meals = [meal for meal in scheduled_meals if meal.occasion == occasion]
+        
+        if not target_meals:
+            # No meals found on source date for that occasion
+            natural_source_date = self.response_builder.format_natural_date(source_date.isoformat())
+            if len(scheduled_meals) > 0:
+                # There are meals on that date, just not for that occasion
+                return AIResponse(
+                    conversational_response=f"You don't have any {meal_occasion} scheduled for {natural_source_date}. What meals would you like me to help you reschedule?",
+                    actions=[],
+                    model_used="enhanced_meal_agent"
+                )
+            else:
+                # No meals at all on that date
+                return AIResponse(
+                    conversational_response=f"You don't have any meals scheduled for {natural_source_date}. What would you like me to help you with?",
+                    actions=[],
+                    model_used="enhanced_meal_agent"
+                )
+        
+        elif len(target_meals) > 1:
+            # Multiple meals found, need clarification
+            meals = self.storage.load_meals()
+            meal_lookup = {meal.id: meal for meal in meals}
+            
+            meal_list = []
+            for scheduled_meal in target_meals:
+                meal_obj = meal_lookup.get(scheduled_meal.meal_id)
+                if meal_obj:
+                    meal_list.append(meal_obj.name)
+            
+            natural_source_date = self.response_builder.format_natural_date(source_date.isoformat())
+            meal_options = "\n".join(f"• {meal}" for meal in meal_list)
+            
+            return AIResponse(
+                conversational_response=f"You have multiple {meal_occasion} meals scheduled for {natural_source_date}. Which one would you like to reschedule?\n{meal_options}",
+                actions=[],
+                model_used="enhanced_meal_agent"
+            )
+        
+        else:
+            # Exactly one meal found - proceed with rescheduling
+            meal_to_reschedule = target_meals[0]
+            
+            # Get meal details for response
+            meals = self.storage.load_meals()
+            meal_obj = None
+            for meal in meals:
+                if meal.id == meal_to_reschedule.meal_id:
+                    meal_obj = meal
+                    break
+            
+            if not meal_obj:
+                return AIResponse(
+                    conversational_response="I couldn't find the meal details. Something went wrong.",
+                    actions=[],
+                    model_used="enhanced_meal_agent"
+                )
+            
+            # Check if destination date/occasion already has a meal
+            dest_scheduled_meals = self.storage.get_scheduled_meals_by_date(dest_date)
+            dest_conflict = [meal for meal in dest_scheduled_meals if meal.occasion == occasion]
+            
+            if dest_conflict:
+                # There's already a meal scheduled at the destination
+                conflict_meal = dest_conflict[0]
+                conflict_meal_obj = None
+                for meal in meals:
+                    if meal.id == conflict_meal.meal_id:
+                        conflict_meal_obj = meal
+                        break
+                
+                natural_dest_date = self.response_builder.format_natural_date(dest_date.isoformat())
+                conflict_name = conflict_meal_obj.name if conflict_meal_obj else "a meal"
+                
+                return AIResponse(
+                    conversational_response=f"You already have {conflict_name} scheduled for {meal_occasion} on {natural_dest_date}. Would you like me to replace it with {meal_obj.name}?",
+                    actions=[],
+                    model_used="enhanced_meal_agent"
+                )
+            
+            # Perform the rescheduling - remove from source and add to destination
+            # Remove from source date
+            self.storage.delete_scheduled_meal(meal_to_reschedule.id)
+            
+            # Add to destination date
+            new_scheduled_meal = ScheduledMeal(
+                meal_id=meal_obj.id,
+                date=dest_date,
+                occasion=occasion
+            )
+            saved_meal = self.storage.add_scheduled_meal(new_scheduled_meal)
+            
+            # Build success response
+            natural_source_date = self.response_builder.format_natural_date(source_date.isoformat())
+            natural_dest_date = self.response_builder.format_natural_date(dest_date.isoformat())
+            
+            response = f"I've rescheduled {meal_obj.name} from {natural_source_date}'s {meal_occasion} to {natural_dest_date}'s {meal_occasion}!"
+            response += "\n\nDo you need any other schedule-related assistance?"
+            
+            return AIResponse(
+                conversational_response=response,
+                actions=[],  # Action already completed
+                model_used="enhanced_meal_agent"
+            )
+
     async def _direct_clear_schedule(self, context: LLMRequestContext) -> AIResponse:
         """Direct schedule clearing - no tool abstraction"""
         entities = context.entities
@@ -917,6 +1069,40 @@ class DirectProcessor:
             model_used="enhanced_meal_agent"
         )
     
+    def _get_schedule_context(self) -> Dict[str, Any]:
+        """Get current schedule context for LLM analysis"""
+        try:
+            # Get today's and next few days' schedules for context
+            today = date.today()
+            schedule_context = {}
+            
+            for days_ahead in range(7):  # Next 7 days
+                check_date = today + timedelta(days=days_ahead)
+                scheduled_meals = self.storage.get_scheduled_meals_by_date(check_date)
+                
+                if scheduled_meals:
+                    # Load meal details
+                    meals = self.storage.load_meals()
+                    meal_lookup = {meal.id: meal for meal in meals}
+                    
+                    day_meals = []
+                    for scheduled_meal in scheduled_meals:
+                        meal_obj = meal_lookup.get(scheduled_meal.meal_id)
+                        if meal_obj:
+                            day_meals.append({
+                                "meal_name": meal_obj.name,
+                                "occasion": scheduled_meal.occasion.value if hasattr(scheduled_meal.occasion, 'value') else str(scheduled_meal.occasion)
+                            })
+                    
+                    if day_meals:
+                        schedule_context[check_date.isoformat()] = day_meals
+            
+            return schedule_context
+            
+        except Exception as e:
+            # Return empty context if there's an error
+            return {}
+
     # === TASK QUEUE MANAGEMENT METHODS ===
     
     def _is_new_multi_task_request(self, request_text: str, user_id: str) -> bool:
