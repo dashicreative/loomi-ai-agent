@@ -12,7 +12,7 @@ class RecipeDeps:
 
 
 #Spponacular Recipe API request tool foro new recipes
-async def search_recipes(ctx: RunContext[RecipeDeps], query: str, number: int = 3, include_nutrition: bool = False, exclude_ingredients: str = "") -> Dict:
+async def search_recipes(ctx: RunContext[RecipeDeps], query: str, number: int = 50, include_nutrition: bool = False, exclude_ingredients: str = "") -> Dict:
     """
     Search for recipes using the Spoonacular API.
     Returns recipe data including title, image, prep time, and optional nutrition info.
