@@ -44,10 +44,9 @@ You MUST follow this exact process for ALL recipe searches, no exceptions:
 
 ### STEP 4: SELECTION CRITERIA
 When analyzing recipe results, consider modifiers:
-- PLAIN/SIMPLE/BASIC: Fewer ingredients, common items, minimal toppings
-- TRADITIONAL/CLASSIC: Standard preparation methods, authentic ingredients  
+- PLAIN/SIMPLE/BASIC/TRADITIONAL/CLASSIC: Fewer ingredients, common items, minimal toppings,Standard preparation methods, authentic ingredients, Think the "steroetype" or most common version of the meal
 - QUICK/EASY: Shorter cook times, fewer steps
-- HEALTHY: Lower calories, more vegetables, lean proteins
+- HEALTHY: Lower calories, more vegetables, lean proteins, less sugar, potentially lower carbs
 - INTERNATIONAL: Authentic ingredients from specified cuisine
 
 CRITICAL: The search query should NEVER contain subjective modifiers like "plain", "simple", "basic", "traditional", "classic"
