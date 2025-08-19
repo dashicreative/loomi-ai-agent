@@ -19,7 +19,7 @@ async def search_recipes(ctx: RunContext[RecipeDeps], query: str, number: int = 
     
     Args:
         query: The search term for recipes
-        number: Number of recipes to return (default 3)
+        number: Number of recipes to return (default 50)
         include_nutrition: Whether to include nutrition data
         exclude_ingredients: Comma-separated ingredients to exclude (e.g., "chocolate,oreo,nuts")
     """
