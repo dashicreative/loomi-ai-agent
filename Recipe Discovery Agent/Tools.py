@@ -12,10 +12,16 @@ class RecipeDeps:
 
 
 #Spponacular Recipe API request tool foro new recipes
-async def search_recipes(ctx: RunContext[RecipeDeps], query: str, number: int = 3, include_nutrition: bool = False) -> Dict:
+async def search_recipes(ctx: RunContext[RecipeDeps], query: str, number: int = 3, include_nutrition: bool = False, exclude_ingredients: str = "") -> Dict:
     """
     Search for recipes using the Spoonacular API.
     Returns recipe data including title, image, prep time, and optional nutrition info.
+    
+    Args:
+        query: The search term for recipes
+        number: Number of recipes to return (default 3)
+        include_nutrition: Whether to include nutrition data
+        exclude_ingredients: Comma-separated ingredients to exclude (e.g., "chocolate,oreo,nuts")
     """
     async with httpx.AsyncClient() as client:
         # Step 1: Back to complexSearch with minimal data
@@ -28,6 +34,10 @@ async def search_recipes(ctx: RunContext[RecipeDeps], query: str, number: int = 
             "addRecipeNutrition": False,
             "fillIngredients": False
         }
+        
+        # Add exclusions if provided
+        if exclude_ingredients:
+            params["excludeIngredients"] = exclude_ingredients
         
         response = await client.get(url, params=params)
         response.raise_for_status()
