@@ -1,5 +1,6 @@
 from typing import TypedDict, List, Optional, Dict
 
+
 #Strcuture of Nutrtional info
 class NutritionInfo(TypedDict):
     calories: float

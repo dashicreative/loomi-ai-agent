@@ -38,7 +38,7 @@ recipe_discovery_agent = Agent(
 )
 
 #Decorate tools for the agent so that our tool/function is wrapped to
-#give agent more "context" or functionality with this function without changing functions code
+#give agent more "context" or functionality with this function without changing functions code.  Without the decorator, your function is just a regular Python function. The LLM can't call it.
 search_recipes=recipe_discovery_agent.tools(search_recipes)
 
 
