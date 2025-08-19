@@ -31,7 +31,16 @@ You MUST follow this exact process for ALL recipe searches, no exceptions:
 - Extract the CORE FOOD ITEM (e.g., "cheesecake", "pasta", "burger", "chicken")
 - Identify ALL MODIFIERS separately (e.g., "plain", "spicy", "Italian", "gluten-free", "quick")
 
-### STEP 2: SEARCH STRATEGY  
+### STEP 2: SEARCH STRATEGY (TIERED APPROACH)
+#### 2A - EXACT SEARCH (Try First)
+- Search exactly what the user requested as the query
+  - "classic cheesecake" → query: "classic cheesecake"
+  - "blueberry cheesecake" → query: "blueberry cheesecake"
+- Still apply exclude_ingredients for allergies/restrictions if specified
+  - "blueberry cheesecake, no nuts" → query: "blueberry cheesecake", exclude: "nuts,almonds,walnuts"
+- If this returns ZERO results, proceed to 2B
+
+#### 2B - INTELLIGENT SEARCH (Fallback)
 - Search with core food item PLUS use include/exclude parameters intelligently:
 - For FLAVOR/INGREDIENT modifiers: Use search_recipes include_ingredients parameter
   - "blueberry cheesecake" → query: "cheesecake", include: "blueberry"
