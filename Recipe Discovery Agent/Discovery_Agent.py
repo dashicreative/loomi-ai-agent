@@ -1,4 +1,4 @@
-from pydantic_ai import Agent, RunContext, SystemPrompt
+from pydantic_ai import Agent
 from pydantic_ai.models import KnownModelName
 from pathlib import Path
 from Structured_Output import AgentOutput
@@ -18,7 +18,7 @@ load_dotenv()
 
 # Load system prompt from file
 def load_system_prompt(filename: str) -> str:
-    prompt_path = Path(__file__).parent / "prompts" / filename
+    prompt_path = Path(__file__).parent / filename
     with open(prompt_path, 'r') as f:
         return f.read()
 
@@ -34,12 +34,10 @@ recipe_discovery_agent = Agent(
     model,
     system_prompt=load_system_prompt("System_Prompt.txt"),
     output_type=AgentOutput,
-    tools=[search_recipes]
+    tools=[search_recipes],
+    deps_type=RecipeDeps
 )
 
-#Decorate tools for the agent so that our tool/function is wrapped to
-#give agent more "context" or functionality with this function without changing functions code.  Without the decorator, your function is just a regular Python function. The LLM can't call it.
-search_recipes=recipe_discovery_agent.tools(search_recipes)
 
 
 
