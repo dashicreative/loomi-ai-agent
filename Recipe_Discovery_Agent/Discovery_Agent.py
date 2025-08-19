@@ -10,7 +10,7 @@ import logfire
 
 
 #Setting up logfire for tracing
-logfire.configure()
+logfire.configure(scrubbing=False)  # Disable scrubbing to allow system prompt
 logfire.instrument_pydantic_ai()
 
 # Load environment variables
