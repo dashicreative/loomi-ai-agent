@@ -30,9 +30,9 @@ async def search_recipes(ctx: RunContext[RecipeDeps], query: str, number: int = 
             "apiKey": ctx.deps.api_key,
             "query": query,
             "number": number,
-            "addRecipeInformation": False,
-            "addRecipeNutrition": False,
-            "fillIngredients": False
+            "addRecipeInformation": True,  # Include recipe details in initial search
+            "addRecipeNutrition": include_nutrition,
+            "fillIngredients": True  # Include ingredient information in initial search
         }
         
         # Add exclusions if provided
@@ -45,47 +45,27 @@ async def search_recipes(ctx: RunContext[RecipeDeps], query: str, number: int = 
         
         results = search_data.get("results", [])
         
-        # Step 2: Fetch details for top 3 recipes IN PARALLEL
-        async def fetch_recipe_details(recipe_id: int) -> Dict:
-            """Fetch details for a single recipe"""
-            detail_url = f"https://api.spoonacular.com/recipes/{recipe_id}/information"
-            detail_params = {
-                "apiKey": ctx.deps.api_key,
-                "includeNutrition": include_nutrition
-            }
+        # Step 2: Extract and format the data (ingredients already included!)
+        formatted_recipes = []
+        for recipe in results:
+            # Extract ingredient names from extendedIngredients
+            ingredients = []
+            if "extendedIngredients" in recipe:
+                ingredients = [ing.get("name", ing.get("original", "")) for ing in recipe.get("extendedIngredients", [])]
             
-            try:
-                detail_response = await client.get(detail_url, params=detail_params)
-                detail_response.raise_for_status()
-                detail_data = detail_response.json()
-                
-                # Extract only what we need
-                return {
-                    "id": detail_data.get("id"),
-                    "title": detail_data.get("title"),
-                    "image": detail_data.get("image"),
-                    "sourceUrl": detail_data.get("sourceUrl"),
-                    "servings": detail_data.get("servings"),
-                    "readyInMinutes": detail_data.get("readyInMinutes"),
-                    "ingredients": [ing.get("name") for ing in detail_data.get("extendedIngredients", [])][:5]
-                }
-            except Exception as e:
-                # Return basic info if detail fetch fails
-                return {
-                    "id": recipe_id,
-                    "title": "Recipe details unavailable",
-                    "error": str(e)
-                }
+            formatted_recipes.append({
+                "id": recipe.get("id"),
+                "title": recipe.get("title"),
+                "image": recipe.get("image"),
+                "sourceUrl": recipe.get("sourceUrl"),
+                "servings": recipe.get("servings"),
+                "readyInMinutes": recipe.get("readyInMinutes"),
+                "ingredients": ingredients  # Full ingredient list for agent analysis
+            })
         
-        # Fetch all 3 recipe details simultaneously
-        recipe_ids = [recipe.get("id") for recipe in results[:3]]
-        detailed_recipes = await asyncio.gather(
-            *[fetch_recipe_details(recipe_id) for recipe_id in recipe_ids]
-        )
-        
-        # Return simplified results
+        # Return all results with ingredients for agent to analyze
         simplified_results = {
-            "results": detailed_recipes,
+            "results": formatted_recipes,
             "totalResults": search_data.get("totalResults", 0)
         }
         
