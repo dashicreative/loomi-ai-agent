@@ -15,5 +15,10 @@ def load_system_prompt(filename: str) -> str:
 
 recipe_discovery_agent = Agent(
     SystemPrompt(load_system_prompt("System_Prompt.txt")),
-    output_type=AgentOutput
+    output_type=AgentOutput,
+    tools=[search_recipes]
 )
+
+recipe_result = {}
+recipe_result['a'] = agrecipe_discovery_agent.run_sync('Find me some cheesecake recipes.')
+print(recipe_result['a'].output)
