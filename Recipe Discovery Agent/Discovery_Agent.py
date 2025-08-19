@@ -29,7 +29,6 @@ deps = RecipeDeps(api_key=os.getenv("SPOONACULAR_API_KEY"))
 
 
 
-
 #Recipe discovery agent instantiation
 recipe_discovery_agent = Agent(
     model,
@@ -37,6 +36,10 @@ recipe_discovery_agent = Agent(
     output_type=AgentOutput,
     tools=[search_recipes]
 )
+
+#Decorate tools for the agent so that our tool/function is wrapped to
+#give agent more "context" or functionality with this function without changing functions code
+search_recipes=recipe_discovery_agent.tools(search_recipes)
 
 
 

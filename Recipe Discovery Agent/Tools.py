@@ -3,7 +3,6 @@ from typing import Dict, Optional
 import httpx
 import os
 from dataclasses import dataclass
-from Discovery Agent import recipe_discovery_agent
 
 
 @dataclass
@@ -12,7 +11,6 @@ class RecipeDeps:
 
 
 #Spponacular Recipe API request tool foro new recipes
-@recipe_discovery_agent.tool
 async def search_recipes(ctx: RunContext[RecipeDeps], query: str, number: int = 5, include_nutrition: bool = False) -> Dict:
     """
     Search for recipes using the Spoonacular API.
