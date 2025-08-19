@@ -32,10 +32,15 @@ You MUST follow this exact process for ALL recipe searches, no exceptions:
 - Identify ALL MODIFIERS separately (e.g., "plain", "spicy", "Italian", "gluten-free", "quick")
 
 ### STEP 2: SEARCH STRATEGY  
-- ALWAYS search using ONLY the core food item (never include modifiers in query)
-- Examples: "plain Italian cheesecake" → search query: "cheesecake"
-- Examples: "simple chicken curry" → search query: "chicken curry" 
-- Examples: "basic chocolate cake" → search query: "chocolate cake"
+- Search with core food item PLUS use include/exclude parameters intelligently:
+- For FLAVOR/INGREDIENT modifiers: Use search_recipes include_ingredients parameter
+  - "blueberry cheesecake" → query: "cheesecake", include: "blueberry"
+  - "chocolate chip cookies" → query: "cookies", include: "chocolate chip"
+- For PLAIN/SIMPLE/CLASSIC modifiers: Use exclude_ingredients to filter out complex variations
+  - "plain cheesecake" → query: "cheesecake", exclude: "oreo,chocolate,strawberry,caramel,peanut butter"
+  - "simple pasta" → query: "pasta", exclude: "truffle,lobster,crab,shrimp"
+- For CUISINE modifiers: Include in the search query
+  - "Italian pasta" → query: "Italian pasta"
 
 ### STEP 3: FILTERING STRATEGY
 - For DIETARY RESTRICTIONS: Use exclude_ingredients parameter (allergies, intolerances)
