@@ -6,7 +6,12 @@ from Tools import search_recipes
 from Dependencies import RecipeDeps
 import os
 from dotenv import load_dotenv
+import logfire
 
+
+#Setting up logfire for tracing
+logfire.configure()
+logfire.instrument_pydantic_ai()
 
 # Load environment variables
 load_dotenv()
@@ -17,13 +22,15 @@ def load_system_prompt(filename: str) -> str:
     with open(prompt_path, 'r') as f:
         return f.read()
 
-
 model: KnownModelName = 'openai:gpt-4o'  # Using type-safe model name
+
+# Set up dependencies
+deps = RecipeDeps(api_key=os.getenv("SPOONACULAR_API_KEY"))
+
 
 
 
 #Recipe discovery agent instantiation
-
 recipe_discovery_agent = Agent(
     model,
     system_prompt=load_system_prompt("System_Prompt.txt"),
@@ -31,8 +38,7 @@ recipe_discovery_agent = Agent(
     tools=[search_recipes]
 )
 
-# Set up dependencies
-deps = RecipeDeps(api_key=os.getenv("SPOONACULAR_API_KEY"))
+
 
 
 
