@@ -62,127 +62,6 @@ BLOCKED_SITES = [
 ]
 
 
-# =============================================================================
-# SUPPLEMENTAL FUNCTIONS: Quality Checks for Unknown Sites
-# These are NOT agent tools - they are internal helper functions
-# =============================================================================
-
-def passes_quality_check(url: str, content: str) -> bool:
-    """
-    SUPPLEMENTAL FUNCTION: Strict quality check for unknown recipe sites.
-    
-    Checks for essential elements needed for the iOS app:
-    1. Recipe images (for app photo display)
-    2. Clear recipe name/title
-    3. Structured ingredient list (JSON-LD → HTML lists → text patterns)
-    
-    Philosophy: Better to reject good sites than accept bad ones.
-    
-    Args:
-        url: Recipe page URL
-        content: HTML content of the page
-        
-    Returns:
-        True if site passes all quality checks, False otherwise
-    """
-    try:
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(content, 'html.parser')
-        
-        # CRITERION 1: Image presence (essential for app)
-        has_recipe_image = False
-        images = soup.find_all('img')
-        for img in images:
-            alt_text = (img.get('alt', '') + ' ' + img.get('src', '')).lower()
-            # Look for food/recipe related images
-            if any(keyword in alt_text for keyword in [
-                'recipe', 'food', 'dish', 'meal', 'cooking', 'baked', 'fried',
-                'salad', 'soup', 'pasta', 'chicken', 'beef', 'dessert', 'cake'
-            ]):
-                has_recipe_image = True
-                break
-        
-        if not has_recipe_image:
-            return False
-            
-        # CRITERION 2: Recipe name/title presence
-        has_recipe_name = False
-        # Check common title locations
-        title_elements = soup.find_all(['h1', 'h2', 'title'])
-        for element in title_elements:
-            title_text = element.get_text().lower()
-            if any(keyword in title_text for keyword in [
-                'recipe', 'how to make', 'easy', 'homemade', 'baked', 'grilled'
-            ]) or len(title_text) > 10:  # Reasonable recipe title length
-                has_recipe_name = True
-                break
-                
-        if not has_recipe_name:
-            return False
-            
-        # CRITERION 3: Ingredient list detection (tiered approach)
-        has_ingredients = False
-        
-        # Tier 1: JSON-LD recipe schema
-        json_ld = soup.find('script', type='application/ld+json')
-        if json_ld:
-            try:
-                import json
-                data = json.loads(json_ld.string)
-                if isinstance(data, list):
-                    data = data[0] if data else {}
-                if data.get('@type') == 'Recipe' and data.get('recipeIngredient'):
-                    has_ingredients = True
-            except:
-                pass
-        
-        # Tier 2: HTML lists with ingredient-like content
-        if not has_ingredients:
-            lists = soup.find_all(['ul', 'ol'])
-            for lst in lists:
-                items = lst.find_all('li')
-                ingredient_count = 0
-                for item in items:
-                    text = item.get_text().lower()
-                    # Look for quantity + unit patterns
-                    if any(pattern in text for pattern in [
-                        'cup', 'tsp', 'tbsp', 'ounce', 'pound', 'gram', 'liter',
-                        'large', 'medium', 'small', 'piece', 'slice', 'clove',
-                        'scoop', 'dash', 'pinch'  # Include common cooking terms
-                    ]) and any(char.isdigit() for char in text):
-                        ingredient_count += 1
-                
-                if ingredient_count >= 3:  # At least 3 ingredients with quantities
-                    has_ingredients = True
-                    break
-        
-        # Tier 3: Text patterns for ingredients
-        if not has_ingredients:
-            page_text = soup.get_text().lower()
-            # Look for common ingredient patterns in text
-            import re
-            ingredient_patterns = [
-                r'\d+\s+(cup|cups|tsp|tbsp|ounce|pound|gram|liter)',
-                r'\d+\s+(large|medium|small|whole)',
-                r'\d+\s+(piece|pieces|slice|slices|clove|cloves)',
-                r'\d+\s+scoop',  # Include scoop and other cooking terms
-                r'pinch of',
-                r'dash of'
-            ]
-            
-            pattern_matches = 0
-            for pattern in ingredient_patterns:
-                if re.search(pattern, page_text):
-                    pattern_matches += 1
-                    if pattern_matches >= 2:  # At least 2 different patterns
-                        has_ingredients = True
-                        break
-        
-        return has_ingredients
-        
-    except Exception as e:
-        print(f"Quality check failed for {url}: {e}")
-        return False
 
 
 # =============================================================================
@@ -389,6 +268,7 @@ async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str
         Expanded list of individual recipe URLs with safety metadata
     """
     expanded_urls = []
+    fp1_failures = []  # Track Content_Scraping_Failure_Point
     processed_count = 0
     
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -469,14 +349,14 @@ async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str
                 
             except Exception as e:
                 print(f"Failed to process URL {url}: {e}")
-                # On error, do a quick title-based detection to avoid adding list URLs
-                page_type = detect_page_type(url, title, "")  # Use title-only detection
-                if page_type == "recipe":
-                    # Only add if it appears to be an individual recipe
-                    result_copy = result.copy()
-                    result_copy["type"] = "recipe"
-                    expanded_urls.append(result_copy)
-                # If it appears to be a list, skip it entirely (don't add to expanded_urls)
+                # CONTENT SCRAPING FAILURE POINT: Can't determine if list or recipe - track and discard
+                fp1_failures.append({
+                    "url": url,
+                    "title": title,
+                    "error": str(e),
+                    "failure_point": "Content_Scraping_Failure_Point"
+                })
+                # Don't add URL to expanded_urls - let it be filtered out entirely
             
             processed_count += 1
     
@@ -485,7 +365,7 @@ async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str
     
     print(f"URL Expansion: {len(initial_results)} initial → {len(safe_urls)} expanded (processed {processed_count})")
     
-    return safe_urls[:max_total_urls]  # Final cap to be absolutely sure
+    return safe_urls[:max_total_urls], fp1_failures  # Return both expanded URLs and FP1 failures
 
 
 
@@ -808,6 +688,14 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     # Step 1: Search for recipes using SerpAPI (gets up to 30 URLs after blacklist filtering)
     search_results = await search_recipes_serpapi(ctx, query)
     
+    # DEBUG: Show initial URLs from SerpAPI
+    print(f"\n=== DEBUG: Initial SerpAPI Results ===")
+    print(f"Total results: {len(search_results.get('results', []))}")
+    for i, result in enumerate(search_results.get('results', [])[:10], 1):
+        print(f"{i}. {result.get('title', 'No title')[:80]}...")
+        print(f"   URL: {result.get('url', 'No URL')}")
+    print("=" * 50)
+    
     if not search_results.get("results"):
         return {
             "results": [],
@@ -818,7 +706,7 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     
     # Step 2: Smart URL Expansion (process list pages → extract individual recipe URLs)
     # This is where the magic happens - converts list pages into individual recipe URLs
-    expanded_results = await expand_urls_with_lists(
+    expanded_results, fp1_failures = await expand_urls_with_lists(
         search_results["results"], 
         firecrawl_key=ctx.deps.firecrawl_key,
         max_total_urls=60
@@ -844,7 +732,7 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     # Process all Stage 1 ranked results to give LLM full ingredient information
     candidates_to_parse = stage1_ranked_results[:25]  # Parse top 25 for Stage 2 ranking
     
-    # Step 5: Parse all candidates (with smart quality checking for unknown sites)
+    # Step 5: Parse all candidates
     extraction_tasks = []
     successful_parses = []
     failed_parses = []
@@ -871,42 +759,11 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
                 # Track failed parse for potential quality checking
                 failed_parses.append({
                     "result": candidates_to_parse[i],
-                    "error": str(data) if isinstance(data, Exception) else data.get("error", "Unknown error")
+                    "error": str(data) if isinstance(data, Exception) else data.get("error", "Unknown error"),
+                    "failure_point": "Recipe_Parsing_Failure_Point"
                 })
         
-        # ELEGANT FAILURE HANDLING: Only quality check failed parses if < 3 successful recipes
-        if len(successful_parses) < 3 and failed_parses:
-            print(f"Only {len(successful_parses)} successful parses, quality checking {len(failed_parses)} failed sites...")
-            
-            for failed_parse in failed_parses:
-                url = failed_parse["result"].get("url", "")
-                
-                # Skip priority sites (they shouldn't fail, and if they do, quality check won't help)
-                is_priority_site = any(priority_site in url.lower() for priority_site in PRIORITY_SITES)
-                if is_priority_site:
-                    continue
-                
-                # Quality check unknown sites that failed parsing
-                try:
-                    from firecrawl import FirecrawlApp
-                    app = FirecrawlApp(api_key=ctx.deps.firecrawl_key)
-                    firecrawl_result = app.scrape(url, formats=['html'])
-                    content = getattr(firecrawl_result, 'html', '') if firecrawl_result else ''
-                    
-                    if not passes_quality_check(url, content):
-                        print(f"Quality check failed for failed parse: {url}")
-                        # Remove from failed_parses so we don't retry parsing
-                        continue
-                    else:
-                        print(f"Quality check passed for failed parse: {url} - will retry parsing")
-                        # Could implement retry logic here, but for now just log
-                        
-                except Exception as e:
-                    print(f"Quality check error for {url}: {e}")
-                
-                # Stop quality checking if we have enough successful recipes now
-                if len(successful_parses) >= 3:
-                    break
+        # No more quality checking - failed parses are simply tracked for reporting
         
         extracted_recipes = successful_parses
     
@@ -939,10 +796,20 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
             "_instructions_for_analysis": recipe.get("instructions", [])
         })
     
-    # Track failed parses for business reporting
+    # Track all failure points for business reporting
+    all_failures = fp1_failures + failed_parses  # Combine Content_Scraping and Recipe_Parsing failures
     failed_parse_report = {
-        "total_failed": len(failed_parses),
-        "failed_urls": [fp["result"].get("url", "") for fp in failed_parses]
+        "total_failed": len(all_failures),
+        "content_scraping_failures": len(fp1_failures),
+        "recipe_parsing_failures": len(failed_parses),
+        "failed_urls": [
+            {
+                "url": fp.get("url") or fp.get("result", {}).get("url", ""),
+                "failure_point": fp.get("failure_point", "Unknown"),
+                "error": fp.get("error", "Unknown error")
+            }
+            for fp in all_failures
+        ]
     }
     
     return {
