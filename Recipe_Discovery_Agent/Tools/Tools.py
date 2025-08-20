@@ -285,7 +285,7 @@ async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str
                             from firecrawl import FirecrawlApp
                             app = FirecrawlApp(api_key=firecrawl_key)
                             result = app.scrape(url, formats=['markdown'])
-                            content = result.get('markdown', '')[:10000] if result else ''
+                            content = getattr(result, 'markdown', '')[:10000] if result else ''
                         else:
                             raise  # Re-raise other errors
                 else:
@@ -294,7 +294,7 @@ async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str
                         from firecrawl import FirecrawlApp
                         app = FirecrawlApp(api_key=firecrawl_key)
                         result = app.scrape(url, formats=['markdown'])
-                        content = result.get('markdown', '')[:10000] if result else ''
+                        content = getattr(result, 'markdown', '')[:10000] if result else ''
                     else:
                         # No FireCrawl key - try direct scraping as fallback
                         response = await client.get(url, follow_redirects=True)
@@ -316,7 +316,9 @@ async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str
                     max_extract = min(5, remaining_slots)  # Extract up to 5 or remaining slots
                     
                     if max_extract > 0:
-                        extracted_urls = await extract_recipe_urls_from_list(url, content, max_extract)
+                        # Ensure content is a string for HTML parsing
+                        content_str = str(content) if content else ''
+                        extracted_urls = await extract_recipe_urls_from_list(url, content_str, max_extract)
                         
                         # Add extracted URLs to our pool
                         for extracted_url in extracted_urls:
