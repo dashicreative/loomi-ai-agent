@@ -76,11 +76,23 @@ async def search_recipes_serpapi(ctx: RunContext[RecipeDeps], query: str, number
             data = response.json()
         except httpx.ReadTimeout:
             print("SerpAPI request timed out. Retrying with shorter timeout...")
-            # Retry with shorter timeout
-            async with httpx.AsyncClient(timeout=15.0) as retry_client:
-                response = await retry_client.get("https://serpapi.com/search", params=params)
-                response.raise_for_status()
-                data = response.json()
+            # RETRY LOGIC: SerpAPI can be slow, try once more with shorter timeout
+            # This handles temporary network slowness without failing immediately
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as retry_client:
+                    response = await retry_client.get("https://serpapi.com/search", params=params)
+                    response.raise_for_status()
+                    data = response.json()
+            except httpx.ReadTimeout:
+                # GRACEFUL DEGRADATION: If both attempts timeout, return structured error
+                # This prevents agent crash and allows user to retry or check connectivity
+                print("SerpAPI retry also timed out. Network connectivity issue.")
+                return {
+                    "results": [],
+                    "total": 0,
+                    "query": query,
+                    "error": "SerpAPI requests timed out. Check network connectivity."
+                }
         except Exception as e:
             print(f"SerpAPI request failed: {e}")
             return {

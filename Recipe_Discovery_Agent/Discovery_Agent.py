@@ -25,17 +25,10 @@ def load_system_prompt(filename: str) -> str:
 model: KnownModelName = 'openai:gpt-4o'  # Using type-safe model name
 
 # Set up dependencies
-serpapi_key = os.getenv("SERPAPI_KEY")
-firecrawl_key = os.getenv("FIRECRAWL_API_KEY")
-openai_key = os.getenv("OPENAI_API_KEY")
-
-print(f"DEBUG - SERPAPI_KEY loaded: {serpapi_key[:10]}..." if serpapi_key else "DEBUG - SERPAPI_KEY is None")
-print(f"DEBUG - FIRECRAWL_KEY loaded: {firecrawl_key[:10]}..." if firecrawl_key else "DEBUG - FIRECRAWL_KEY is None")
-
 deps = RecipeDeps(
-    serpapi_key=serpapi_key,
-    firecrawl_key=firecrawl_key,
-    openai_key=openai_key
+    serpapi_key=os.getenv("SERPAPI_KEY"),
+    firecrawl_key=os.getenv("FIRECRAWL_API_KEY"),
+    openai_key=os.getenv("OPENAI_API_KEY")
 )
 
 
@@ -100,9 +93,7 @@ def main():
                     print(f"{i}. {recipe['title']} - Ready in {recipe['readyInMinutes']}")
                     
         except Exception as e:
-            import traceback
             print(f"Error: {e}")
-            print(f"Traceback: {traceback.format_exc()}")
 
 if __name__ == "__main__":
     main()
