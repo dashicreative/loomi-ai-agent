@@ -66,8 +66,6 @@ async def check_robots_txt(url: str, user_agent: str = "RecipeDiscoveryBot") -> 
     crawl_delay = rp.crawl_delay(user_agent) or 0
     
     return is_allowed, crawl_delay
-
-
 async def parse_allrecipes(url: str) -> Dict:
     """
     Parse recipe from AllRecipes.com
@@ -209,8 +207,6 @@ async def parse_allrecipes(url: str) -> Dict:
             recipe['image_url'] = img.get('src', '')
         
         return recipe
-
-
 async def parse_simplyrecipes(url: str) -> Dict:
     """
     Parse recipe from SimplyRecipes.com
@@ -316,8 +312,6 @@ async def parse_simplyrecipes(url: str) -> Dict:
             recipe['image_url'] = img.get('src', '')
         
         return recipe
-
-
 async def parse_eatingwell(url: str) -> Dict:
     """
     Parse recipe from EatingWell.com
@@ -410,8 +404,6 @@ async def parse_eatingwell(url: str) -> Dict:
         recipe['ingredients'] = [ing.get_text(strip=True) for ing in ingredients]
         
         return recipe
-
-
 async def parse_foodnetwork(url: str) -> Dict:
     """
     Parse recipe from FoodNetwork.com
@@ -508,8 +500,6 @@ async def parse_foodnetwork(url: str) -> Dict:
         recipe['instructions'] = [inst.get_text(strip=True) for inst in instructions if inst.get_text(strip=True)]
         
         return recipe
-
-
 async def parse_delish(url: str) -> Dict:
     """
     Parse recipe from Delish.com
@@ -593,8 +583,6 @@ async def parse_delish(url: str) -> Dict:
             recipe['title'] = title.get_text(strip=True)
         
         return recipe
-
-
 async def parse_seriouseats(url: str) -> Dict:
     """
     Parse recipe from SeriousEats.com
@@ -682,8 +670,6 @@ async def parse_seriouseats(url: str) -> Dict:
         recipe['ingredients'] = [ing.get_text(strip=True) for ing in ingredients]
         
         return recipe
-
-
 async def parse_foodandwine(url: str) -> Dict:
     """
     Parse recipe from FoodAndWine.com
@@ -767,8 +753,6 @@ async def parse_foodandwine(url: str) -> Dict:
             recipe['title'] = title.get_text(strip=True)
         
         return recipe
-
-
 async def parse_thepioneerwoman(url: str) -> Dict:
     """
     Parse recipe from ThePioneerWoman.com
@@ -852,8 +836,6 @@ async def parse_thepioneerwoman(url: str) -> Dict:
             recipe['title'] = title.get_text(strip=True)
         
         return recipe
-
-
 async def parse_food_com(url: str) -> Dict:
     """
     Parse recipe from Food.com
@@ -932,8 +914,6 @@ async def parse_food_com(url: str) -> Dict:
             recipe['title'] = title.get_text(strip=True)
         
         return recipe
-
-
 async def parse_epicurious(url: str) -> Dict:
     """
     Parse recipe from Epicurious.com
@@ -1023,6 +1003,7 @@ async def parse_epicurious(url: str) -> Dict:
         return recipe
 
 
+#Firecrawl parsing fallback
 async def parse_with_firecrawl(url: str, firecrawl_key: str) -> Dict:
     """
     Fallback parser using FireCrawl for any site not in our priority list.
