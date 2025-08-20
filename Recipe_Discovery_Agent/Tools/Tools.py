@@ -284,8 +284,8 @@ async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str
                             # 403 on priority site - fallback to FireCrawl
                             from firecrawl import FirecrawlApp
                             app = FirecrawlApp(api_key=firecrawl_key)
-                            result = app.scrape(url, formats=['markdown'])
-                            content = getattr(result, 'markdown', '')[:10000] if result else ''
+                            firecrawl_result = app.scrape(url, formats=['markdown'])
+                            content = getattr(firecrawl_result, 'markdown', '')[:10000] if firecrawl_result else ''
                         else:
                             raise  # Re-raise other errors
                 else:
@@ -293,8 +293,8 @@ async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str
                     if firecrawl_key:
                         from firecrawl import FirecrawlApp
                         app = FirecrawlApp(api_key=firecrawl_key)
-                        result = app.scrape(url, formats=['markdown'])
-                        content = getattr(result, 'markdown', '')[:10000] if result else ''
+                        firecrawl_result = app.scrape(url, formats=['markdown'])
+                        content = getattr(firecrawl_result, 'markdown', '')[:10000] if firecrawl_result else ''
                     else:
                         # No FireCrawl key - try direct scraping as fallback
                         response = await client.get(url, follow_redirects=True)
@@ -323,6 +323,7 @@ async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str
                         # Add extracted URLs to our pool
                         for extracted_url in extracted_urls:
                             extracted_url["type"] = "recipe"  # Mark as recipe for safety
+                            # Get metadata from original search result (not FireCrawl result)
                             extracted_url["google_position"] = result.get("google_position", 999)
                             extracted_url["site_priority"] = result.get("site_priority", 999)
                             expanded_urls.append(extracted_url)
