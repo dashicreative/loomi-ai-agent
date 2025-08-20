@@ -89,7 +89,7 @@ def main():
             # Display first few recipes if any
             if result.output['recipes']:
                 print("\nTop recipes:")
-                for i, recipe in enumerate(result.output['recipes'][:3], 1):
+                for i, recipe in enumerate(result.output['recipes'][:5], 1):
                     print(f"{i}. {recipe['title']} - Ready in {recipe['readyInMinutes']}")
                     
         except Exception as e:
