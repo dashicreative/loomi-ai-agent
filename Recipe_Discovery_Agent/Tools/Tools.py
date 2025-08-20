@@ -239,7 +239,7 @@ async def extract_recipe_urls_from_list(url: str, content: str, max_urls: int = 
         return []
 
 
-async def expand_urls_with_lists(initial_results: List[Dict], max_total_urls: int = 60) -> List[Dict]:
+async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str = None, max_total_urls: int = 60) -> List[Dict]:
     """
     SUPPLEMENTAL FUNCTION: Smart URL expansion that processes list pages to extract individual recipes.
     
@@ -248,6 +248,7 @@ async def expand_urls_with_lists(initial_results: List[Dict], max_total_urls: in
     
     Args:
         initial_results: List of search result dictionaries from SerpAPI
+        firecrawl_key: FireCrawl API key for scraping non-priority sites
         max_total_urls: Maximum total URLs to return (default 60)
         
     Returns:
@@ -269,10 +270,26 @@ async def expand_urls_with_lists(initial_results: List[Dict], max_total_urls: in
                 continue
             
             try:
-                # Quick scrape to get content for detection
-                response = await client.get(url, follow_redirects=True)
-                response.raise_for_status()
-                content = response.text[:10000]  # First 10k chars for detection
+                # Check if this is a priority site - use direct scraping
+                is_priority_site = any(priority_site in url.lower() for priority_site in PRIORITY_SITES)
+                
+                if is_priority_site:
+                    # Priority site - use direct HTTP scraping
+                    response = await client.get(url, follow_redirects=True)
+                    response.raise_for_status()
+                    content = response.text[:10000]  # First 10k chars for detection
+                else:
+                    # Non-priority site - use FireCrawl to avoid 403 errors
+                    if firecrawl_key:
+                        from firecrawl import FirecrawlApp
+                        app = FirecrawlApp(api_key=firecrawl_key)
+                        result = app.scrape_url(url, params={'formats': ['markdown']})
+                        content = result.get('markdown', '')[:10000] if result else ''
+                    else:
+                        # No FireCrawl key - try direct scraping as fallback
+                        response = await client.get(url, follow_redirects=True)
+                        response.raise_for_status()
+                        content = response.text[:10000]
                 
                 # Detect page type using our tiered system
                 page_type = detect_page_type(url, title, content)
@@ -552,7 +569,11 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     
     # Step 2: Smart URL Expansion (process list pages → extract individual recipe URLs)
     # This is where the magic happens - converts list pages into individual recipe URLs
-    expanded_results = await expand_urls_with_lists(search_results["results"], max_total_urls=60)
+    expanded_results = await expand_urls_with_lists(
+        search_results["results"], 
+        firecrawl_key=ctx.deps.firecrawl_key,
+        max_total_urls=60
+    )
     
     if not expanded_results:
         return {
