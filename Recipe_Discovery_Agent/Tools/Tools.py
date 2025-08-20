@@ -55,7 +55,7 @@ async def search_recipes_serpapi(ctx: RunContext[RecipeDeps], query: str, number
     Returns:
         Dictionary containing search results with URLs and snippets
     """
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=30.0) as client:
         # Add "recipe" to query if not already present
         if "recipe" not in query.lower():
             query = f"{query} recipe"
@@ -70,9 +70,25 @@ async def search_recipes_serpapi(ctx: RunContext[RecipeDeps], query: str, number
             "gl": "us"
         }
         
-        response = await client.get("https://serpapi.com/search", params=params)
-        response.raise_for_status()
-        data = response.json()
+        try:
+            response = await client.get("https://serpapi.com/search", params=params)
+            response.raise_for_status()
+            data = response.json()
+        except httpx.ReadTimeout:
+            print("SerpAPI request timed out. Retrying with shorter timeout...")
+            # Retry with shorter timeout
+            async with httpx.AsyncClient(timeout=15.0) as retry_client:
+                response = await retry_client.get("https://serpapi.com/search", params=params)
+                response.raise_for_status()
+                data = response.json()
+        except Exception as e:
+            print(f"SerpAPI request failed: {e}")
+            return {
+                "results": [],
+                "total": 0,
+                "query": query,
+                "error": f"Search failed: {str(e)}"
+            }
         
         # Extract organic results
         organic_results = data.get("organic_results", [])
