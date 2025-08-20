@@ -333,10 +333,14 @@ async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str
                 
             except Exception as e:
                 print(f"Failed to process URL {url}: {e}")
-                # On error, treat as individual recipe to be safe
-                result_copy = result.copy()
-                result_copy["type"] = "recipe"
-                expanded_urls.append(result_copy)
+                # On error, do a quick title-based detection to avoid adding list URLs
+                page_type = detect_page_type(url, title, "")  # Use title-only detection
+                if page_type == "recipe":
+                    # Only add if it appears to be an individual recipe
+                    result_copy = result.copy()
+                    result_copy["type"] = "recipe"
+                    expanded_urls.append(result_copy)
+                # If it appears to be a list, skip it entirely (don't add to expanded_urls)
             
             processed_count += 1
     
