@@ -252,8 +252,20 @@ async def parse_simplyrecipes(url: str) -> Dict:
             try:
                 data = json.loads(json_ld.string)
                 
-                # Handle @graph structure
-                if '@graph' in data:
+                # FIX: Handle both list and dict JSON-LD structures
+                if isinstance(data, list):
+                    # Find Recipe type in list
+                    recipe_data = None
+                    for item in data:
+                        if isinstance(item, dict) and item.get('@type') == 'Recipe':
+                            recipe_data = item
+                            break
+                    if recipe_data:
+                        data = recipe_data
+                    else:
+                        data = data[0] if data else {}
+                elif isinstance(data, dict) and '@graph' in data:
+                    # Handle @graph structure
                     for item in data['@graph']:
                         if item.get('@type') == 'Recipe':
                             data = item
@@ -449,8 +461,20 @@ async def parse_foodnetwork(url: str) -> Dict:
             try:
                 data = json.loads(json_ld.string)
                 
-                # Handle @graph structure that Food Network uses
-                if '@graph' in data:
+                # FIX: Handle both list and dict JSON-LD structures for Food Network
+                if isinstance(data, list):
+                    # Find Recipe type in list
+                    recipe_data = None
+                    for item in data:
+                        if isinstance(item, dict) and item.get('@type') == 'Recipe':
+                            recipe_data = item
+                            break
+                    if recipe_data:
+                        data = recipe_data
+                    else:
+                        data = data[0] if data else {}
+                elif isinstance(data, dict) and '@graph' in data:
+                    # Handle @graph structure that Food Network uses
                     for item in data['@graph']:
                         if item.get('@type') == 'Recipe':
                             data = item
@@ -627,7 +651,21 @@ async def parse_seriouseats(url: str) -> Dict:
         if json_ld:
             try:
                 data = json.loads(json_ld.string)
-                if '@graph' in data:
+                
+                # FIX: Handle both list and dict JSON-LD structures
+                if isinstance(data, list):
+                    # Find Recipe type in list
+                    recipe_data = None
+                    for item in data:
+                        if isinstance(item, dict) and item.get('@type') == 'Recipe':
+                            recipe_data = item
+                            break
+                    if recipe_data:
+                        data = recipe_data
+                    else:
+                        data = data[0] if data else {}
+                elif isinstance(data, dict) and '@graph' in data:
+                    # Handle @graph structure
                     for item in data['@graph']:
                         if item.get('@type') == 'Recipe':
                             data = item
@@ -958,7 +996,21 @@ async def parse_epicurious(url: str) -> Dict:
         if json_ld:
             try:
                 data = json.loads(json_ld.string)
-                if '@graph' in data:
+                
+                # FIX: Handle both list and dict JSON-LD structures for Epicurious
+                if isinstance(data, list):
+                    # Find Recipe type in list
+                    recipe_data = None
+                    for item in data:
+                        if isinstance(item, dict) and item.get('@type') == 'Recipe':
+                            recipe_data = item
+                            break
+                    if recipe_data:
+                        data = recipe_data
+                    else:
+                        data = data[0] if data else {}
+                elif isinstance(data, dict) and '@graph' in data:
+                    # Handle @graph structure
                     for item in data['@graph']:
                         if item.get('@type') == 'Recipe':
                             data = item
