@@ -25,7 +25,11 @@ def load_system_prompt(filename: str) -> str:
 model: KnownModelName = 'openai:gpt-4o'  # Using type-safe model name
 
 # Set up dependencies
-deps = RecipeDeps(api_key=os.getenv("SPOONACULAR_API_KEY"))
+deps = RecipeDeps(
+    serpapi_key=os.getenv("SERPAPI_KEY"),
+    firecrawl_key=os.getenv("FIRECRAWL_API_KEY"),
+    openai_key=os.getenv("OPENAI_API_KEY")
+)
 
 
 
