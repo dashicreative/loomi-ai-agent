@@ -90,7 +90,7 @@ def main():
             if result.output['recipes']:
                 print("\nTop recipes:")
                 for i, recipe in enumerate(result.output['recipes'][:3], 1):
-                    print(f"{i}. {recipe['title']} - Ready in {recipe['readyInMinutes']} minutes")
+                    print(f"{i}. {recipe['title']} - Ready in {recipe['readyInMinutes']}")
                     
         except Exception as e:
             print(f"Error: {e}")
