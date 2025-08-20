@@ -18,6 +18,7 @@ from urllib.robotparser import RobotFileParser
 from urllib.parse import urlparse
 import asyncio
 import time
+from firecrawl import FirecrawlApp
 
 
 # Cache for robots.txt to avoid repeated fetches
@@ -1022,24 +1023,139 @@ async def parse_epicurious(url: str) -> Dict:
         return recipe
 
 
+async def parse_with_firecrawl(url: str, firecrawl_key: str) -> Dict:
+    """
+    Fallback parser using FireCrawl for any site not in our priority list.
+    
+    COMPLIANCE:
+    - FireCrawl handles robots.txt compliance internally
+    - We specify we're extracting for analysis only
+    - Instructions extracted but never displayed to users
+    - Always preserves source URL for attribution
+    - No content caching
+    
+    FireCrawl's LLM extraction provides consistent results across any recipe site.
+    """
+    try:
+        # Initialize FireCrawl client
+        app = FirecrawlApp(api_key=firecrawl_key)
+        
+        # Define the schema for recipe extraction
+        recipe_schema = {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "The recipe title/name"
+                },
+                "ingredients": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of ingredients with amounts"
+                },
+                "instructions": {
+                    "type": "array", 
+                    "items": {"type": "string"},
+                    "description": "Step-by-step cooking instructions"
+                },
+                "cook_time": {
+                    "type": "string",
+                    "description": "Total time or cook time (e.g., '30 minutes')"
+                },
+                "servings": {
+                    "type": "string",
+                    "description": "Number of servings or yield"
+                },
+                "image_url": {
+                    "type": "string",
+                    "description": "URL of the main recipe image"
+                }
+            },
+            "required": ["title", "ingredients"]
+        }
+        
+        # Scrape with LLM extraction
+        # COMPLIANCE: We use FireCrawl which respects robots.txt automatically
+        result = app.scrape_url(
+            url,
+            params={
+                'formats': ['extract'],
+                'extract': {
+                    'schema': recipe_schema,
+                    'systemPrompt': 'Extract recipe information. This is for analysis only to help users find recipes, not for display. We will link back to the original source.'
+                }
+            }
+        )
+        
+        # Extract the data from FireCrawl response
+        if result and 'extract' in result:
+            extracted = result['extract']
+            
+            # Format the response
+            recipe = {
+                'title': extracted.get('title', ''),
+                'ingredients': extracted.get('ingredients', []),
+                'instructions': extracted.get('instructions', []),  # For analysis only
+                'cook_time': extracted.get('cook_time', ''),
+                'servings': extracted.get('servings', ''),
+                'image_url': extracted.get('image_url', ''),
+                'source_url': url  # COMPLIANCE: Always preserve source
+            }
+            
+            return recipe
+        else:
+            # If extraction fails, return minimal data with error
+            return {
+                'title': 'Recipe extraction failed',
+                'ingredients': [],
+                'instructions': [],
+                'cook_time': '',
+                'servings': '',
+                'image_url': '',
+                'source_url': url,
+                'error': 'FireCrawl extraction failed'
+            }
+            
+    except Exception as e:
+        # Return error response if FireCrawl fails
+        return {
+            'title': 'Recipe extraction error',
+            'ingredients': [],
+            'instructions': [],
+            'cook_time': '',
+            'servings': '',
+            'image_url': '',
+            'source_url': url,
+            'error': str(e)
+        }
+
+
 # Master parser function that routes to correct parser
-async def parse_recipe(url: str) -> Optional[Dict]:
+async def parse_recipe(url: str, firecrawl_key: str = None) -> Dict:
     """
     Parse a recipe from any supported site.
     
     COMPLIANCE GUARANTEE:
-    - All parsers check robots.txt before scraping
+    - Priority sites: Check robots.txt before scraping
+    - Other sites: Use FireCrawl which handles compliance
     - We respect crawl delays specified in robots.txt
     - Instructions are extracted for analysis only, NEVER displayed to users
     - We always provide attribution via source_url
     - No content is cached or stored permanently
-    - Returns None if site is not supported (triggers FireCrawl fallback)
     
     This demonstrates our good faith effort to comply with:
     - Website Terms of Service
     - Copyright law (fair use for analysis)
     - robots.txt guidelines
+    
+    Args:
+        url: The recipe URL to parse
+        firecrawl_key: API key for FireCrawl fallback (required for non-priority sites)
+    
+    Returns:
+        Dict with recipe data or error information
     """
+    # Try custom parsers first for priority sites
     if 'allrecipes.com' in url:
         return await parse_allrecipes(url)
     elif 'simplyrecipes.com' in url:
@@ -1061,4 +1177,11 @@ async def parse_recipe(url: str) -> Optional[Dict]:
     elif 'epicurious.com' in url:
         return await parse_epicurious(url)
     else:
-        return None  # Will trigger FireCrawl fallback
+        # Use FireCrawl for any other site
+        if firecrawl_key:
+            return await parse_with_firecrawl(url, firecrawl_key)
+        else:
+            return {
+                'error': 'Site not supported and no FireCrawl key provided',
+                'source_url': url
+            }
