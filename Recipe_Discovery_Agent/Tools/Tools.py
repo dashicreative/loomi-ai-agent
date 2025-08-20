@@ -8,6 +8,24 @@ from Dependencies import RecipeDeps
 # Import the parser
 from .Parsers import parse_recipe
 
+"""Complete Data Flow:
+
+  User Query
+      ↓
+  search_and_extract_recipes()  ← **Main Agent Tool**
+      ↓
+  1. search_recipes_serpapi()     ← Get 30 URLs from web
+      ↓
+  2. rerank_results_with_llm()    ← LLM picks best 10 URLs
+      ↓
+  3. parse_recipe() (parallel)    ← Extract recipe data from top 5
+      ↓
+  4. Format for agent             ← Structure data for user display
+      ↓
+  Agent Response
+"""
+
+
 # Priority recipe sites for search
 PRIORITY_SITES = [
     "allrecipes.com",
@@ -173,7 +191,7 @@ async def rerank_results_with_llm(results: List[Dict], query: str, openai_key: s
 
 
 
-
+#Primary 
 async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, max_recipes: int = 5) -> Dict:
     """
     Complete recipe discovery flow: Search → Rerank → Scrape → Extract
@@ -254,7 +272,7 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
         "totalResults": len(formatted_recipes),
         "searchQuery": query
     }
-
+ 
 
 
 

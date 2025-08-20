@@ -15,8 +15,9 @@ class RecipeInfo(TypedDict):
     title: str
     image: str
     sourceUrl: Optional[str]
-    servings: int
-    readyInMinutes: int
+    servings: str
+    readyInMinutes: str
+    ingredients: List[str]
     nutrition: Optional[NutritionInfo]
 
 
