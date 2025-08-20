@@ -263,7 +263,8 @@ async def parse_simplyrecipes(url: str) -> Dict:
                     if recipe_data:
                         data = recipe_data
                     else:
-                        data = data[0] if data else {}
+                        # No Recipe found, use first dict item as fallback
+                        data = data[0] if data and isinstance(data[0], dict) else {}
                 elif isinstance(data, dict) and '@graph' in data:
                     # Handle @graph structure
                     for item in data['@graph']:
@@ -371,10 +372,16 @@ async def parse_eatingwell(url: str) -> Dict:
                 
                 # FIX: EatingWell often has array of objects - ensure safe access
                 if isinstance(data, list):
+                    recipe_data = None
                     for item in data:
                         if isinstance(item, dict) and item.get('@type') == 'Recipe':
-                            data = item
+                            recipe_data = item
                             break
+                    if recipe_data:
+                        data = recipe_data
+                    else:
+                        # No Recipe found, use first dict item as fallback
+                        data = data[0] if data and isinstance(data[0], dict) else {}
                 
                 recipe['title'] = data.get('name', '')
                 recipe['ingredients'] = data.get('recipeIngredient', [])
@@ -472,7 +479,8 @@ async def parse_foodnetwork(url: str) -> Dict:
                     if recipe_data:
                         data = recipe_data
                     else:
-                        data = data[0] if data else {}
+                        # No Recipe found, use first dict item as fallback
+                        data = data[0] if data and isinstance(data[0], dict) else {}
                 elif isinstance(data, dict) and '@graph' in data:
                     # Handle @graph structure that Food Network uses
                     for item in data['@graph']:
@@ -663,7 +671,8 @@ async def parse_seriouseats(url: str) -> Dict:
                     if recipe_data:
                         data = recipe_data
                     else:
-                        data = data[0] if data else {}
+                        # No Recipe found, use first dict item as fallback
+                        data = data[0] if data and isinstance(data[0], dict) else {}
                 elif isinstance(data, dict) and '@graph' in data:
                     # Handle @graph structure
                     for item in data['@graph']:
@@ -1008,7 +1017,8 @@ async def parse_epicurious(url: str) -> Dict:
                     if recipe_data:
                         data = recipe_data
                     else:
-                        data = data[0] if data else {}
+                        # No Recipe found, use first dict item as fallback
+                        data = data[0] if data and isinstance(data[0], dict) else {}
                 elif isinstance(data, dict) and '@graph' in data:
                     # Handle @graph structure
                     for item in data['@graph']:
