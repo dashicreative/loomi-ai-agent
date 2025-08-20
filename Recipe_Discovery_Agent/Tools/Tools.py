@@ -50,6 +50,140 @@ PRIORITY_SITES = [
     "epicurious.com"
 ]
 
+# Sites to completely block from processing
+BLOCKED_SITES = [
+    "reddit.com",
+    "youtube.com",
+    "instagram.com", 
+    "pinterest.com",
+    "facebook.com",
+    "tiktok.com",
+    "twitter.com"
+]
+
+
+# =============================================================================
+# SUPPLEMENTAL FUNCTIONS: Quality Checks for Unknown Sites
+# These are NOT agent tools - they are internal helper functions
+# =============================================================================
+
+def passes_quality_check(url: str, content: str) -> bool:
+    """
+    SUPPLEMENTAL FUNCTION: Strict quality check for unknown recipe sites.
+    
+    Checks for essential elements needed for the iOS app:
+    1. Recipe images (for app photo display)
+    2. Clear recipe name/title
+    3. Structured ingredient list (JSON-LD → HTML lists → text patterns)
+    
+    Philosophy: Better to reject good sites than accept bad ones.
+    
+    Args:
+        url: Recipe page URL
+        content: HTML content of the page
+        
+    Returns:
+        True if site passes all quality checks, False otherwise
+    """
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(content, 'html.parser')
+        
+        # CRITERION 1: Image presence (essential for app)
+        has_recipe_image = False
+        images = soup.find_all('img')
+        for img in images:
+            alt_text = (img.get('alt', '') + ' ' + img.get('src', '')).lower()
+            # Look for food/recipe related images
+            if any(keyword in alt_text for keyword in [
+                'recipe', 'food', 'dish', 'meal', 'cooking', 'baked', 'fried',
+                'salad', 'soup', 'pasta', 'chicken', 'beef', 'dessert', 'cake'
+            ]):
+                has_recipe_image = True
+                break
+        
+        if not has_recipe_image:
+            return False
+            
+        # CRITERION 2: Recipe name/title presence
+        has_recipe_name = False
+        # Check common title locations
+        title_elements = soup.find_all(['h1', 'h2', 'title'])
+        for element in title_elements:
+            title_text = element.get_text().lower()
+            if any(keyword in title_text for keyword in [
+                'recipe', 'how to make', 'easy', 'homemade', 'baked', 'grilled'
+            ]) or len(title_text) > 10:  # Reasonable recipe title length
+                has_recipe_name = True
+                break
+                
+        if not has_recipe_name:
+            return False
+            
+        # CRITERION 3: Ingredient list detection (tiered approach)
+        has_ingredients = False
+        
+        # Tier 1: JSON-LD recipe schema
+        json_ld = soup.find('script', type='application/ld+json')
+        if json_ld:
+            try:
+                import json
+                data = json.loads(json_ld.string)
+                if isinstance(data, list):
+                    data = data[0] if data else {}
+                if data.get('@type') == 'Recipe' and data.get('recipeIngredient'):
+                    has_ingredients = True
+            except:
+                pass
+        
+        # Tier 2: HTML lists with ingredient-like content
+        if not has_ingredients:
+            lists = soup.find_all(['ul', 'ol'])
+            for lst in lists:
+                items = lst.find_all('li')
+                ingredient_count = 0
+                for item in items:
+                    text = item.get_text().lower()
+                    # Look for quantity + unit patterns
+                    if any(pattern in text for pattern in [
+                        'cup', 'tsp', 'tbsp', 'ounce', 'pound', 'gram', 'liter',
+                        'large', 'medium', 'small', 'piece', 'slice', 'clove',
+                        'scoop', 'dash', 'pinch'  # Include common cooking terms
+                    ]) and any(char.isdigit() for char in text):
+                        ingredient_count += 1
+                
+                if ingredient_count >= 3:  # At least 3 ingredients with quantities
+                    has_ingredients = True
+                    break
+        
+        # Tier 3: Text patterns for ingredients
+        if not has_ingredients:
+            page_text = soup.get_text().lower()
+            # Look for common ingredient patterns in text
+            import re
+            ingredient_patterns = [
+                r'\d+\s+(cup|cups|tsp|tbsp|ounce|pound|gram|liter)',
+                r'\d+\s+(large|medium|small|whole)',
+                r'\d+\s+(piece|pieces|slice|slices|clove|cloves)',
+                r'\d+\s+scoop',  # Include scoop and other cooking terms
+                r'pinch of',
+                r'dash of'
+            ]
+            
+            pattern_matches = 0
+            for pattern in ingredient_patterns:
+                if re.search(pattern, page_text):
+                    pattern_matches += 1
+                    if pattern_matches >= 2:  # At least 2 different patterns
+                        has_ingredients = True
+                        break
+        
+        return has_ingredients
+        
+    except Exception as e:
+        print(f"Quality check failed for {url}: {e}")
+        return False
+
 
 # =============================================================================
 # SUPPLEMENTAL FUNCTIONS: List vs Individual Recipe Detection
@@ -325,7 +459,6 @@ async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str
                             extracted_url["type"] = "recipe"  # Mark as recipe for safety
                             # Get metadata from original search result (not FireCrawl result)
                             extracted_url["google_position"] = result.get("google_position", 999)
-                            extracted_url["site_priority"] = result.get("site_priority", 999)
                             expanded_urls.append(extracted_url)
                             
                             # Stop if we hit the limit while processing this list
@@ -362,14 +495,14 @@ async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str
 # These are NOT agent tools - they are internal helper functions
 # =============================================================================
 
-async def search_recipes_serpapi(ctx: RunContext[RecipeDeps], query: str, number: int = 30) -> Dict:
+async def search_recipes_serpapi(ctx: RunContext[RecipeDeps], query: str, number: int = 40) -> Dict:
     """
     SUPPLEMENTAL FUNCTION: Search for recipes on the web using SerpAPI.
     Internal function for the search step.
     
     Args:
         query: The search query for recipes
-        number: Number of results to return (default 30)
+        number: Number of results to return (default 40, filtered down)
     
     Returns:
         Dictionary containing search results with URLs and snippets
@@ -429,28 +562,22 @@ async def search_recipes_serpapi(ctx: RunContext[RecipeDeps], query: str, number
         for result in organic_results:
             url = result.get("link", "")
             
-            # Determine site priority (0 = highest priority, 999 = not in priority list)
-            site_priority = 999
-            for idx, priority_site in enumerate(PRIORITY_SITES):
-                if priority_site in url:
-                    site_priority = idx
-                    break
+            # Skip blocked sites entirely
+            is_blocked = any(blocked_site in url.lower() for blocked_site in BLOCKED_SITES)
+            if is_blocked:
+                continue
             
             formatted_results.append({
                 "title": result.get("title", ""),
                 "url": url,
                 "snippet": result.get("snippet", ""),
                 "source": result.get("source", ""),
-                "google_position": result.get("position", 999),
-                "site_priority": site_priority
+                "google_position": result.get("position", 999)
             })
         
-        # Sort by site priority first, then by Google position
-        formatted_results.sort(key=lambda x: (x["site_priority"], x["google_position"]))
-        
         return {
-            "results": formatted_results[:number],
-            "total": len(formatted_results),
+            "results": formatted_results[:30],  # Cap at 30 after filtering
+            "total": len(formatted_results[:30]),
             "query": query
         }
 
@@ -550,6 +677,106 @@ async def rerank_results_with_llm(results: List[Dict], query: str, openai_key: s
             return results[:top_k]
 
 
+async def rerank_with_full_recipe_data(scraped_recipes: List[Dict], query: str, openai_key: str) -> List[Dict]:
+    """
+    SUPPLEMENTAL FUNCTION: Second-stage LLM ranking using full recipe data.
+    
+    Uses complete recipe information (ingredients, instructions, timing) for intelligent ranking.
+    Much more accurate than title/snippet ranking for complex queries.
+    
+    Args:
+        scraped_recipes: List of recipes with full parsed data
+        query: Original user query
+        openai_key: OpenAI API key
+        
+    Returns:
+        Recipes reranked by deep content relevance
+    """
+    if not scraped_recipes:
+        return []
+    
+    # Prepare detailed recipe data for LLM
+    detailed_recipes = []
+    for i, recipe in enumerate(scraped_recipes):
+        # Build comprehensive recipe summary for LLM analysis
+        ingredients_text = ", ".join(recipe.get("ingredients", [])[:10])  # First 10 ingredients
+        instructions_preview = " ".join(recipe.get("instructions", [])[:2])[:200]  # First 2 steps, truncated
+        
+        recipe_summary = f"""{i+1}. {recipe.get('title', 'Untitled Recipe')}
+Ingredients: {ingredients_text}
+Cook Time: {recipe.get('cook_time', 'Not specified')}
+Servings: {recipe.get('servings', 'Not specified')}
+Instructions Preview: {instructions_preview}..."""
+        
+        detailed_recipes.append(recipe_summary)
+    
+    recipes_text = "\n\n".join(detailed_recipes)
+    
+    prompt = f"""User is searching for: "{query}"
+
+    Rank these recipes by relevance using their FULL CONTENT (best match first).
+    Consider the complete recipe data - ingredients, cooking methods, timing, etc.
+    
+    Key ranking factors:
+    - Ingredient match to query (e.g., "no cane sugar" - check actual ingredients)
+    - Cooking method match (e.g., "baked" vs "fried")
+    - Dietary requirements (e.g., "high protein" - analyze ingredient protein content)  
+    - Time constraints (e.g., "quick" - consider cook times)
+    - Meal type appropriateness (breakfast/lunch/dinner)
+
+    Recipes with full details:
+    {recipes_text}
+
+    Return ONLY a comma-separated list of numbers in order of relevance (e.g., "3,1,5,2,4...")
+    Best match first based on the COMPLETE recipe content."""
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {openai_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [
+                    {"role": "system", "content": "You are an expert recipe analyst. Rank recipes by deep content relevance to user queries. Return only comma-separated numbers."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.3,
+                "max_tokens": 100
+            }
+        )
+        
+        if response.status_code != 200:
+            # If LLM fails, return original order
+            return scraped_recipes
+        
+        data = response.json()
+        ranking_text = data['choices'][0]['message']['content'].strip()
+        
+        # Parse the ranking
+        try:
+            rankings = [int(x.strip()) - 1 for x in ranking_text.split(',')]
+            reranked = []
+            
+            # Add recipes in the ranked order
+            for idx in rankings:
+                if 0 <= idx < len(scraped_recipes) and scraped_recipes[idx] not in reranked:
+                    reranked.append(scraped_recipes[idx])
+            
+            # Add any missing recipes
+            for recipe in scraped_recipes:
+                if recipe not in reranked:
+                    reranked.append(recipe)
+            
+            return reranked
+            
+        except (ValueError, IndexError):
+            # If parsing fails, return original order
+            return scraped_recipes
+
+
 
 # =============================================================================
 # MAIN AGENT TOOL: This is the ONLY function the agent can invoke
@@ -573,8 +800,8 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     Returns:
         Dictionary with structured recipe data ready for agent processing
     """
-    # Step 1: Search for recipes using SerpAPI (gets 30 initial URLs)
-    search_results = await search_recipes_serpapi(ctx, query, number=30)
+    # Step 1: Search for recipes using SerpAPI (gets up to 30 URLs after blacklist filtering)
+    search_results = await search_recipes_serpapi(ctx, query)
     
     if not search_results.get("results"):
         return {
@@ -600,27 +827,96 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
             "error": "No valid recipes found after processing search results"
         }
     
-    # Step 3: Rerank expanded results using LLM for best matches (handles up to 60 URLs now)
-    reranked_results = await rerank_results_with_llm(
+    # STAGE 1: Initial LLM ranking by title + snippet relevance
+    stage1_ranked_results = await rerank_results_with_llm(
         expanded_results,
         query,
         ctx.deps.openai_key,
-        top_k=10  # Get top 10 for extraction
+        top_k=len(expanded_results)  # Rank ALL results for fallback capability
     )
     
-    # Step 4: Extract recipe details from top results (parallel)
-    extracted_recipes = []
-    extraction_tasks = []
+    # Step 4: Quality check + scrape top candidates
+    quality_checked_recipes = []
+    candidates_to_check = []
     
-    # Create tasks for parallel extraction
-    for result in reranked_results[:max_recipes]:
+    # First, try top 10 results
+    for result in stage1_ranked_results[:10]:
+        url = result.get("url", "")
+        
+        # Priority sites automatically pass quality check
+        is_priority_site = any(priority_site in url.lower() for priority_site in PRIORITY_SITES)
+        
+        if is_priority_site:
+            candidates_to_check.append(result)
+        else:
+            # Quality check unknown sites during scraping
+            try:
+                # Quick scrape to get content for quality check
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    if any(priority_site in url.lower() for priority_site in PRIORITY_SITES):
+                        # Priority site - direct scraping
+                        response = await client.get(url, follow_redirects=True)
+                        response.raise_for_status()
+                        content = response.text
+                    else:
+                        # Non-priority site - use FireCrawl
+                        from firecrawl import FirecrawlApp
+                        app = FirecrawlApp(api_key=ctx.deps.firecrawl_key)
+                        firecrawl_result = app.scrape(url, formats=['html'])
+                        content = getattr(firecrawl_result, 'html', '') if firecrawl_result else ''
+                
+                # Apply quality check
+                if passes_quality_check(url, content):
+                    candidates_to_check.append(result)
+                else:
+                    print(f"Quality check failed for: {url}")
+                    
+            except Exception as e:
+                print(f"Failed quality check for {url}: {e}")
+    
+    # If we have fewer than 3 candidates, dig deeper into remaining results
+    if len(candidates_to_check) < 3:
+        print(f"Only {len(candidates_to_check)} recipes passed initial screening, checking more results...")
+        
+        for result in stage1_ranked_results[10:]:  # Check remaining results
+            url = result.get("url", "")
+            
+            # Priority sites automatically pass
+            is_priority_site = any(priority_site in url.lower() for priority_site in PRIORITY_SITES)
+            
+            if is_priority_site:
+                candidates_to_check.append(result)
+            else:
+                # Quality check unknown sites
+                try:
+                    async with httpx.AsyncClient(timeout=15.0) as client:
+                        from firecrawl import FirecrawlApp
+                        app = FirecrawlApp(api_key=ctx.deps.firecrawl_key)
+                        firecrawl_result = app.scrape(url, formats=['html'])
+                        content = getattr(firecrawl_result, 'html', '') if firecrawl_result else ''
+                    
+                    if passes_quality_check(url, content):
+                        candidates_to_check.append(result)
+                    else:
+                        print(f"Quality check failed for: {url}")
+                        
+                except Exception as e:
+                    print(f"Failed quality check for {url}: {e}")
+            
+            # Stop when we have enough candidates
+            if len(candidates_to_check) >= max_recipes + 2:  # Get a few extra for ranking
+                break
+    
+    # Step 5: Parse the quality-checked candidates
+    extraction_tasks = []
+    for result in candidates_to_check:
         url = result.get("url")
         if url:
-            # Create extraction task
             task = parse_recipe(url, ctx.deps.firecrawl_key)
             extraction_tasks.append(task)
     
     # Execute all extractions in parallel
+    extracted_recipes = []
     if extraction_tasks:
         extracted_data = await asyncio.gather(*extraction_tasks, return_exceptions=True)
         
@@ -628,16 +924,26 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
         for i, data in enumerate(extracted_data):
             if isinstance(data, dict) and not data.get("error"):
                 # Add search metadata to extracted recipe
-                data["search_title"] = reranked_results[i].get("title", "")
-                data["search_snippet"] = reranked_results[i].get("snippet", "")
+                data["search_title"] = candidates_to_check[i].get("title", "")
+                data["search_snippet"] = candidates_to_check[i].get("snippet", "")
                 extracted_recipes.append(data)
             elif isinstance(data, Exception):
                 # Log extraction failure but continue
-                print(f"Failed to extract recipe from {reranked_results[i].get('url')}: {str(data)}")
+                print(f"Failed to extract recipe from {candidates_to_check[i].get('url')}: {str(data)}")
     
-    # Step 5: Format final results for agent
+    # STAGE 2: Deep content ranking using full recipe data
+    if len(extracted_recipes) > 1:  # Only re-rank if we have multiple recipes
+        final_ranked_recipes = await rerank_with_full_recipe_data(
+            extracted_recipes,
+            query,
+            ctx.deps.openai_key
+        )
+    else:
+        final_ranked_recipes = extracted_recipes
+    
+    # Step 6: Format final results for agent  
     formatted_recipes = []
-    for recipe in extracted_recipes:
+    for recipe in final_ranked_recipes[:max_recipes]:  # Use final ranked results
         # Parse raw ingredient strings into structured format
         raw_ingredients = recipe.get("ingredients", [])
         structured_ingredients = parse_ingredients_list(raw_ingredients)
