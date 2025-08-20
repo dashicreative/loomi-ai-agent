@@ -369,10 +369,10 @@ async def parse_eatingwell(url: str) -> Dict:
             try:
                 data = json.loads(json_ld.string)
                 
-                # EatingWell often has array of objects
+                # FIX: EatingWell often has array of objects - ensure safe access
                 if isinstance(data, list):
                     for item in data:
-                        if item.get('@type') == 'Recipe':
+                        if isinstance(item, dict) and item.get('@type') == 'Recipe':
                             data = item
                             break
                 
