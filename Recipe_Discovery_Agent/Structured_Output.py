@@ -1,7 +1,7 @@
 from typing import TypedDict, List, Optional, Dict
 
 
-#Strcuture of Nutrtional info
+#Structure of Nutritional info
 class NutritionInfo(TypedDict):
     calories: float
     protein: float
@@ -9,7 +9,15 @@ class NutritionInfo(TypedDict):
     fat: float
 
 
-#Strcuture of Recipe info
+#Structure of parsed ingredient info
+class IngredientInfo(TypedDict):
+    quantity: Optional[str]  # "2", "1/2", "2-3", None for "salt to taste"
+    unit: Optional[str]      # "cups", "teaspoon", "large", None for no unit
+    ingredient: str          # "all-purpose flour", "salt", "eggs"
+    original: str           # Original string for fallback display
+
+
+#Structure of Recipe info
 class RecipeInfo(TypedDict):
     id: int
     title: str
@@ -17,7 +25,7 @@ class RecipeInfo(TypedDict):
     sourceUrl: Optional[str]
     servings: str
     readyInMinutes: str
-    ingredients: List[str]
+    ingredients: List[IngredientInfo]  # Now structured ingredients
     nutrition: Optional[NutritionInfo]
 
 

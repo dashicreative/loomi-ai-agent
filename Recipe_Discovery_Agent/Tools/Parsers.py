@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 import asyncio
 import time
 from firecrawl import FirecrawlApp
+from ingredient_parser import parse_ingredients_list
 
 
 # Cache for robots.txt to avoid repeated fetches
@@ -1135,9 +1136,10 @@ async def parse_with_firecrawl(url: str, firecrawl_key: str) -> Dict:
             extracted = result['extract']
             
             # Format the response
+            raw_ingredients = extracted.get('ingredients', [])
             recipe = {
                 'title': extracted.get('title', ''),
-                'ingredients': extracted.get('ingredients', []),
+                'ingredients': parse_ingredients_list(raw_ingredients),
                 'instructions': extracted.get('instructions', []),  # For analysis only
                 'cook_time': extracted.get('cook_time', ''),
                 'servings': extracted.get('servings', ''),

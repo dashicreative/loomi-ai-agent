@@ -5,8 +5,9 @@ import asyncio
 import os
 from dataclasses import dataclass
 from Dependencies import RecipeDeps
-# Import the parser
+# Import the parser and ingredient parsing
 from .Parsers import parse_recipe
+from ingredient_parser import parse_ingredients_list
 
 """Complete Data Flow:
 
@@ -283,6 +284,10 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     # Step 4: Format final results for agent
     formatted_recipes = []
     for recipe in extracted_recipes:
+        # Parse raw ingredient strings into structured format
+        raw_ingredients = recipe.get("ingredients", [])
+        structured_ingredients = parse_ingredients_list(raw_ingredients)
+        
         formatted_recipes.append({
             "id": len(formatted_recipes) + 1,  # Simple ID generation
             "title": recipe.get("title", recipe.get("search_title", "")),
@@ -290,7 +295,7 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
             "sourceUrl": recipe.get("source_url", ""),
             "servings": recipe.get("servings", ""),
             "readyInMinutes": recipe.get("cook_time", ""),
-            "ingredients": recipe.get("ingredients", []),
+            "ingredients": structured_ingredients,  # Now structured!
             # Instructions are available for agent analysis but won't be displayed
             "_instructions_for_analysis": recipe.get("instructions", [])
         })
