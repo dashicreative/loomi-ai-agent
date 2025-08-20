@@ -12,7 +12,8 @@
       "Bash(git add:*)",
       "mcp__archon__perform_rag_query",
       "mcp__archon__search_code_examples",
-      "WebFetch(domain:logfire.pydantic.dev)"
+      "WebFetch(domain:logfire.pydantic.dev)",
+      "mcp__archon__manage_task"
     ],
     "deny": []
   }
