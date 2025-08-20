@@ -715,14 +715,19 @@ Instructions Preview: {instructions_preview}..."""
     prompt = f"""User is searching for: "{query}"
 
     Rank these recipes by relevance using their FULL CONTENT (best match first).
-    Consider the complete recipe data - ingredients, cooking methods, timing, etc.
-    
-    Key ranking factors:
-    - Ingredient match to query (e.g., "no cane sugar" - check actual ingredients)
-    - Cooking method match (e.g., "baked" vs "fried")
-    - Dietary requirements (e.g., "high protein" - analyze ingredient protein content)  
-    - Time constraints (e.g., "quick" - consider cook times)
-    - Meal type appropriateness (breakfast/lunch/dinner)
+    Analyze ingredients AND instructions for complete relevance matching.
+
+    CRITICAL RANKING REQUIREMENTS:
+    1. REQUIRED INCLUSIONS: If query mentions specific ingredients (e.g., "blueberry cheesecake"), those ingredients MUST appear in the recipe
+    2. EXCLUSIONS: If query uses "without", "no", or "-" (e.g., "cheesecake without cane sugar"), ensure excluded items are NOT in ingredients
+    3. EQUIPMENT REQUIREMENTS: Check instructions for equipment mentions (e.g., "no-bake", "slow cooker", "air fryer")
+    4. COOKING METHOD: Match preparation methods from instructions (e.g., "grilled", "baked", "fried")
+    5. SPECIFIC COOKING DIRECTIONS: Match any specific cooking techniques or directions the user requests that can be found in the recipe instructions
+
+    Additional factors:
+    - Dietary requirements (high protein, low carb, etc.)
+    - Time constraints (quick, under 30 minutes, etc.)
+    - Meal type appropriateness
 
     Recipes with full details:
     {recipes_text}
@@ -835,81 +840,16 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
         top_k=len(expanded_results)  # Rank ALL results for fallback capability
     )
     
-    # Step 4: Quality check + scrape top candidates
-    quality_checked_recipes = []
-    candidates_to_check = []
+    # Step 4: Parse ALL 30 URLs for Stage 2 ranking (LLM needs ingredient data)
+    # Process all Stage 1 ranked results to give LLM full ingredient information
+    candidates_to_parse = stage1_ranked_results[:25]  # Parse top 25 for Stage 2 ranking
     
-    # First, try top 10 results
-    for result in stage1_ranked_results[:10]:
-        url = result.get("url", "")
-        
-        # Priority sites automatically pass quality check
-        is_priority_site = any(priority_site in url.lower() for priority_site in PRIORITY_SITES)
-        
-        if is_priority_site:
-            candidates_to_check.append(result)
-        else:
-            # Quality check unknown sites during scraping
-            try:
-                # Quick scrape to get content for quality check
-                async with httpx.AsyncClient(timeout=15.0) as client:
-                    if any(priority_site in url.lower() for priority_site in PRIORITY_SITES):
-                        # Priority site - direct scraping
-                        response = await client.get(url, follow_redirects=True)
-                        response.raise_for_status()
-                        content = response.text
-                    else:
-                        # Non-priority site - use FireCrawl
-                        from firecrawl import FirecrawlApp
-                        app = FirecrawlApp(api_key=ctx.deps.firecrawl_key)
-                        firecrawl_result = app.scrape(url, formats=['html'])
-                        content = getattr(firecrawl_result, 'html', '') if firecrawl_result else ''
-                
-                # Apply quality check
-                if passes_quality_check(url, content):
-                    candidates_to_check.append(result)
-                else:
-                    print(f"Quality check failed for: {url}")
-                    
-            except Exception as e:
-                print(f"Failed quality check for {url}: {e}")
-    
-    # If we have fewer than 3 candidates, dig deeper into remaining results
-    if len(candidates_to_check) < 3:
-        print(f"Only {len(candidates_to_check)} recipes passed initial screening, checking more results...")
-        
-        for result in stage1_ranked_results[10:]:  # Check remaining results
-            url = result.get("url", "")
-            
-            # Priority sites automatically pass
-            is_priority_site = any(priority_site in url.lower() for priority_site in PRIORITY_SITES)
-            
-            if is_priority_site:
-                candidates_to_check.append(result)
-            else:
-                # Quality check unknown sites
-                try:
-                    async with httpx.AsyncClient(timeout=15.0) as client:
-                        from firecrawl import FirecrawlApp
-                        app = FirecrawlApp(api_key=ctx.deps.firecrawl_key)
-                        firecrawl_result = app.scrape(url, formats=['html'])
-                        content = getattr(firecrawl_result, 'html', '') if firecrawl_result else ''
-                    
-                    if passes_quality_check(url, content):
-                        candidates_to_check.append(result)
-                    else:
-                        print(f"Quality check failed for: {url}")
-                        
-                except Exception as e:
-                    print(f"Failed quality check for {url}: {e}")
-            
-            # Stop when we have enough candidates
-            if len(candidates_to_check) >= max_recipes + 2:  # Get a few extra for ranking
-                break
-    
-    # Step 5: Parse the quality-checked candidates
+    # Step 5: Parse all candidates (with smart quality checking for unknown sites)
     extraction_tasks = []
-    for result in candidates_to_check:
+    successful_parses = []
+    failed_parses = []
+    
+    for result in candidates_to_parse:
         url = result.get("url")
         if url:
             task = parse_recipe(url, ctx.deps.firecrawl_key)
@@ -920,16 +860,55 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     if extraction_tasks:
         extracted_data = await asyncio.gather(*extraction_tasks, return_exceptions=True)
         
-        # Process extracted data
+        # Process extracted data - separate successful vs failed parses
         for i, data in enumerate(extracted_data):
             if isinstance(data, dict) and not data.get("error"):
                 # Add search metadata to extracted recipe
-                data["search_title"] = candidates_to_check[i].get("title", "")
-                data["search_snippet"] = candidates_to_check[i].get("snippet", "")
-                extracted_recipes.append(data)
-            elif isinstance(data, Exception):
-                # Log extraction failure but continue
-                print(f"Failed to extract recipe from {candidates_to_check[i].get('url')}: {str(data)}")
+                data["search_title"] = candidates_to_parse[i].get("title", "")
+                data["search_snippet"] = candidates_to_parse[i].get("snippet", "")
+                successful_parses.append(data)
+            else:
+                # Track failed parse for potential quality checking
+                failed_parses.append({
+                    "result": candidates_to_parse[i],
+                    "error": str(data) if isinstance(data, Exception) else data.get("error", "Unknown error")
+                })
+        
+        # ELEGANT FAILURE HANDLING: Only quality check failed parses if < 3 successful recipes
+        if len(successful_parses) < 3 and failed_parses:
+            print(f"Only {len(successful_parses)} successful parses, quality checking {len(failed_parses)} failed sites...")
+            
+            for failed_parse in failed_parses:
+                url = failed_parse["result"].get("url", "")
+                
+                # Skip priority sites (they shouldn't fail, and if they do, quality check won't help)
+                is_priority_site = any(priority_site in url.lower() for priority_site in PRIORITY_SITES)
+                if is_priority_site:
+                    continue
+                
+                # Quality check unknown sites that failed parsing
+                try:
+                    from firecrawl import FirecrawlApp
+                    app = FirecrawlApp(api_key=ctx.deps.firecrawl_key)
+                    firecrawl_result = app.scrape(url, formats=['html'])
+                    content = getattr(firecrawl_result, 'html', '') if firecrawl_result else ''
+                    
+                    if not passes_quality_check(url, content):
+                        print(f"Quality check failed for failed parse: {url}")
+                        # Remove from failed_parses so we don't retry parsing
+                        continue
+                    else:
+                        print(f"Quality check passed for failed parse: {url} - will retry parsing")
+                        # Could implement retry logic here, but for now just log
+                        
+                except Exception as e:
+                    print(f"Quality check error for {url}: {e}")
+                
+                # Stop quality checking if we have enough successful recipes now
+                if len(successful_parses) >= 3:
+                    break
+        
+        extracted_recipes = successful_parses
     
     # STAGE 2: Deep content ranking using full recipe data
     if len(extracted_recipes) > 1:  # Only re-rank if we have multiple recipes
@@ -960,10 +939,17 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
             "_instructions_for_analysis": recipe.get("instructions", [])
         })
     
+    # Track failed parses for business reporting
+    failed_parse_report = {
+        "total_failed": len(failed_parses),
+        "failed_urls": [fp["result"].get("url", "") for fp in failed_parses]
+    }
+    
     return {
         "results": formatted_recipes,
         "totalResults": len(formatted_recipes),
-        "searchQuery": query
+        "searchQuery": query,
+        "_failed_parse_report": failed_parse_report  # For business analytics
     }
  
 
