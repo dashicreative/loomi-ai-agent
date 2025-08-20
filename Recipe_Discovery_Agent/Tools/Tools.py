@@ -5,6 +5,8 @@ import asyncio
 import os
 from dataclasses import dataclass
 from Dependencies import RecipeDeps
+# Import the parser
+from .Parsers import parse_recipe
 
 # Priority recipe sites for search
 PRIORITY_SITES = [
@@ -23,9 +25,10 @@ PRIORITY_SITES = [
 
 
 
-async def search_recipes(ctx: RunContext[RecipeDeps], query: str, number: int = 30) -> Dict:
+async def search_recipes_serpapi(ctx: RunContext[RecipeDeps], query: str, number: int = 30) -> Dict:
     """
     Search for recipes on the web using SerpAPI.
+    Internal function for the search step.
     
     Args:
         query: The search query for recipes
@@ -168,7 +171,90 @@ async def rerank_results_with_llm(results: List[Dict], query: str, openai_key: s
             # If parsing fails, return original order
             return results[:top_k]
 
-# TODO: Implement custom parsers for top sites
-# TODO: Implement FireCrawl fallback
+
+
+
+async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, max_recipes: int = 5) -> Dict:
+    """
+    Complete recipe discovery flow: Search → Rerank → Scrape → Extract
+    
+    This is the main tool that the agent will use for recipe discovery.
+    Replaces the old Spoonacular search_recipes function.
+    
+    Args:
+        query: User's search query
+        max_recipes: Maximum number of recipes to return with full details (default 5)
+    
+    Returns:
+        Dictionary with structured recipe data ready for agent processing
+    """
+    # Step 1: Search for recipes using SerpAPI
+    search_results = await search_recipes_serpapi(ctx, query, number=30)
+    
+    if not search_results.get("results"):
+        return {
+            "results": [],
+            "totalResults": 0,
+            "searchQuery": query,
+            "error": "No recipes found for your search"
+        }
+    
+    # Step 2: Rerank results using LLM for best matches
+    reranked_results = await rerank_results_with_llm(
+        search_results["results"],
+        query,
+        ctx.deps.openai_key,
+        top_k=10  # Get top 10 for extraction
+    )
+    
+    # Step 3: Extract recipe details from top results (parallel)
+    extracted_recipes = []
+    extraction_tasks = []
+    
+    # Create tasks for parallel extraction
+    for result in reranked_results[:max_recipes]:
+        url = result.get("url")
+        if url:
+            # Create extraction task
+            task = parse_recipe(url, ctx.deps.firecrawl_key)
+            extraction_tasks.append(task)
+    
+    # Execute all extractions in parallel
+    if extraction_tasks:
+        extracted_data = await asyncio.gather(*extraction_tasks, return_exceptions=True)
+        
+        # Process extracted data
+        for i, data in enumerate(extracted_data):
+            if isinstance(data, dict) and not data.get("error"):
+                # Add search metadata to extracted recipe
+                data["search_title"] = reranked_results[i].get("title", "")
+                data["search_snippet"] = reranked_results[i].get("snippet", "")
+                extracted_recipes.append(data)
+            elif isinstance(data, Exception):
+                # Log extraction failure but continue
+                print(f"Failed to extract recipe from {reranked_results[i].get('url')}: {str(data)}")
+    
+    # Step 4: Format final results for agent
+    formatted_recipes = []
+    for recipe in extracted_recipes:
+        formatted_recipes.append({
+            "id": len(formatted_recipes) + 1,  # Simple ID generation
+            "title": recipe.get("title", recipe.get("search_title", "")),
+            "image": recipe.get("image_url", ""),
+            "sourceUrl": recipe.get("source_url", ""),
+            "servings": recipe.get("servings", ""),
+            "readyInMinutes": recipe.get("cook_time", ""),
+            "ingredients": recipe.get("ingredients", []),
+            # Instructions are available for agent analysis but won't be displayed
+            "_instructions_for_analysis": recipe.get("instructions", [])
+        })
+    
+    return {
+        "results": formatted_recipes,
+        "totalResults": len(formatted_recipes),
+        "searchQuery": query
+    }
+
+
 
 
