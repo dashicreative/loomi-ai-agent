@@ -274,16 +274,26 @@ async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str
                 is_priority_site = any(priority_site in url.lower() for priority_site in PRIORITY_SITES)
                 
                 if is_priority_site:
-                    # Priority site - use direct HTTP scraping
-                    response = await client.get(url, follow_redirects=True)
-                    response.raise_for_status()
-                    content = response.text[:10000]  # First 10k chars for detection
+                    # Priority site - use direct HTTP scraping, fallback to FireCrawl on 403
+                    try:
+                        response = await client.get(url, follow_redirects=True)
+                        response.raise_for_status()
+                        content = response.text[:10000]  # First 10k chars for detection
+                    except httpx.HTTPStatusError as e:
+                        if e.response.status_code == 403 and firecrawl_key:
+                            # 403 on priority site - fallback to FireCrawl
+                            from firecrawl import FirecrawlApp
+                            app = FirecrawlApp(api_key=firecrawl_key)
+                            result = app.scrape(url, formats=['markdown'])
+                            content = result.get('markdown', '')[:10000] if result else ''
+                        else:
+                            raise  # Re-raise other errors
                 else:
                     # Non-priority site - use FireCrawl to avoid 403 errors
                     if firecrawl_key:
                         from firecrawl import FirecrawlApp
                         app = FirecrawlApp(api_key=firecrawl_key)
-                        result = app.scrape_url(url, params={'formats': ['markdown']})
+                        result = app.scrape(url, formats=['markdown'])
                         content = result.get('markdown', '')[:10000] if result else ''
                     else:
                         # No FireCrawl key - try direct scraping as fallback
