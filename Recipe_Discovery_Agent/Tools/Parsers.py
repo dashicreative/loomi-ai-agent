@@ -509,6 +509,519 @@ async def parse_foodnetwork(url: str) -> Dict:
         return recipe
 
 
+async def parse_delish(url: str) -> Dict:
+    """
+    Parse recipe from Delish.com
+    
+    COMPLIANCE:
+    - Checks robots.txt before scraping
+    - Respects crawl delays
+    - Only extracts data for user analysis, not for display
+    - Always preserves source URL for attribution
+    """
+    # COMPLIANCE CHECK: Respect robots.txt
+    is_allowed, crawl_delay = await check_robots_txt(url)
+    
+    if not is_allowed:
+        return {
+            'error': 'Robots.txt disallows scraping this URL',
+            'source_url': url
+        }
+    
+    # COMPLIANCE: Respect crawl delay
+    if crawl_delay > 0:
+        await asyncio.sleep(crawl_delay)
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, follow_redirects=True)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        recipe = {
+            'title': '',
+            'ingredients': [],
+            'instructions': [],
+            'cook_time': '',
+            'servings': '',
+            'image_url': '',
+            'source_url': url
+        }
+        
+        # Try JSON-LD
+        json_ld = soup.find('script', type='application/ld+json')
+        if json_ld:
+            try:
+                data = json.loads(json_ld.string)
+                if isinstance(data, list):
+                    for item in data:
+                        if item.get('@type') == 'Recipe':
+                            data = item
+                            break
+                
+                recipe['title'] = data.get('name', '')
+                recipe['ingredients'] = data.get('recipeIngredient', [])
+                
+                instructions = data.get('recipeInstructions', [])
+                recipe['instructions'] = []
+                for inst in instructions:
+                    if isinstance(inst, dict):
+                        text = inst.get('text', inst.get('name', ''))
+                    else:
+                        text = str(inst)
+                    if text:
+                        recipe['instructions'].append(text.strip())
+                
+                recipe['cook_time'] = data.get('totalTime', '')
+                recipe['servings'] = str(data.get('recipeYield', ''))
+                
+                image = data.get('image', '')
+                if isinstance(image, dict):
+                    image = image.get('url', '')
+                elif isinstance(image, list) and image:
+                    image = image[0]
+                recipe['image_url'] = image
+                
+                return recipe
+            except (json.JSONDecodeError, KeyError):
+                pass
+        
+        # HTML fallback
+        title = soup.find('h1')
+        if title:
+            recipe['title'] = title.get_text(strip=True)
+        
+        return recipe
+
+
+async def parse_seriouseats(url: str) -> Dict:
+    """
+    Parse recipe from SeriousEats.com
+    
+    COMPLIANCE:
+    - Checks robots.txt before scraping
+    - Respects crawl delays
+    - Only extracts data for user analysis, not for display
+    - Always preserves source URL for attribution
+    """
+    # COMPLIANCE CHECK: Respect robots.txt
+    is_allowed, crawl_delay = await check_robots_txt(url)
+    
+    if not is_allowed:
+        return {
+            'error': 'Robots.txt disallows scraping this URL',
+            'source_url': url
+        }
+    
+    # COMPLIANCE: Respect crawl delay
+    if crawl_delay > 0:
+        await asyncio.sleep(crawl_delay)
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, follow_redirects=True)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        recipe = {
+            'title': '',
+            'ingredients': [],
+            'instructions': [],
+            'cook_time': '',
+            'servings': '',
+            'image_url': '',
+            'source_url': url
+        }
+        
+        # Try JSON-LD
+        json_ld = soup.find('script', type='application/ld+json')
+        if json_ld:
+            try:
+                data = json.loads(json_ld.string)
+                if '@graph' in data:
+                    for item in data['@graph']:
+                        if item.get('@type') == 'Recipe':
+                            data = item
+                            break
+                
+                recipe['title'] = data.get('name', '')
+                recipe['ingredients'] = data.get('recipeIngredient', [])
+                
+                instructions = data.get('recipeInstructions', [])
+                recipe['instructions'] = []
+                for inst in instructions:
+                    if isinstance(inst, dict):
+                        text = inst.get('text', inst.get('name', ''))
+                    else:
+                        text = str(inst)
+                    if text:
+                        recipe['instructions'].append(text.strip())
+                
+                recipe['cook_time'] = data.get('totalTime', '')
+                recipe['servings'] = str(data.get('recipeYield', ''))
+                
+                image = data.get('image', '')
+                if isinstance(image, dict):
+                    image = image.get('url', '')
+                elif isinstance(image, list) and image:
+                    image = image[0]
+                recipe['image_url'] = image
+                
+                return recipe
+            except (json.JSONDecodeError, KeyError):
+                pass
+        
+        # HTML fallback
+        title = soup.find('h1')
+        if title:
+            recipe['title'] = title.get_text(strip=True)
+        
+        # Serious Eats specific selectors
+        ingredients = soup.find_all('li', class_='ingredient')
+        recipe['ingredients'] = [ing.get_text(strip=True) for ing in ingredients]
+        
+        return recipe
+
+
+async def parse_foodandwine(url: str) -> Dict:
+    """
+    Parse recipe from FoodAndWine.com
+    
+    COMPLIANCE:
+    - Checks robots.txt before scraping
+    - Respects crawl delays
+    - Only extracts data for user analysis, not for display
+    - Always preserves source URL for attribution
+    """
+    # COMPLIANCE CHECK: Respect robots.txt
+    is_allowed, crawl_delay = await check_robots_txt(url)
+    
+    if not is_allowed:
+        return {
+            'error': 'Robots.txt disallows scraping this URL',
+            'source_url': url
+        }
+    
+    # COMPLIANCE: Respect crawl delay
+    if crawl_delay > 0:
+        await asyncio.sleep(crawl_delay)
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, follow_redirects=True)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        recipe = {
+            'title': '',
+            'ingredients': [],
+            'instructions': [],
+            'cook_time': '',
+            'servings': '',
+            'image_url': '',
+            'source_url': url
+        }
+        
+        # Try JSON-LD
+        json_ld = soup.find('script', type='application/ld+json')
+        if json_ld:
+            try:
+                data = json.loads(json_ld.string)
+                if isinstance(data, list):
+                    for item in data:
+                        if item.get('@type') == 'Recipe':
+                            data = item
+                            break
+                
+                recipe['title'] = data.get('name', '')
+                recipe['ingredients'] = data.get('recipeIngredient', [])
+                
+                instructions = data.get('recipeInstructions', [])
+                recipe['instructions'] = []
+                for inst in instructions:
+                    if isinstance(inst, dict):
+                        text = inst.get('text', inst.get('name', ''))
+                    else:
+                        text = str(inst)
+                    if text:
+                        recipe['instructions'].append(text.strip())
+                
+                recipe['cook_time'] = data.get('totalTime', '')
+                recipe['servings'] = str(data.get('recipeYield', ''))
+                
+                image = data.get('image', '')
+                if isinstance(image, dict):
+                    image = image.get('url', '')
+                elif isinstance(image, list) and image:
+                    image = image[0]
+                recipe['image_url'] = image
+                
+                return recipe
+            except (json.JSONDecodeError, KeyError):
+                pass
+        
+        # HTML fallback
+        title = soup.find('h1')
+        if title:
+            recipe['title'] = title.get_text(strip=True)
+        
+        return recipe
+
+
+async def parse_thepioneerwoman(url: str) -> Dict:
+    """
+    Parse recipe from ThePioneerWoman.com
+    
+    COMPLIANCE:
+    - Checks robots.txt before scraping
+    - Respects crawl delays
+    - Only extracts data for user analysis, not for display
+    - Always preserves source URL for attribution
+    """
+    # COMPLIANCE CHECK: Respect robots.txt
+    is_allowed, crawl_delay = await check_robots_txt(url)
+    
+    if not is_allowed:
+        return {
+            'error': 'Robots.txt disallows scraping this URL',
+            'source_url': url
+        }
+    
+    # COMPLIANCE: Respect crawl delay
+    if crawl_delay > 0:
+        await asyncio.sleep(crawl_delay)
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, follow_redirects=True)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        recipe = {
+            'title': '',
+            'ingredients': [],
+            'instructions': [],
+            'cook_time': '',
+            'servings': '',
+            'image_url': '',
+            'source_url': url
+        }
+        
+        # Try JSON-LD
+        json_ld = soup.find('script', type='application/ld+json')
+        if json_ld:
+            try:
+                data = json.loads(json_ld.string)
+                if isinstance(data, list):
+                    for item in data:
+                        if item.get('@type') == 'Recipe':
+                            data = item
+                            break
+                
+                recipe['title'] = data.get('name', '')
+                recipe['ingredients'] = data.get('recipeIngredient', [])
+                
+                instructions = data.get('recipeInstructions', [])
+                recipe['instructions'] = []
+                for inst in instructions:
+                    if isinstance(inst, dict):
+                        text = inst.get('text', inst.get('name', ''))
+                    else:
+                        text = str(inst)
+                    if text:
+                        recipe['instructions'].append(text.strip())
+                
+                recipe['cook_time'] = data.get('totalTime', '')
+                recipe['servings'] = str(data.get('recipeYield', ''))
+                
+                image = data.get('image', '')
+                if isinstance(image, dict):
+                    image = image.get('url', '')
+                elif isinstance(image, list) and image:
+                    image = image[0]
+                recipe['image_url'] = image
+                
+                return recipe
+            except (json.JSONDecodeError, KeyError):
+                pass
+        
+        # HTML fallback
+        title = soup.find('h1')
+        if title:
+            recipe['title'] = title.get_text(strip=True)
+        
+        return recipe
+
+
+async def parse_food_com(url: str) -> Dict:
+    """
+    Parse recipe from Food.com
+    
+    COMPLIANCE:
+    - Checks robots.txt before scraping
+    - Respects crawl delays
+    - Only extracts data for user analysis, not for display
+    - Always preserves source URL for attribution
+    """
+    # COMPLIANCE CHECK: Respect robots.txt
+    is_allowed, crawl_delay = await check_robots_txt(url)
+    
+    if not is_allowed:
+        return {
+            'error': 'Robots.txt disallows scraping this URL',
+            'source_url': url
+        }
+    
+    # COMPLIANCE: Respect crawl delay
+    if crawl_delay > 0:
+        await asyncio.sleep(crawl_delay)
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, follow_redirects=True)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        recipe = {
+            'title': '',
+            'ingredients': [],
+            'instructions': [],
+            'cook_time': '',
+            'servings': '',
+            'image_url': '',
+            'source_url': url
+        }
+        
+        # Try JSON-LD
+        json_ld = soup.find('script', type='application/ld+json')
+        if json_ld:
+            try:
+                data = json.loads(json_ld.string)
+                
+                recipe['title'] = data.get('name', '')
+                recipe['ingredients'] = data.get('recipeIngredient', [])
+                
+                instructions = data.get('recipeInstructions', [])
+                recipe['instructions'] = []
+                for inst in instructions:
+                    if isinstance(inst, dict):
+                        text = inst.get('text', inst.get('name', ''))
+                    else:
+                        text = str(inst)
+                    if text:
+                        recipe['instructions'].append(text.strip())
+                
+                recipe['cook_time'] = data.get('totalTime', '')
+                recipe['servings'] = str(data.get('recipeYield', ''))
+                
+                image = data.get('image', '')
+                if isinstance(image, dict):
+                    image = image.get('url', '')
+                elif isinstance(image, list) and image:
+                    image = image[0]
+                recipe['image_url'] = image
+                
+                return recipe
+            except (json.JSONDecodeError, KeyError):
+                pass
+        
+        # HTML fallback  
+        title = soup.find('h1')
+        if title:
+            recipe['title'] = title.get_text(strip=True)
+        
+        return recipe
+
+
+async def parse_epicurious(url: str) -> Dict:
+    """
+    Parse recipe from Epicurious.com
+    
+    COMPLIANCE:
+    - Checks robots.txt before scraping
+    - Respects crawl delays
+    - Only extracts data for user analysis, not for display
+    - Always preserves source URL for attribution
+    """
+    # COMPLIANCE CHECK: Respect robots.txt
+    is_allowed, crawl_delay = await check_robots_txt(url)
+    
+    if not is_allowed:
+        return {
+            'error': 'Robots.txt disallows scraping this URL',
+            'source_url': url
+        }
+    
+    # COMPLIANCE: Respect crawl delay
+    if crawl_delay > 0:
+        await asyncio.sleep(crawl_delay)
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, follow_redirects=True)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        recipe = {
+            'title': '',
+            'ingredients': [],
+            'instructions': [],
+            'cook_time': '',
+            'servings': '',
+            'image_url': '',
+            'source_url': url
+        }
+        
+        # Try JSON-LD
+        json_ld = soup.find('script', type='application/ld+json')
+        if json_ld:
+            try:
+                data = json.loads(json_ld.string)
+                if '@graph' in data:
+                    for item in data['@graph']:
+                        if item.get('@type') == 'Recipe':
+                            data = item
+                            break
+                
+                recipe['title'] = data.get('name', '')
+                recipe['ingredients'] = data.get('recipeIngredient', [])
+                
+                instructions = data.get('recipeInstructions', [])
+                recipe['instructions'] = []
+                for inst in instructions:
+                    if isinstance(inst, dict):
+                        text = inst.get('text', inst.get('name', ''))
+                    else:
+                        text = str(inst)
+                    if text:
+                        recipe['instructions'].append(text.strip())
+                
+                recipe['cook_time'] = data.get('totalTime', '')
+                recipe['servings'] = str(data.get('recipeYield', ''))
+                
+                image = data.get('image', '')
+                if isinstance(image, dict):
+                    image = image.get('url', '')
+                elif isinstance(image, list) and image:
+                    image = image[0]
+                recipe['image_url'] = image
+                
+                return recipe
+            except (json.JSONDecodeError, KeyError):
+                pass
+        
+        # HTML fallback
+        title = soup.find('h1')
+        if title:
+            recipe['title'] = title.get_text(strip=True)
+        
+        # Epicurious specific selectors
+        ingredients = soup.find_all('div', {'data-testid': 'ingredient-item'})
+        recipe['ingredients'] = [ing.get_text(strip=True) for ing in ingredients]
+        
+        return recipe
+
+
 # Master parser function that routes to correct parser
 async def parse_recipe(url: str) -> Optional[Dict]:
     """
@@ -535,5 +1048,17 @@ async def parse_recipe(url: str) -> Optional[Dict]:
         return await parse_eatingwell(url)
     elif 'foodnetwork.com' in url:
         return await parse_foodnetwork(url)
+    elif 'delish.com' in url:
+        return await parse_delish(url)
+    elif 'seriouseats.com' in url:
+        return await parse_seriouseats(url)
+    elif 'foodandwine.com' in url:
+        return await parse_foodandwine(url)
+    elif 'thepioneerwoman.com' in url:
+        return await parse_thepioneerwoman(url)
+    elif 'food.com' in url:
+        return await parse_food_com(url)
+    elif 'epicurious.com' in url:
+        return await parse_epicurious(url)
     else:
         return None  # Will trigger FireCrawl fallback
