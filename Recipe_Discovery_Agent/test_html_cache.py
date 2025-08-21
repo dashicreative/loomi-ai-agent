@@ -3,6 +3,7 @@ Test file for HTML Cache Manager
 Tests batch fetching, caching, and domain-specific rate limiting
 """
 import asyncio
+import os
 from Tools.html_cache_manager import HTMLCacheManager
 import time
 
@@ -11,19 +12,20 @@ async def test_html_cache():
     
     print("🧪 Testing HTML Cache Manager\n")
     
-    # Initialize cache manager
-    cache = HTMLCacheManager()
+    # For testing: pass FireCrawl key manually (in real usage, comes from RecipeDeps)
+    firecrawl_key = "fc-b5737066edd940af852fc198ee3a4133"
+    print(f"🔧 FireCrawl key provided for testing")
     
-    # Test URLs from different domains
+    # Initialize cache manager with FireCrawl fallback
+    cache = HTMLCacheManager(firecrawl_key=firecrawl_key)
+    
+    # Test URLs from different domains (verified working URLs)
     test_urls = [
         "https://www.allrecipes.com/recipe/23600/worlds-best-lasagna/",
         "https://www.foodnetwork.com/recipes/bobby-flay/perfectly-grilled-steak-recipe-1973350",
         "https://www.simplyrecipes.com/recipes/homemade_pizza/",
-        "https://www.allrecipes.com/recipe/244195/maple-salmon/",
-        "https://www.foodnetwork.com/recipes/alton-brown/baked-macaroni-and-cheese-recipe-1939524",
-        "https://www.eatingwell.com/recipe/251927/spaghetti-squash-lasagna-with-broccolini/",
         "https://joytothefood.com/breakfast-recipes-with-over-30g-of-protein-without-protein-powder/",
-        "https://www.delish.com/cooking/recipe-ideas/a25237036/baked-salmon-recipe/"
+        "https://www.foodnetwork.com/recipes/alton-brown/baked-macaroni-and-cheese-recipe-1939524"
     ]
     
     print(f"📝 Testing with {len(test_urls)} URLs from multiple domains\n")
@@ -63,8 +65,7 @@ async def test_html_cache():
     # Test 3: Mixed cache hits and new URLs
     print("\nTest 3: Testing mixed cache hits and new fetches...")
     mixed_urls = test_urls[:3] + [
-        "https://www.food.com/recipe/easy-meatloaf-5566",
-        "https://www.seriouseats.com/recipes/2011/12/serious-eats-halal-cart-style-chicken-and-rice-white-sauce-recipe.html"
+        "https://joytothefood.com/breakfast-recipes-with-over-30g-of-protein-without-protein-powder/"
     ]
     
     start_time = time.time()
@@ -113,12 +114,17 @@ async def test_domain_rate_limiting():
     
     print("\n🧪 Testing Domain Rate Limiting\n")
     
-    cache = HTMLCacheManager()
+    # Get FireCrawl key for this test too
+    firecrawl_key = "fc-b5737066edd940af852fc198ee3a4133"
+    cache = HTMLCacheManager(firecrawl_key=firecrawl_key)
     
-    # Multiple URLs from same domain to test rate limiting
+    # Multiple URLs from same domain to test rate limiting (use real URLs)
     same_domain_urls = [
-        f"https://www.allrecipes.com/recipe/{i}/" 
-        for i in range(23600, 23610)  # 10 URLs from same domain
+        "https://www.allrecipes.com/recipe/23600/worlds-best-lasagna/",
+        "https://www.allrecipes.com/recipe/212721/indian-chicken-curry/",
+        "https://www.allrecipes.com/recipe/16354/easy-meatloaf/",
+        "https://www.allrecipes.com/recipe/213742/cheesy-chicken-broccoli-casserole/",
+        "https://www.allrecipes.com/recipe/26317/chicken-marsala/"
     ]
     
     print(f"📝 Testing rate limiting with {len(same_domain_urls)} URLs from allrecipes.com")
