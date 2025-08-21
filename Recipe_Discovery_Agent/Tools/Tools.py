@@ -17,11 +17,11 @@ from .html_cache_manager import HTMLCacheManager
 # Initialize cache manager at module level (one per request)
 _html_cache = None
 
-def get_html_cache() -> HTMLCacheManager:
+def get_html_cache(firecrawl_key: Optional[str] = None) -> HTMLCacheManager:
     """Get or create HTML cache for current request"""
     global _html_cache
     if _html_cache is None:
-        _html_cache = HTMLCacheManager()
+        _html_cache = HTMLCacheManager(firecrawl_key=firecrawl_key)
     return _html_cache
 
 def reset_html_cache():

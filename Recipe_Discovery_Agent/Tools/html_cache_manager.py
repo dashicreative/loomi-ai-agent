@@ -27,12 +27,14 @@ class HTMLCacheManager:
         self,
         max_concurrent: int = 10,
         timeout: int = 30,
-        max_retries: int = 2
+        max_retries: int = 2,
+        firecrawl_key: Optional[str] = None
     ):
         self.cache: Dict[str, CachedHTML] = {}
         self.max_concurrent = max_concurrent
         self.timeout = timeout
         self.max_retries = max_retries
+        self.firecrawl_key = firecrawl_key
         
         # Conservative rate limits for recipe sites to avoid being blocked
         self.domain_limits = {
@@ -59,7 +61,8 @@ class HTMLCacheManager:
             "total_attempted": 0,
             "successful": 0,
             "failed": 0,
-            "cache_hits": 0
+            "cache_hits": 0,
+            "firecrawl_fallbacks": 0
         }
     
     async def batch_fetch(self, urls: List[str]) -> Dict[str, Optional[str]]:
@@ -121,9 +124,30 @@ class HTMLCacheManager:
                 self.stats["total_attempted"] += 1
                 
                 if isinstance(result, Exception):
-                    self.stats["failed"] += 1
-                    results[url] = None
-                    logger.warning(f"Failed to fetch {url}: {str(result)}")
+                    # Try FireCrawl fallback if available
+                    if self.firecrawl_key:
+                        logger.info(f"Trying FireCrawl fallback for {url}")
+                        firecrawl_result = await self._firecrawl_fallback(url)
+                        if firecrawl_result:
+                            self.stats["successful"] += 1
+                            self.stats["firecrawl_fallbacks"] += 1
+                            results[url] = firecrawl_result
+                            # Cache FireCrawl results too
+                            self.cache[url] = CachedHTML(
+                                url=url,
+                                html=firecrawl_result,
+                                fetched_at=datetime.now(),
+                                status_code=200
+                            )
+                            logger.info(f"FireCrawl fallback successful for {url}")
+                        else:
+                            self.stats["failed"] += 1
+                            results[url] = None
+                            logger.warning(f"Both direct fetch and FireCrawl failed for {url}")
+                    else:
+                        self.stats["failed"] += 1
+                        results[url] = None
+                        logger.warning(f"Failed to fetch {url}: {str(result)}")
                 else:
                     if result:
                         self.stats["successful"] += 1
@@ -137,9 +161,30 @@ class HTMLCacheManager:
                         )
                         logger.debug(f"Successfully fetched and cached {url}")
                     else:
-                        self.stats["failed"] += 1
-                        results[url] = None
-                        logger.warning(f"Failed to fetch {url}: Empty response")
+                        # Try FireCrawl fallback if available
+                        if self.firecrawl_key:
+                            logger.info(f"Trying FireCrawl fallback for {url} (empty response)")
+                            firecrawl_result = await self._firecrawl_fallback(url)
+                            if firecrawl_result:
+                                self.stats["successful"] += 1
+                                self.stats["firecrawl_fallbacks"] += 1
+                                results[url] = firecrawl_result
+                                # Cache FireCrawl results too
+                                self.cache[url] = CachedHTML(
+                                    url=url,
+                                    html=firecrawl_result,
+                                    fetched_at=datetime.now(),
+                                    status_code=200
+                                )
+                                logger.info(f"FireCrawl fallback successful for {url}")
+                            else:
+                                self.stats["failed"] += 1
+                                results[url] = None
+                                logger.warning(f"Both direct fetch and FireCrawl failed for {url}")
+                        else:
+                            self.stats["failed"] += 1
+                            results[url] = None
+                            logger.warning(f"Failed to fetch {url}: Empty response")
         
         # Log fetch statistics
         success_rate = (self.stats["successful"] / self.stats["total_attempted"] * 100 
@@ -147,6 +192,7 @@ class HTMLCacheManager:
         logger.info(f"Fetch stats - Success: {self.stats['successful']}, "
                    f"Failed: {self.stats['failed']}, "
                    f"Cache hits: {self.stats['cache_hits']}, "
+                   f"FireCrawl fallbacks: {self.stats['firecrawl_fallbacks']}, "
                    f"Success rate: {success_rate:.1f}%")
         
         return results
@@ -162,7 +208,7 @@ class HTMLCacheManager:
             for attempt in range(self.max_retries):
                 try:
                     logger.debug(f"Fetching {url} (attempt {attempt + 1}/{self.max_retries})")
-                    response = await client.get(url, follow_redirects=True)
+                    response = await client.get(url, follow_redirects=True, timeout=15.0)
                     
                     if response.status_code == 200:
                         return response.text
@@ -188,6 +234,40 @@ class HTMLCacheManager:
                         continue
                     return None
         return None
+    
+    async def _firecrawl_fallback(self, url: str) -> Optional[str]:
+        """Fallback to FireCrawl for difficult URLs"""
+        if not self.firecrawl_key:
+            return None
+        
+        try:
+            logger.debug(f"FireCrawl fallback for {url}")
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    "https://api.firecrawl.dev/v1/scrape",
+                    headers={
+                        "Authorization": f"Bearer {self.firecrawl_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "url": url,
+                        "formats": ["html"],
+                        "onlyMainContent": False,
+                        "includeTags": ["a", "img", "div", "span", "h1", "h2", "h3", "p"]
+                    }
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("success") and data.get("data", {}).get("html"):
+                        return data["data"]["html"]
+                
+                logger.warning(f"FireCrawl API returned status {response.status_code} for {url}")
+                return None
+                
+        except Exception as e:
+            logger.warning(f"FireCrawl fallback failed for {url}: {str(e)}")
+            return None
     
     def get_html(self, url: str) -> Optional[str]:
         """Get HTML from cache if available"""
