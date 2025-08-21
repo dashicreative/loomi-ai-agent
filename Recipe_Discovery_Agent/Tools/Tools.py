@@ -29,28 +29,7 @@ def reset_html_cache():
     global _html_cache
     _html_cache = None
 
-"""Complete Data Flow:
 
-  User Query
-      ↓
-  search_and_extract_recipes()  ← **MAIN AGENT TOOL** (Only tool the agent can call)
-      ↓
-  1. search_recipes_serpapi()     ← Supplemental: Get 30 URLs from web
-      ↓
-  2. expand_urls_with_lists()     ← Supplemental: Smart URL expansion (lists → individual recipes)
-      ↓
-  3. rerank_results_with_llm()    ← Supplemental: LLM picks best 10 URLs from expanded pool
-      ↓
-  4. parse_recipe() (parallel)    ← Supplemental: Extract recipe data from top 5
-      ↓
-  5. Format for agent             ← Supplemental: Structure data for user display
-      ↓
-  Agent Response
-
-**AGENT TOOLS vs SUPPLEMENTAL FUNCTIONS:**
-- AGENT TOOL: search_and_extract_recipes() - Only function the agent can invoke
-- SUPPLEMENTAL: All other functions are internal helpers, not exposed to agent
-"""
 
 
 # Priority recipe sites for search
