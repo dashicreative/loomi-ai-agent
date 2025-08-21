@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 import asyncio
 import time
 from firecrawl import FirecrawlApp
-from ingredient_parser import parse_ingredients_list
+from .ingredient_parser import parse_ingredients_list
 
 
 # Cache for robots.txt to avoid repeated fetches
@@ -67,6 +67,84 @@ async def check_robots_txt(url: str, user_agent: str = "RecipeDiscoveryBot") -> 
     crawl_delay = rp.crawl_delay(user_agent) or 0
     
     return is_allowed, crawl_delay
+
+def extract_nutrition_from_json_ld(nutrition_info: dict) -> list:
+    """
+    Extract ONLY the 4 required nutrition values from JSON-LD nutrition object.
+    Required values: calories, protein, fat, carbs
+    
+    Args:
+        nutrition_info: The nutrition object from JSON-LD
+        
+    Returns:
+        List of nutrition strings (max 4 items)
+    """
+    nutrition = []
+    if not nutrition_info:
+        return nutrition
+        
+    # ONLY the 4 required nutrition fields
+    if nutrition_info.get('calories'):
+        nutrition.append(f"{nutrition_info.get('calories')} calories")
+    if nutrition_info.get('proteinContent'):
+        nutrition.append(f"{nutrition_info.get('proteinContent')} protein")
+    if nutrition_info.get('fatContent'):
+        nutrition.append(f"{nutrition_info.get('fatContent')} fat")
+    if nutrition_info.get('carbohydrateContent'):
+        nutrition.append(f"{nutrition_info.get('carbohydrateContent')} carbs")
+    
+    return nutrition
+
+def extract_nutrition_from_html(soup) -> list:
+    """
+    Extract ONLY the 4 required nutrition values from HTML.
+    Required values: calories, protein, fat, carbs
+    
+    Args:
+        soup: BeautifulSoup object
+        
+    Returns:
+        List of nutrition strings (max 4 items)
+    """
+    nutrition = []
+    
+    # Look for nutrition sections with common class names
+    nutrition_selectors = [
+        'div.nutrition-info',
+        'div.recipe-nutrition',
+        'div.nutrition',
+        'section.nutrition',
+        'div[class*="nutrition"]',
+        'span[class*="nutrition"]',
+        'div[class*="nutrient"]',
+        'span[class*="calorie"]',
+        'span[class*="protein"]',
+        'span[class*="carb"]',
+        'span[class*="fat"]'
+    ]
+    
+    for selector in nutrition_selectors:
+        elements = soup.select(selector)
+        for element in elements:
+            text = element.get_text(strip=True)
+            # ONLY check for the 4 required nutrition keywords
+            if any(term in text.lower() for term in ['calorie', 'protein', 'fat', 'carb']):
+                # Clean up the text - extract just the nutrition fact
+                lines = text.split('\n')
+                for line in lines:
+                    # ONLY extract lines with the 4 required terms
+                    if any(term in line.lower() for term in ['calorie', 'protein', 'fat', 'carb']):
+                        nutrition.append(line.strip())
+    
+    # Deduplicate while preserving order
+    seen = set()
+    unique_nutrition = []
+    for item in nutrition:
+        if item not in seen:
+            seen.add(item)
+            unique_nutrition.append(item)
+    
+    return unique_nutrition[:4]  # Cap at 4 required nutrition items
 async def parse_allrecipes(url: str) -> Dict:
     """
     Parse recipe from AllRecipes.com
@@ -121,6 +199,7 @@ async def parse_allrecipes(url: str) -> Dict:
                     'title': recipe_data.get('name', ''),
                     'ingredients': [],
                     'instructions': [],
+                    'nutrition': [],
                     'cook_time': '',
                     'servings': '',
                     'image_url': '',
@@ -163,6 +242,10 @@ async def parse_allrecipes(url: str) -> Dict:
                     image = image[0] if isinstance(image[0], str) else image[0].get('url', '')
                 recipe['image_url'] = image
                 
+                # Extract nutrition information
+                nutrition_info = recipe_data.get('nutrition', {})
+                recipe['nutrition'] = extract_nutrition_from_json_ld(nutrition_info)
+                
                 return recipe
                 
             except (json.JSONDecodeError, KeyError):
@@ -173,6 +256,7 @@ async def parse_allrecipes(url: str) -> Dict:
             'title': '',
             'ingredients': [],
             'instructions': [],
+            'nutrition': [],
             'cook_time': '',
             'servings': '',
             'image_url': '',
@@ -206,6 +290,9 @@ async def parse_allrecipes(url: str) -> Dict:
         img = soup.find('img', class_='primary-image')
         if img:
             recipe['image_url'] = img.get('src', '')
+        
+        # Nutrition
+        recipe['nutrition'] = extract_nutrition_from_html(soup)
         
         return recipe
 async def parse_simplyrecipes(url: str) -> Dict:
@@ -241,6 +328,7 @@ async def parse_simplyrecipes(url: str) -> Dict:
             'title': '',
             'ingredients': [],
             'instructions': [],
+            'nutrition': [],
             'cook_time': '',
             'servings': '',
             'image_url': '',
@@ -301,6 +389,10 @@ async def parse_simplyrecipes(url: str) -> Dict:
                     image = image[0]
                 recipe['image_url'] = image
                 
+                # Extract nutrition information
+                nutrition_info = recipe_data.get('nutrition', {})
+                recipe['nutrition'] = extract_nutrition_from_json_ld(nutrition_info)
+                
                 return recipe
                 
             except (json.JSONDecodeError, KeyError):
@@ -324,6 +416,9 @@ async def parse_simplyrecipes(url: str) -> Dict:
         img = soup.find('img', {'id': 'mntl-sc-block-image_1-0'})
         if img:
             recipe['image_url'] = img.get('src', '')
+        
+        # Nutrition
+        recipe['nutrition'] = extract_nutrition_from_html(soup)
         
         return recipe
 async def parse_eatingwell(url: str) -> Dict:
@@ -359,6 +454,7 @@ async def parse_eatingwell(url: str) -> Dict:
             'title': '',
             'ingredients': [],
             'instructions': [],
+            'nutrition': [],
             'cook_time': '',
             'servings': '',
             'image_url': '',
@@ -409,6 +505,10 @@ async def parse_eatingwell(url: str) -> Dict:
                     image = image[0]
                 recipe['image_url'] = image
                 
+                # Extract nutrition information
+                nutrition_info = recipe_data.get('nutrition', {})
+                recipe['nutrition'] = extract_nutrition_from_json_ld(nutrition_info)
+                
                 return recipe
                 
             except (json.JSONDecodeError, KeyError):
@@ -457,6 +557,7 @@ async def parse_foodnetwork(url: str) -> Dict:
             'title': '',
             'ingredients': [],
             'instructions': [],
+            'nutrition': [],
             'cook_time': '',
             'servings': '',
             'image_url': '',
@@ -514,6 +615,10 @@ async def parse_foodnetwork(url: str) -> Dict:
                     image = image[0]
                 recipe['image_url'] = image
                 
+                # Extract nutrition information
+                nutrition_info = recipe_data.get('nutrition', {})
+                recipe['nutrition'] = extract_nutrition_from_json_ld(nutrition_info)
+                
                 return recipe
                 
             except (json.JSONDecodeError, KeyError):
@@ -566,6 +671,7 @@ async def parse_delish(url: str) -> Dict:
             'title': '',
             'ingredients': [],
             'instructions': [],
+            'nutrition': [],
             'cook_time': '',
             'servings': '',
             'image_url': '',
@@ -606,6 +712,10 @@ async def parse_delish(url: str) -> Dict:
                     image = image[0]
                 recipe['image_url'] = image
                 
+                # Extract nutrition information
+                nutrition_info = recipe_data.get('nutrition', {})
+                recipe['nutrition'] = extract_nutrition_from_json_ld(nutrition_info)
+                
                 return recipe
             except (json.JSONDecodeError, KeyError):
                 pass
@@ -614,6 +724,9 @@ async def parse_delish(url: str) -> Dict:
         title = soup.find('h1')
         if title:
             recipe['title'] = title.get_text(strip=True)
+        
+        # Nutrition
+        recipe['nutrition'] = extract_nutrition_from_html(soup)
         
         return recipe
 async def parse_seriouseats(url: str) -> Dict:
@@ -649,6 +762,7 @@ async def parse_seriouseats(url: str) -> Dict:
             'title': '',
             'ingredients': [],
             'instructions': [],
+            'nutrition': [],
             'cook_time': '',
             'servings': '',
             'image_url': '',
@@ -704,6 +818,10 @@ async def parse_seriouseats(url: str) -> Dict:
                     image = image[0]
                 recipe['image_url'] = image
                 
+                # Extract nutrition information
+                nutrition_info = recipe_data.get('nutrition', {})
+                recipe['nutrition'] = extract_nutrition_from_json_ld(nutrition_info)
+                
                 return recipe
             except (json.JSONDecodeError, KeyError):
                 pass
@@ -751,6 +869,7 @@ async def parse_foodandwine(url: str) -> Dict:
             'title': '',
             'ingredients': [],
             'instructions': [],
+            'nutrition': [],
             'cook_time': '',
             'servings': '',
             'image_url': '',
@@ -791,6 +910,10 @@ async def parse_foodandwine(url: str) -> Dict:
                     image = image[0]
                 recipe['image_url'] = image
                 
+                # Extract nutrition information
+                nutrition_info = recipe_data.get('nutrition', {})
+                recipe['nutrition'] = extract_nutrition_from_json_ld(nutrition_info)
+                
                 return recipe
             except (json.JSONDecodeError, KeyError):
                 pass
@@ -799,6 +922,9 @@ async def parse_foodandwine(url: str) -> Dict:
         title = soup.find('h1')
         if title:
             recipe['title'] = title.get_text(strip=True)
+        
+        # Nutrition
+        recipe['nutrition'] = extract_nutrition_from_html(soup)
         
         return recipe
 async def parse_thepioneerwoman(url: str) -> Dict:
@@ -834,6 +960,7 @@ async def parse_thepioneerwoman(url: str) -> Dict:
             'title': '',
             'ingredients': [],
             'instructions': [],
+            'nutrition': [],
             'cook_time': '',
             'servings': '',
             'image_url': '',
@@ -874,6 +1001,10 @@ async def parse_thepioneerwoman(url: str) -> Dict:
                     image = image[0]
                 recipe['image_url'] = image
                 
+                # Extract nutrition information
+                nutrition_info = recipe_data.get('nutrition', {})
+                recipe['nutrition'] = extract_nutrition_from_json_ld(nutrition_info)
+                
                 return recipe
             except (json.JSONDecodeError, KeyError):
                 pass
@@ -882,6 +1013,9 @@ async def parse_thepioneerwoman(url: str) -> Dict:
         title = soup.find('h1')
         if title:
             recipe['title'] = title.get_text(strip=True)
+        
+        # Nutrition
+        recipe['nutrition'] = extract_nutrition_from_html(soup)
         
         return recipe
 async def parse_food_com(url: str) -> Dict:
@@ -917,6 +1051,7 @@ async def parse_food_com(url: str) -> Dict:
             'title': '',
             'ingredients': [],
             'instructions': [],
+            'nutrition': [],
             'cook_time': '',
             'servings': '',
             'image_url': '',
@@ -951,6 +1086,10 @@ async def parse_food_com(url: str) -> Dict:
                 elif isinstance(image, list) and image:
                     image = image[0]
                 recipe['image_url'] = image
+                
+                # Extract nutrition information
+                nutrition_info = recipe_data.get('nutrition', {})
+                recipe['nutrition'] = extract_nutrition_from_json_ld(nutrition_info)
                 
                 return recipe
             except (json.JSONDecodeError, KeyError):
@@ -995,6 +1134,7 @@ async def parse_epicurious(url: str) -> Dict:
             'title': '',
             'ingredients': [],
             'instructions': [],
+            'nutrition': [],
             'cook_time': '',
             'servings': '',
             'image_url': '',
@@ -1049,6 +1189,10 @@ async def parse_epicurious(url: str) -> Dict:
                 elif isinstance(image, list) and image:
                     image = image[0]
                 recipe['image_url'] = image
+                
+                # Extract nutrition information
+                nutrition_info = recipe_data.get('nutrition', {})
+                recipe['nutrition'] = extract_nutrition_from_json_ld(nutrition_info)
                 
                 return recipe
             except (json.JSONDecodeError, KeyError):
@@ -1137,10 +1281,12 @@ async def parse_with_firecrawl(url: str, firecrawl_key: str) -> Dict:
             
             # Format the response
             raw_ingredients = extracted.get('ingredients', [])
+            raw_nutrition = extracted.get('nutrition', [])
             recipe = {
                 'title': extracted.get('title', ''),
                 'ingredients': parse_ingredients_list(raw_ingredients),
                 'instructions': extracted.get('instructions', []),  # For analysis only
+                'nutrition': raw_nutrition,  # Raw nutrition strings from FireCrawl
                 'cook_time': extracted.get('cook_time', ''),
                 'servings': extracted.get('servings', ''),
                 'image_url': extracted.get('image_url', ''),
@@ -1154,6 +1300,7 @@ async def parse_with_firecrawl(url: str, firecrawl_key: str) -> Dict:
                 'title': 'Recipe extraction failed',
                 'ingredients': [],
                 'instructions': [],
+                'nutrition': [],
                 'cook_time': '',
                 'servings': '',
                 'image_url': '',
@@ -1167,6 +1314,7 @@ async def parse_with_firecrawl(url: str, firecrawl_key: str) -> Dict:
             'title': 'Recipe extraction error',
             'ingredients': [],
             'instructions': [],
+            'nutrition': [],
             'cook_time': '',
             'servings': '',
             'image_url': '',

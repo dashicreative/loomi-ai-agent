@@ -8,8 +8,8 @@ import re
 from dataclasses import dataclass
 from Dependencies import RecipeDeps
 # Import the parser and ingredient parsing
-from .Parsers import parse_recipe
-from ingredient_parser import parse_ingredients_list
+from .Detailed_Recipe_Parsers.Parsers import parse_recipe
+from .Detailed_Recipe_Parsers.ingredient_parser import parse_ingredients_list
 from bs4 import BeautifulSoup
 
 """Complete Data Flow:
@@ -92,6 +92,7 @@ def detect_page_type(url: str, title: str, content: str = "") -> str:
     list_title_patterns = [
         r'\b(\d+)\s+(best|top|easy|quick|healthy|delicious)\b',  # "25 Best", "10 Easy"
         r'\b(best|top|easy|quick)\s+(\d+)\b',  # "Best 15", "Top 10"
+        r'\b(\d+)\s+(recipes?|breakfasts?|lunches?|dinners?|meals?|dishes?|ideas?|ways?)\b',  # "16 Breakfasts", "30 Recipes"
         r'\b(recipes?|ideas?|ways?|dishes?|meals?)\s*(for|to)\b',  # "Recipes for", "Ideas to"
         r'\b(collection|roundup|list)\b',  # "Recipe Collection", "Roundup"
         r'\bmultiple\b.*\b(recipes?|dishes?)\b'  # "Multiple recipes"
@@ -115,7 +116,7 @@ def detect_page_type(url: str, title: str, content: str = "") -> str:
     
     # Check URL patterns
     url_lower = url.lower()
-    if any(pattern in url_lower for pattern in ['/best-', '/top-', '/roundup', '/collection', '/ideas', '/ways']):
+    if any(pattern in url_lower for pattern in ['/best-', '/top-', '/roundup', '/collection', '/ideas', '/ways', '-recipes-with-', 'breakfast-recipes-with']):
         return "list"
     if any(pattern in url_lower for pattern in ['/recipe/', '-recipe.', 'recipe-']):
         return "recipe"
@@ -284,39 +285,35 @@ async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str
                 continue
             
             try:
-                # Check if this is a priority site - use direct scraping
-                is_priority_site = any(priority_site in url.lower() for priority_site in PRIORITY_SITES)
+                # STRATEGY: Try direct HTTP scraping first for ALL sites, fallback to FireCrawl only if needed
+                # This saves money and improves performance by avoiding unnecessary FireCrawl calls
                 
-                if is_priority_site:
-                    # Priority site - use direct HTTP scraping, fallback to FireCrawl on 403
-                    try:
-                        response = await client.get(url, follow_redirects=True)
-                        response.raise_for_status()
-                        content = response.text[:10000]  # First 10k chars for detection
-                    except httpx.HTTPStatusError as e:
-                        if e.response.status_code == 403 and firecrawl_key:
-                            # 403 on priority site - fallback to FireCrawl
-                            from firecrawl import FirecrawlApp
-                            app = FirecrawlApp(api_key=firecrawl_key)
-                            firecrawl_result = app.scrape(url, formats=['markdown'])
-                            content = getattr(firecrawl_result, 'markdown', '')[:10000] if firecrawl_result else ''
-                        else:
-                            raise  # Re-raise other errors
-                else:
-                    # Non-priority site - use FireCrawl to avoid 403 errors
+                content = ""
+                scraping_method = "unknown"
+                
+                try:
+                    # First attempt: Direct HTTP scraping (fast and free)
+                    response = await client.get(url, follow_redirects=True)
+                    response.raise_for_status()
+                    content = response.text[:10000]  # First 10k chars for detection
+                    scraping_method = "direct_http"
+                    
+                except (httpx.HTTPStatusError, httpx.RequestError) as e:
+                    # Direct scraping failed - fallback to FireCrawl if available
                     if firecrawl_key:
+                        print(f"Direct scraping failed for {url}, trying FireCrawl fallback...")
                         from firecrawl import FirecrawlApp
                         app = FirecrawlApp(api_key=firecrawl_key)
                         firecrawl_result = app.scrape(url, formats=['markdown'])
                         content = getattr(firecrawl_result, 'markdown', '')[:10000] if firecrawl_result else ''
+                        scraping_method = "firecrawl_fallback"
                     else:
-                        # No FireCrawl key - try direct scraping as fallback
-                        response = await client.get(url, follow_redirects=True)
-                        response.raise_for_status()
-                        content = response.text[:10000]
+                        # No FireCrawl available - re-raise the original error
+                        raise e
                 
                 # Detect page type using our tiered system
                 page_type = detect_page_type(url, title, content)
+                print(f"✅ {scraping_method}: {url} → {page_type}")
                 
                 if page_type == "recipe":
                     # Individual recipe - add directly
@@ -436,6 +433,20 @@ async def search_recipes_serpapi(ctx: RunContext[RecipeDeps], query: str, number
         
         # Extract organic results
         organic_results = data.get("organic_results", [])
+        
+        # DEBUG: Show original SerpAPI results BEFORE blacklist filtering
+        print(f"\n=== DEBUG: Original SerpAPI Results (Before Filtering) ===")
+        print(f"Total raw results: {len(organic_results)}")
+        for i, result in enumerate(organic_results[:30], 1):  # Show first 15
+            url = result.get("link", "")
+            title = result.get("title", "No title")
+            print(f"{i}. {title[:80]}...")
+            print(f"   URL: {url}")
+            # Show if this will be blocked
+            is_blocked = any(blocked_site in url.lower() for blocked_site in BLOCKED_SITES)
+            if is_blocked:
+                print(f"   ⚠️  WILL BE BLOCKED")
+        print("=" * 60)
         
         # Format results for processing
         formatted_results = []
@@ -689,9 +700,9 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     search_results = await search_recipes_serpapi(ctx, query)
     
     # DEBUG: Show initial URLs from SerpAPI
-    print(f"\n=== DEBUG: Initial SerpAPI Results ===")
+    print(f"\n=== DEBUG: After Blacklist Filtering ===")
     print(f"Total results: {len(search_results.get('results', []))}")
-    for i, result in enumerate(search_results.get('results', [])[:10], 1):
+    for i, result in enumerate(search_results.get('results', []), 1):  # Show ALL, not just first 10
         print(f"{i}. {result.get('title', 'No title')[:80]}...")
         print(f"   URL: {result.get('url', 'No URL')}")
     print("=" * 50)
