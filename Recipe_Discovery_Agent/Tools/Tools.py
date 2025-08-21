@@ -10,6 +10,7 @@ from Dependencies import RecipeDeps
 # Import the parser and ingredient parsing
 from .Detailed_Recipe_Parsers.Parsers import parse_recipe
 from .Detailed_Recipe_Parsers.ingredient_parser import parse_ingredients_list
+from .Detailed_Recipe_Parsers.list_parser import ListParser
 from bs4 import BeautifulSoup
 
 """Complete Data Flow:
@@ -183,9 +184,17 @@ def detect_page_type(url: str, title: str, content: str = "") -> str:
     return "recipe"
 
 
+# Initialize the advanced list parser
+list_parser = ListParser()
+
 async def extract_recipe_urls_from_list(url: str, content: str, max_urls: int = 5) -> List[Dict]:
     """
-    SUPPLEMENTAL FUNCTION: Extract individual recipe URLs from a list page.
+    UPGRADED: Extract individual recipe URLs using advanced multi-tiered list parser.
+    
+    Uses ListParser class with:
+    - Tier 1: JSON-LD structured data parsing
+    - Tier 2: Recipe card structure analysis  
+    - Tier 3: Enhanced link analysis with confidence scoring
     
     Args:
         url: The list page URL
@@ -195,62 +204,7 @@ async def extract_recipe_urls_from_list(url: str, content: str, max_urls: int = 
     Returns:
         List of recipe URL dictionaries with metadata
     """
-    try:
-        soup = BeautifulSoup(content, 'html.parser')
-        recipe_urls = []
-        
-        # Find all links that might be recipes
-        links = soup.find_all('a', href=True)
-        
-        for link in links:
-            href = link.get('href', '')
-            link_text = link.get_text(strip=True)
-            
-            # Skip empty or very short links
-            if not href or len(link_text) < 5:
-                continue
-            
-            # Convert relative URLs to absolute
-            if href.startswith('/'):
-                from urllib.parse import urljoin
-                href = urljoin(url, href)
-            elif not href.startswith('http'):
-                continue
-            
-            # Look for recipe-like URLs and link text
-            href_lower = href.lower()
-            text_lower = link_text.lower()
-            
-            recipe_indicators = [
-                'recipe' in href_lower or 'recipe' in text_lower,
-                any(food in text_lower for food in ['chicken', 'pasta', 'salad', 'cake', 'soup', 'bread', 'cookies']),
-                len(link_text) > 10 and len(link_text) < 100,  # Reasonable recipe title length
-                href_lower.endswith('.html') or '/recipes/' in href_lower
-            ]
-            
-            # If at least 2 indicators match, consider it a recipe URL
-            if sum(recipe_indicators) >= 2:
-                recipe_urls.append({
-                    "title": link_text,
-                    "url": href,
-                    "snippet": f"Recipe from {url}",
-                    "source": "extracted_from_list",
-                    "type": "recipe"
-                })
-            
-            # Stop when we have enough URLs
-            if len(recipe_urls) >= max_urls:
-                break
-        
-        # Randomly sample if we have more than requested
-        if len(recipe_urls) > max_urls:
-            recipe_urls = random.sample(recipe_urls, max_urls)
-        
-        return recipe_urls
-        
-    except Exception as e:
-        print(f"Failed to extract URLs from list page {url}: {e}")
-        return []
+    return await list_parser.extract_recipe_urls(url, content, max_urls)
 
 
 async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str = None, max_total_urls: int = 60) -> List[Dict]:
@@ -322,12 +276,12 @@ async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str
                     expanded_urls.append(result_copy)
                     
                 elif page_type == "list":
-                    # List page - extract recipe URLs
+                    # List page - extract recipe URLs using advanced multi-tiered parser
                     remaining_slots = max_total_urls - len(expanded_urls)
                     max_extract = min(5, remaining_slots)  # Extract up to 5 or remaining slots
                     
                     if max_extract > 0:
-                        # Ensure content is a string for HTML parsing
+                        # Use advanced ListParser: JSON-LD → Recipe Cards → Enhanced Link Analysis
                         content_str = str(content) if content else ''
                         extracted_urls = await extract_recipe_urls_from_list(url, content_str, max_extract)
                         
