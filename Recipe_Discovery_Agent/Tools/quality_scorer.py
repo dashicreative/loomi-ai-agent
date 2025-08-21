@@ -22,6 +22,18 @@ class RecipeQualityScorer:
     """Evaluates recipe quality for early exit decisions"""
     
     def __init__(self, priority_sites: List[str] = None):
+        # Import priority sites from Tools.py to maintain consistency  
+        try:
+            from .Tools import PRIORITY_SITES
+        except ImportError:
+            # Fallback if import fails (e.g., in testing)
+            PRIORITY_SITES = [
+                "allrecipes.com", "simplyrecipes.com", "eatingwell.com",
+                "foodnetwork.com", "delish.com", "seriouseats.com",
+                "foodandwine.com", "thepioneerwoman.com", "food.com",
+                "epicurious.com"
+            ]
+        
         # Weight distribution for scoring (binary pass/fail not included)
         self.weights = {
             'relevance': 0.70,          # 70% - Matches user query
@@ -39,24 +51,8 @@ class RecipeQualityScorer:
         # Other data fields (minor scoring factor)
         self.other_data_fields = ['cookTime', 'prepTime', 'servings', 'description']
         
-        # Priority sites for bonus scoring
-        self.priority_sites = priority_sites or [
-            "allrecipes.com",
-            "simplyrecipes.com", 
-            "eatingwell.com",
-            "foodnetwork.com",
-            "delish.com",
-            "seriouseats.com",
-            "foodandwine.com",
-            "thepioneerwoman.com",
-            "food.com",
-            "epicurious.com",
-            "cookinglight.com",
-            "myrecipes.com",
-            "tasteofhome.com",
-            "bettycrocker.com",
-            "yummly.com"
-        ]
+        # Use priority sites from Tools.py (maintains consistency)
+        self.priority_sites = priority_sites or PRIORITY_SITES
     
     def score_recipe(self, recipe: Dict, query: str) -> QualityScore:
         """

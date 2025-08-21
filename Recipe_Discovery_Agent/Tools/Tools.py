@@ -13,6 +13,7 @@ from .Detailed_Recipe_Parsers.ingredient_parser import parse_ingredients_list
 from .Detailed_Recipe_Parsers.list_parser import ListParser
 from bs4 import BeautifulSoup
 from .html_cache_manager import HTMLCacheManager
+from .early_exit_manager import EarlyExitManager
 
 # Initialize cache manager at module level (one per request)
 _html_cache = None
@@ -264,10 +265,10 @@ async def extract_list_with_firecrawl(url: str, firecrawl_key: str, max_urls: in
 
 async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str = None, max_total_urls: int = 60) -> List[Dict]:
     """
-    SUPPLEMENTAL FUNCTION: Smart URL expansion that processes list pages to extract individual recipes.
+    OPTIMIZED: Smart URL expansion using cached HTML for efficient processing.
     
     Takes initial search results and expands any list pages into individual recipe URLs.
-    Caps total URLs at max_total_urls and ensures no list URLs reach the ranking stage.
+    Uses HTML Cache Manager to batch fetch HTML and eliminate redundant requests.
     
     Args:
         initial_results: List of search result dictionaries from SerpAPI
@@ -282,71 +283,92 @@ async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str
     processed_count = 0
     list_urls_processed = 0  # Counter for strategic list processing
     
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        for result in initial_results:
-            # Stop if we've reached our URL limit
-            if len(expanded_urls) >= max_total_urls:
-                break
-                
-            url = result.get("url", "")
-            title = result.get("title", "")
+    # Get HTML cache manager with FireCrawl fallback
+    html_cache = get_html_cache(firecrawl_key)
+    
+    # Step 1: Batch fetch all URLs for efficient processing
+    all_urls = [result.get("url", "") for result in initial_results if result.get("url")]
+    print(f"🚀 Batch fetching HTML for {len(all_urls)} URLs...")
+    
+    await html_cache.batch_fetch(all_urls)
+    
+    # Step 2: Process URLs using cached HTML
+    for result in initial_results:
+        # Stop if we've reached our URL limit
+        if len(expanded_urls) >= max_total_urls:
+            break
             
-            if not url:
-                continue
+        url = result.get("url", "")
+        title = result.get("title", "")
+        
+        if not url:
+            continue
+        
+        try:
+            # OPTIMIZED: Use cached HTML for accurate classification
+            html_content = html_cache.get_html(url)
             
-            try:
-                # OPTIMIZED STRATEGY: Fast classification first, strategic FireCrawl for list extraction only
-                
-                # Step 1: Fast pre-classification using title/URL patterns only (no scraping needed)
-                fast_page_type = detect_page_type(url, title, "")  # Empty content = title/URL only
-                print(f"🚀 Fast classification: {url} → {fast_page_type}")
-                
-                if fast_page_type == "recipe":
-                    # Individual recipe identified - add directly (no scraping needed for classification)
-                    result_copy = result.copy()
-                    result_copy["type"] = "recipe"
-                    expanded_urls.append(result_copy)
-                    
-                elif fast_page_type == "list":
-                    # List page identified - use strategic FireCrawl for reliable extraction
-                    list_urls_processed += 1
-                    
-                    # Cap list processing to avoid rate limits and control costs
-                    if list_urls_processed > 6:
-                        print(f"⚠️  Skipping list URL (processed 6 max): {url}")
-                        continue
-                    
-                    remaining_slots = max_total_urls - len(expanded_urls)
-                    max_extract = min(5, remaining_slots)  # Extract up to 5 or remaining slots
-                    
-                    if max_extract > 0:
-                        print(f"🎯 Using FireCrawl for strategic list extraction: {url}")
-                        extracted_urls = await extract_list_with_firecrawl(url, firecrawl_key, max_extract)
-                        
-                        # Add extracted URLs to our pool
-                        for extracted_url in extracted_urls:
-                            extracted_url["type"] = "recipe"  # Mark as recipe for safety
-                            extracted_url["google_position"] = result.get("google_position", 999)
-                            expanded_urls.append(extracted_url)
-                            
-                            # Stop if we hit the limit while processing this list
-                            if len(expanded_urls) >= max_total_urls:
-                                break
-                    
-                    # Note: Original list URL is NOT added to expanded_urls (filtered out)
-                
-            except Exception as e:
-                print(f"Failed to process URL {url}: {e}")
-                # CONTENT SCRAPING FAILURE POINT: Can't determine if list or recipe - track and discard
+            if not html_content:
+                # HTML fetch failed, track as failure
                 fp1_failures.append({
                     "url": url,
                     "title": title,
-                    "error": str(e),
+                    "error": "HTML fetch failed",
                     "failure_point": "Content_Scraping_Failure_Point"
                 })
-                # Don't add URL to expanded_urls - let it be filtered out entirely
+                continue
             
-            processed_count += 1
+            # Enhanced classification using cached HTML content
+            page_type = detect_page_type(url, title, html_content)
+            print(f"🚀 Enhanced classification: {url} → {page_type}")
+            
+            if page_type == "recipe":
+                # Individual recipe identified - add directly
+                result_copy = result.copy()
+                result_copy["type"] = "recipe"
+                expanded_urls.append(result_copy)
+                
+            elif page_type == "list":
+                # List page identified - use cached HTML for list extraction
+                list_urls_processed += 1
+                
+                # Cap list processing to avoid rate limits and control costs
+                if list_urls_processed > 6:
+                    print(f"⚠️  Skipping list URL (processed 6 max): {url}")
+                    continue
+                
+                remaining_slots = max_total_urls - len(expanded_urls)
+                max_extract = min(5, remaining_slots)  # Extract up to 5 or remaining slots
+                
+                if max_extract > 0:
+                    print(f"🎯 Extracting recipes from cached HTML: {url}")
+                    # Use our advanced list parser with cached HTML
+                    extracted_urls = await extract_recipe_urls_from_list(url, html_content, max_extract)
+                    
+                    # Add extracted URLs to our pool
+                    for extracted_url in extracted_urls:
+                        extracted_url["type"] = "recipe"  # Mark as recipe for safety
+                        extracted_url["google_position"] = result.get("google_position", 999)
+                        expanded_urls.append(extracted_url)
+                        
+                        # Stop if we hit the limit while processing this list
+                        if len(expanded_urls) >= max_total_urls:
+                            break
+                
+                # Note: Original list URL is NOT added to expanded_urls (filtered out)
+            
+        except Exception as e:
+            print(f"Failed to process URL {url}: {e}")
+            # CONTENT SCRAPING FAILURE POINT: Can't determine if list or recipe - track and discard
+            fp1_failures.append({
+                "url": url,
+                "title": title,
+                "error": str(e),
+                "failure_point": "Content_Scraping_Failure_Point"
+            })
+            # Don't add URL to expanded_urls - let it be filtered out entirely
+        
+        processed_count += 1
     
     # SAFETY CHECK: Filter out any URLs that might still be marked as lists
     safe_urls = [url for url in expanded_urls if url.get("type") == "recipe"]
@@ -687,6 +709,9 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     Returns:
         Dictionary with structured recipe data ready for agent processing
     """
+    # Reset cache between requests to prevent pollution
+    reset_html_cache()
+    
     # Step 1: Search for recipes using SerpAPI (gets up to 30 URLs after blacklist filtering)
     search_results = await search_recipes_serpapi(ctx, query)
     
@@ -705,6 +730,12 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
             "searchQuery": query,
             "error": "No recipes found for your search"
         }
+    
+    # Step 1.5: Batch prefetch HTML for all URLs
+    html_cache = get_html_cache(ctx.deps.firecrawl_key)
+    all_urls = [result.get("url") for result in search_results.get("results", []) if result.get("url")]
+    if all_urls:
+        await html_cache.batch_fetch(all_urls)
     
     # Step 2: Smart URL Expansion (process list pages → extract individual recipe URLs)
     # This is where the magic happens - converts list pages into individual recipe URLs
@@ -730,54 +761,27 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
         top_k=len(expanded_results)  # Rank ALL results for fallback capability
     )
     
-    # Step 4: Parse ALL 30 URLs for Stage 2 ranking (LLM needs ingredient data)
-    # Process all Stage 1 ranked results to give LLM full ingredient information
-    candidates_to_parse = stage1_ranked_results[:25]  # Parse top 25 for Stage 2 ranking
+    # Step 4: Progressive parsing with Early Exit Manager
+    # Initialize Early Exit Manager
+    early_exit_manager = EarlyExitManager(
+        quality_threshold=0.7,
+        min_recipes=max_recipes,  # Use requested number as minimum
+        max_recipes=max_recipes + 2,  # Allow slight buffer
+        firecrawl_key=ctx.deps.firecrawl_key
+    )
     
-    # Step 5: Parse all candidates
-    extraction_tasks = []
-    successful_parses = []
-    failed_parses = []
+    # Progressive parsing with early exit
+    high_quality_recipes, all_parsed_recipes = await early_exit_manager.progressive_parse_with_exit(
+        stage1_ranked_results[:25],  # Use top 25 ranked results
+        query
+    )
     
-    for result in candidates_to_parse:
-        url = result.get("url")
-        if url:
-            task = parse_recipe(url, ctx.deps.firecrawl_key)
-            extraction_tasks.append(task)
+    # Use high quality recipes as final result (no need for Stage 2 reranking)
+    final_ranked_recipes = high_quality_recipes
     
-    # Execute all extractions in parallel
-    extracted_recipes = []
-    if extraction_tasks:
-        extracted_data = await asyncio.gather(*extraction_tasks, return_exceptions=True)
-        
-        # Process extracted data - separate successful vs failed parses
-        for i, data in enumerate(extracted_data):
-            if isinstance(data, dict) and not data.get("error"):
-                # Add search metadata to extracted recipe
-                data["search_title"] = candidates_to_parse[i].get("title", "")
-                data["search_snippet"] = candidates_to_parse[i].get("snippet", "")
-                successful_parses.append(data)
-            else:
-                # Track failed parse for potential quality checking
-                failed_parses.append({
-                    "result": candidates_to_parse[i],
-                    "error": str(data) if isinstance(data, Exception) else data.get("error", "Unknown error"),
-                    "failure_point": "Recipe_Parsing_Failure_Point"
-                })
-        
-        # No more quality checking - failed parses are simply tracked for reporting
-        
-        extracted_recipes = successful_parses
-    
-    # STAGE 2: Deep content ranking using full recipe data
-    if len(extracted_recipes) > 1:  # Only re-rank if we have multiple recipes
-        final_ranked_recipes = await rerank_with_full_recipe_data(
-            extracted_recipes,
-            query,
-            ctx.deps.openai_key
-        )
-    else:
-        final_ranked_recipes = extracted_recipes
+    # Track failed parses from Early Exit Manager stats
+    stats = early_exit_manager.get_stats()
+    failed_parses = []  # Early Exit Manager handles failure tracking internally
     
     # Step 6: Format final results for agent  
     formatted_recipes = []
