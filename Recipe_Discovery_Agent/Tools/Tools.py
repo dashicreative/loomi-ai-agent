@@ -753,28 +753,64 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
             "error": "No valid recipes found after processing search results"
         }
     
-    # STAGE 1: Initial LLM ranking by title + snippet relevance
-    stage1_ranked_results = await rerank_results_with_llm(
-        expanded_results,
-        query,
-        ctx.deps.openai_key,
-        top_k=len(expanded_results)  # Rank ALL results for fallback capability
-    )
+    # Step 4: Priority Site Pre-Processing
+    from .early_exit_manager import PriorityURLOrdering
     
-    # Step 4: Progressive parsing with Early Exit Manager
-    # Initialize Early Exit Manager
+    priority_orderer = PriorityURLOrdering()
+    priority_ordered_results = priority_orderer.order_urls_by_priority(expanded_results)
+    
+    # Separate priority sites from non-priority sites
+    priority_sites = []
+    non_priority_sites = []
+    
+    for result in priority_ordered_results:
+        url = result.get('url', '').lower()
+        is_priority = any(site in url for site in PRIORITY_SITES)
+        
+        if is_priority:
+            priority_sites.append(result)
+        else:
+            non_priority_sites.append(result)
+    
+    print(f"🎯 Priority sites found: {len(priority_sites)}")
+    print(f"📊 Non-priority sites: {len(non_priority_sites)}")
+    
+    # Step 5: Progressive parsing with priority site preference
     early_exit_manager = EarlyExitManager(
         quality_threshold=0.7,
-        min_recipes=max_recipes,  # Use requested number as minimum
-        max_recipes=max_recipes + 2,  # Allow slight buffer
+        min_recipes=max_recipes,
+        max_recipes=max_recipes + 2,
         firecrawl_key=ctx.deps.firecrawl_key
     )
     
-    # Progressive parsing with early exit
-    high_quality_recipes, all_parsed_recipes = await early_exit_manager.progressive_parse_with_exit(
-        stage1_ranked_results[:25],  # Use top 25 ranked results
-        query
-    )
+    # Process priority sites first
+    if priority_sites:
+        print("🏆 Processing priority sites first...")
+        high_quality_recipes, all_parsed_recipes = await early_exit_manager.progressive_parse_with_exit(
+            priority_sites,
+            query
+        )
+        
+        # If we didn't get enough high-quality recipes, supplement with non-priority sites
+        if len(high_quality_recipes) < max_recipes and non_priority_sites:
+            print(f"🔄 Need more recipes, processing non-priority sites...")
+            early_exit_manager.reset_stats()  # Reset for second round
+            
+            additional_recipes, additional_parsed = await early_exit_manager.progressive_parse_with_exit(
+                non_priority_sites,
+                query
+            )
+            
+            # Combine results
+            high_quality_recipes.extend(additional_recipes)
+            all_parsed_recipes.extend(additional_parsed)
+    else:
+        # Fallback: process all non-priority sites if no priority sites found
+        print("⚠️ No priority sites found, processing all results...")
+        high_quality_recipes, all_parsed_recipes = await early_exit_manager.progressive_parse_with_exit(
+            priority_ordered_results[:25],
+            query
+        )
     
     # Use high quality recipes as final result (no need for Stage 2 reranking)
     final_ranked_recipes = high_quality_recipes
