@@ -80,7 +80,7 @@ async def extract_list_with_hybrid_approach(url: str, openai_key: str, max_urls:
         prompt = f"""You are analyzing a recipe list page. Extract up to {max_urls} individual recipe links.
 
 GUIDANCE:
-- Only extract items that have actual clickable URLs in the content
+- Only extract actual clickable URLs from the content, DO NOT assume or suggest or invent URL's that did not come directly from the pages content given to you. 
 - Do NOT extract text-only suggestions like "Five eggs" or "Greek yogurt" that have no links
 - Use the EXACT URLs that appear in the content - do not modify or invent URLs
 - Look for recipe links that lead to individual recipe pages
