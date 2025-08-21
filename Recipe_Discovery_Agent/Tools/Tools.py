@@ -12,6 +12,22 @@ from .Detailed_Recipe_Parsers.Parsers import parse_recipe
 from .Detailed_Recipe_Parsers.ingredient_parser import parse_ingredients_list
 from .Detailed_Recipe_Parsers.list_parser import ListParser
 from bs4 import BeautifulSoup
+from .html_cache_manager import HTMLCacheManager
+
+# Initialize cache manager at module level (one per request)
+_html_cache = None
+
+def get_html_cache() -> HTMLCacheManager:
+    """Get or create HTML cache for current request"""
+    global _html_cache
+    if _html_cache is None:
+        _html_cache = HTMLCacheManager()
+    return _html_cache
+
+def reset_html_cache():
+    """Reset cache between requests"""
+    global _html_cache
+    _html_cache = None
 
 """Complete Data Flow:
 
