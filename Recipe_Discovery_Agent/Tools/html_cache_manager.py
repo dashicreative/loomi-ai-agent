@@ -39,7 +39,7 @@ class HTMLCacheManager:
         # Conservative rate limits for recipe sites to avoid being blocked
         self.domain_limits = {
             "default": 5,  # Default concurrent requests per domain
-            "allrecipes.com": 3,
+            "allrecipes.com": 5,
             "foodnetwork.com": 3,
             "simplyrecipes.com": 4,
             "eatingwell.com": 3,

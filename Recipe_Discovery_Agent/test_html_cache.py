@@ -128,7 +128,7 @@ async def test_domain_rate_limiting():
     ]
     
     print(f"📝 Testing rate limiting with {len(same_domain_urls)} URLs from allrecipes.com")
-    print("   (Should respect 3 concurrent requests limit)")
+    print("   (Should respect 5 concurrent requests limit)")
     
     start_time = time.time()
     results = await cache.batch_fetch(same_domain_urls)
