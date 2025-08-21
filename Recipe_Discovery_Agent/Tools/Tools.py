@@ -207,6 +207,83 @@ async def extract_recipe_urls_from_list(url: str, content: str, max_urls: int = 
     return await list_parser.extract_recipe_urls(url, content, max_urls)
 
 
+async def extract_list_with_firecrawl(url: str, firecrawl_key: str, max_urls: int = 5) -> List[Dict]:
+    """
+    SUPPLEMENTAL FUNCTION: Use FireCrawl to reliably extract individual recipe URLs from list pages.
+    
+    Uses FireCrawl's LLM capabilities to identify and extract recipe links with high accuracy.
+    
+    Args:
+        url: The list page URL to process
+        firecrawl_key: FireCrawl API key
+        max_urls: Maximum recipe URLs to extract
+        
+    Returns:
+        List of extracted recipe URL dictionaries
+    """
+    if not firecrawl_key:
+        return []
+    
+    try:
+        from firecrawl import FirecrawlApp
+        app = FirecrawlApp(api_key=firecrawl_key)
+        
+        # Use FireCrawl's extract feature with LLM-powered recipe detection
+        extract_params = {
+            "mode": "llm-extraction",
+            "extractorOptions": {
+                "extractionSchema": {
+                    "type": "object",
+                    "properties": {
+                        "recipes": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "title": {"type": "string"},
+                                    "url": {"type": "string"},
+                                    "description": {"type": "string"}
+                                }
+                            }
+                        }
+                    }
+                },
+                "extractionPrompt": f"Extract up to {max_urls} individual recipe links from this list page. Only return direct links to specific recipes, NOT category pages or navigation links. For each recipe found, provide the title, URL, and a brief description."
+            }
+        }
+        
+        result = app.scrape(url, params=extract_params)
+        
+        if result and hasattr(result, 'extract'):
+            extracted_data = result.extract
+            recipes = extracted_data.get('recipes', []) if extracted_data else []
+            
+            formatted_recipes = []
+            for recipe in recipes[:max_urls]:
+                if recipe.get('url') and recipe.get('title'):
+                    # Convert relative URLs to absolute
+                    recipe_url = recipe['url']
+                    if not recipe_url.startswith('http'):
+                        from urllib.parse import urljoin
+                        recipe_url = urljoin(url, recipe_url)
+                    
+                    formatted_recipes.append({
+                        'title': recipe['title'],
+                        'url': recipe_url,
+                        'snippet': recipe.get('description', 'Recipe from list extraction'),
+                        'source': 'firecrawl_list_extraction',
+                        'type': 'recipe'
+                    })
+            
+            return formatted_recipes
+        
+    except Exception as e:
+        print(f"FireCrawl list extraction failed for {url}: {e}")
+        return []
+    
+    return []
+
+
 async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str = None, max_total_urls: int = 60) -> List[Dict]:
     """
     SUPPLEMENTAL FUNCTION: Smart URL expansion that processes list pages to extract individual recipes.
@@ -225,6 +302,7 @@ async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str
     expanded_urls = []
     fp1_failures = []  # Track Content_Scraping_Failure_Point
     processed_count = 0
+    list_urls_processed = 0  # Counter for strategic list processing
     
     async with httpx.AsyncClient(timeout=15.0) as client:
         for result in initial_results:
@@ -239,56 +317,37 @@ async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str
                 continue
             
             try:
-                # STRATEGY: Try direct HTTP scraping first for ALL sites, fallback to FireCrawl only if needed
-                # This saves money and improves performance by avoiding unnecessary FireCrawl calls
+                # OPTIMIZED STRATEGY: Fast classification first, strategic FireCrawl for list extraction only
                 
-                content = ""
-                scraping_method = "unknown"
+                # Step 1: Fast pre-classification using title/URL patterns only (no scraping needed)
+                fast_page_type = detect_page_type(url, title, "")  # Empty content = title/URL only
+                print(f"🚀 Fast classification: {url} → {fast_page_type}")
                 
-                try:
-                    # First attempt: Direct HTTP scraping (fast and free)
-                    response = await client.get(url, follow_redirects=True)
-                    response.raise_for_status()
-                    content = response.text[:10000]  # First 10k chars for detection
-                    scraping_method = "direct_http"
-                    
-                except (httpx.HTTPStatusError, httpx.RequestError) as e:
-                    # Direct scraping failed - fallback to FireCrawl if available
-                    if firecrawl_key:
-                        print(f"Direct scraping failed for {url}, trying FireCrawl fallback...")
-                        from firecrawl import FirecrawlApp
-                        app = FirecrawlApp(api_key=firecrawl_key)
-                        firecrawl_result = app.scrape(url, formats=['markdown'])
-                        content = getattr(firecrawl_result, 'markdown', '')[:10000] if firecrawl_result else ''
-                        scraping_method = "firecrawl_fallback"
-                    else:
-                        # No FireCrawl available - re-raise the original error
-                        raise e
-                
-                # Detect page type using our tiered system
-                page_type = detect_page_type(url, title, content)
-                print(f"✅ {scraping_method}: {url} → {page_type}")
-                
-                if page_type == "recipe":
-                    # Individual recipe - add directly
+                if fast_page_type == "recipe":
+                    # Individual recipe identified - add directly (no scraping needed for classification)
                     result_copy = result.copy()
                     result_copy["type"] = "recipe"
                     expanded_urls.append(result_copy)
                     
-                elif page_type == "list":
-                    # List page - extract recipe URLs using advanced multi-tiered parser
+                elif fast_page_type == "list":
+                    # List page identified - use strategic FireCrawl for reliable extraction
+                    list_urls_processed += 1
+                    
+                    # Cap list processing to avoid rate limits and control costs
+                    if list_urls_processed > 6:
+                        print(f"⚠️  Skipping list URL (processed 6 max): {url}")
+                        continue
+                    
                     remaining_slots = max_total_urls - len(expanded_urls)
                     max_extract = min(5, remaining_slots)  # Extract up to 5 or remaining slots
                     
                     if max_extract > 0:
-                        # Use advanced ListParser: JSON-LD → Recipe Cards → Enhanced Link Analysis
-                        content_str = str(content) if content else ''
-                        extracted_urls = await extract_recipe_urls_from_list(url, content_str, max_extract)
+                        print(f"🎯 Using FireCrawl for strategic list extraction: {url}")
+                        extracted_urls = await extract_list_with_firecrawl(url, firecrawl_key, max_extract)
                         
                         # Add extracted URLs to our pool
                         for extracted_url in extracted_urls:
                             extracted_url["type"] = "recipe"  # Mark as recipe for safety
-                            # Get metadata from original search result (not FireCrawl result)
                             extracted_url["google_position"] = result.get("google_position", 999)
                             expanded_urls.append(extracted_url)
                             
