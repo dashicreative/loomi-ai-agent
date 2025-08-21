@@ -225,38 +225,21 @@ async def extract_list_with_firecrawl(url: str, firecrawl_key: str, max_urls: in
         return []
     
     try:
-        from firecrawl import FirecrawlApp
-        app = FirecrawlApp(api_key=firecrawl_key)
+        from firecrawl import Firecrawl
+        app = Firecrawl(api_key=firecrawl_key)
         
-        # Use FireCrawl's extract feature with LLM-powered recipe detection
-        extract_params = {
-            "mode": "llm-extraction",
-            "extractorOptions": {
-                "extractionSchema": {
-                    "type": "object",
-                    "properties": {
-                        "recipes": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "title": {"type": "string"},
-                                    "url": {"type": "string"},
-                                    "description": {"type": "string"}
-                                }
-                            }
-                        }
-                    }
-                },
-                "extractionPrompt": f"Extract up to {max_urls} individual recipe links from this list page. Only return direct links to specific recipes, NOT category pages or navigation links. For each recipe found, provide the title, URL, and a brief description."
-            }
-        }
+        # Use FireCrawl's JSON extraction with prompt
+        result = app.scrape(
+            url,
+            formats=[{
+                "type": "json",
+                "prompt": f"Extract up to {max_urls} individual recipe links from this list page. Return a JSON object with a 'recipes' array. Each recipe should have 'title', 'url', and 'description' fields. Only return direct links to specific recipes, NOT category pages or navigation links."
+            }]
+        )
         
-        result = app.scrape(url, params=extract_params)
-        
-        if result and hasattr(result, 'extract'):
-            extracted_data = result.extract
-            recipes = extracted_data.get('recipes', []) if extracted_data else []
+        # Data is in result.json, not result.extract
+        if result and hasattr(result, 'json') and result.json:
+            recipes = result.json.get('recipes', [])
             
             formatted_recipes = []
             for recipe in recipes[:max_urls]:
