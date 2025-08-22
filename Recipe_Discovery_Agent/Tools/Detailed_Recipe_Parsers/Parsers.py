@@ -1210,6 +1210,183 @@ async def parse_epicurious(url: str) -> Dict:
         return recipe
 
 
+def validate_recipe_data(recipe_data: dict) -> tuple[bool, list]:
+    """
+    Validates that all required fields are present for iOS app UI.
+    
+    Args:
+        recipe_data: Recipe data dictionary
+        
+    Returns:
+        Tuple of (is_valid, missing_fields)
+    """
+    required_checks = {
+        'ingredients': len(recipe_data.get('ingredients', [])) > 0,
+        'instructions': len(recipe_data.get('instructions', [])) > 0,
+        'image_url': bool(recipe_data.get('image_url', '').strip()),
+        'nutrition': len(recipe_data.get('nutrition', [])) >= 4  # Need all 4: calories, protein, carbs, fat
+    }
+    
+    missing = [field for field, present in required_checks.items() if not present]
+    return len(missing) == 0, missing
+
+
+async def parse_recipe_with_hybrid_approach(url: str, openai_key: str) -> Dict:
+    """
+    Hybrid approach for recipe parsing: HTML scraping + GPT-3.5 extraction.
+    
+    Designed for non-priority sites as a FireCrawl replacement.
+    Includes pass/fail validation for iOS app requirements.
+    """
+    if not openai_key:
+        return {'error': 'OpenAI API key required for hybrid parsing', 'source_url': url}
+    
+    try:
+        # Step 1: Fast HTML scraping
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(url, follow_redirects=True)
+            response.raise_for_status()
+            html_content = response.text
+        
+        # Step 2: Clean and prepare content for LLM
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Remove script, style, and other non-content elements
+        for element in soup(['script', 'style', 'nav', 'header', 'footer', 'aside']):
+            element.decompose()
+            
+        # Get text content with some structure preserved
+        clean_content = soup.get_text(separator='\n', strip=True)
+        
+        # Limit content size to control costs
+        max_chars = 15000  # ~3750 tokens
+        if len(clean_content) > max_chars:
+            clean_content = clean_content[:max_chars] + "...[content truncated]"
+        
+        # Step 3: LLM extraction with specific recipe requirements
+        prompt = f"""You are extracting recipe data from a webpage. Extract the following information:
+
+REQUIRED FIELDS (must find ALL or mark as failed):
+1. INGREDIENTS: Extract the COMPLETE ingredient text including amounts, units, and names.
+   - PRESERVE EXACT TEXT: "2 cups all-purpose flour" NOT just "flour"
+   - Include ALL ingredients as a list
+   
+2. IMAGE: Find the main recipe image URL (usually the first large image, thumbnail, or hero image)
+   - Skip video thumbnails if present
+   - Look for image with recipe name or food photo
+   - Return full URL, not relative path
+   
+3. NUTRITION (extract EXACT text for these 4):
+   - Calories: (e.g., "250 calories" or "250 kcal")
+   - Protein: (e.g., "30g protein")
+   - Carbs: (e.g., "15g carbohydrates" or "15g carbs")  
+   - Fat: (e.g., "10g fat")
+   
+4. INSTRUCTIONS: Step-by-step cooking directions as separate items
+
+OPTIONAL FIELDS (include if found):
+- title: Recipe name
+- cook_time: Total or cook time
+- prep_time: Preparation time  
+- servings: Number of servings
+
+Return JSON format:
+{{
+  "status": "success",
+  "title": "Recipe Title",
+  "ingredients": ["2 cups flour", "1 tsp salt"],
+  "instructions": ["Step 1 text", "Step 2 text"],
+  "nutrition": ["250 calories", "30g protein", "15g carbs", "10g fat"],
+  "image_url": "https://example.com/image.jpg",
+  "cook_time": "30 minutes",
+  "prep_time": "15 minutes",
+  "servings": "4"
+}}
+
+If any REQUIRED field is missing, return:
+{{
+  "status": "failed",
+  "missing_required": ["ingredients", "image_url"],
+  "error": "Missing required fields"
+}}
+
+Content to analyze:
+{clean_content}"""
+
+        # Step 4: Call GPT-3.5
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {openai_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "gpt-3.5-turbo",
+                    "messages": [
+                        {"role": "system", "content": "You are a recipe extraction specialist. Return only valid JSON with all required fields."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 2000
+                }
+            )
+        
+        if response.status_code != 200:
+            return {'error': f'LLM API error: {response.status_code}', 'source_url': url}
+        
+        data = response.json()
+        llm_response = data['choices'][0]['message']['content'].strip()
+        
+        # Step 5: Parse JSON response
+        try:
+            # Clean up response in case LLM added extra text
+            if '```json' in llm_response:
+                llm_response = llm_response.split('```json')[1].split('```')[0]
+            elif '```' in llm_response:
+                llm_response = llm_response.split('```')[1]
+            
+            import json
+            recipe_data = json.loads(llm_response)
+            
+            # Step 6: Validate required fields
+            if recipe_data.get('status') == 'failed':
+                return {
+                    'error': f"Missing required fields: {recipe_data.get('missing_required', [])}",
+                    'source_url': url
+                }
+            
+            # Double-check validation with our own validator
+            is_valid, missing_fields = validate_recipe_data(recipe_data)
+            if not is_valid:
+                return {
+                    'error': f"Validation failed: missing {missing_fields}",
+                    'source_url': url
+                }
+            
+            # Step 7: Format for consistency with other parsers
+            formatted_recipe = {
+                'title': recipe_data.get('title', ''),
+                'ingredients': recipe_data.get('ingredients', []),
+                'instructions': recipe_data.get('instructions', []),
+                'nutrition': recipe_data.get('nutrition', []),
+                'cook_time': recipe_data.get('cook_time', ''),
+                'prep_time': recipe_data.get('prep_time', ''),
+                'servings': recipe_data.get('servings', ''),
+                'image_url': recipe_data.get('image_url', ''),
+                'source_url': url
+            }
+            
+            return formatted_recipe
+                
+        except json.JSONDecodeError as e:
+            return {'error': f'JSON parsing failed: {e}', 'source_url': url}
+        
+    except Exception as e:
+        return {'error': f'Hybrid parsing failed: {e}', 'source_url': url}
+
+
 #Firecrawl parsing fallback
 async def parse_with_firecrawl(url: str, firecrawl_key: str) -> Dict:
     """
@@ -1324,7 +1501,7 @@ async def parse_with_firecrawl(url: str, firecrawl_key: str) -> Dict:
 
 
 # Master parser function that routes to correct parser
-async def parse_recipe(url: str, firecrawl_key: str = None) -> Dict:
+async def parse_recipe(url: str, openai_key: str = None) -> Dict:
     """
     Parse a recipe from any supported site.
     
@@ -1343,7 +1520,7 @@ async def parse_recipe(url: str, firecrawl_key: str = None) -> Dict:
     
     Args:
         url: The recipe URL to parse
-        firecrawl_key: API key for FireCrawl fallback (required for non-priority sites)
+        openai_key: OpenAI API key for hybrid fallback (required for non-priority sites)
     
     Returns:
         Dict with recipe data or error information
@@ -1370,11 +1547,11 @@ async def parse_recipe(url: str, firecrawl_key: str = None) -> Dict:
     elif 'epicurious.com' in url:
         return await parse_epicurious(url)
     else:
-        # Use FireCrawl for any other site
-        if firecrawl_key:
-            return await parse_with_firecrawl(url, firecrawl_key)
+        # Use hybrid approach for any other site
+        if openai_key:
+            return await parse_recipe_with_hybrid_approach(url, openai_key)
         else:
             return {
-                'error': 'Site not supported and no FireCrawl key provided',
+                'error': 'Site not supported and no OpenAI key provided',
                 'source_url': url
             }
