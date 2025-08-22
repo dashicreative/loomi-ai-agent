@@ -766,13 +766,20 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
             "error": "No valid recipes found after processing search results"
         }
     
-    # STAGE 1: Initial LLM ranking by title + snippet relevance
-    stage1_ranked_results = await rerank_results_with_llm(
-        expanded_results,
-        query,
-        ctx.deps.openai_key,
-        top_k=len(expanded_results)  # Rank ALL results for fallback capability
-    )
+    # STAGE 1: Initial ranking by priority sites (quality over relevance)
+    priority_urls = []
+    non_priority_urls = []
+    
+    # Separate priority sites from non-priority sites
+    for result in expanded_results:
+        url = result.get('url', '').lower()
+        if any(priority_site in url for priority_site in PRIORITY_SITES):
+            priority_urls.append(result)
+        else:
+            non_priority_urls.append(result)
+    
+    # Combine: priority sites first, then non-priority sites
+    stage1_ranked_results = priority_urls + non_priority_urls
     
     print(f"📊 Stage 3: Initial Ranking - Selected top {min(15, len(stage1_ranked_results))} URLs for scraping")
     
