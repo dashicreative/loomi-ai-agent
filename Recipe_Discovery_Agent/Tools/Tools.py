@@ -72,8 +72,8 @@ BLOCKED_SITES = [
 
 
 
-# Initialize the advanced list parser
-list_parser = ListParser()
+# Initialize the advanced list parser (will be updated with OpenAI key during runtime)
+list_parser = None
 
 async def extract_recipe_urls_from_list(url: str, content: str, max_urls: int = 5) -> List[Dict]:
     """
@@ -287,7 +287,15 @@ async def expand_urls_with_lists(initial_results: List[Dict], openai_key: str = 
             
             if max_extract > 0:
                 try:
-                    extracted_urls = await extract_list_with_hybrid_approach(url, openai_key, max_extract)
+                    # Fetch the list page content first
+                    async with httpx.AsyncClient(timeout=15.0) as client:
+                        response = await client.get(url, follow_redirects=True)
+                        response.raise_for_status()
+                        html_content = response.text
+                    
+                    # Initialize ListParser with OpenAI key for intelligent filtering
+                    intelligent_parser = ListParser(openai_key)
+                    extracted_urls = await intelligent_parser.extract_recipe_urls(url, html_content, max_extract)
                     
                     # Add extracted URLs to our pool
                     for extracted_url in extracted_urls:
@@ -551,6 +559,10 @@ Instructions Preview: {instructions_preview}..."""
     3. EQUIPMENT REQUIREMENTS: Check instructions for equipment mentions (e.g., "no-bake", "slow cooker", "air fryer")
     4. COOKING METHOD: Match preparation methods from instructions (e.g., "grilled", "baked", "fried")
     5. SPECIFIC COOKING DIRECTIONS: Match any specific cooking techniques or directions the user requests that can be found in the recipe instructions
+    6. RECIPE TYPE MATCHING: 
+       - If query asks for "[food] recipe" (e.g., "steak recipe"), prioritize recipes that COOK that food, NOT just marinades/dressings/sauces for it
+       - Only rank marinades/dressings/sauces highly if user specifically asks for them (e.g., "steak marinade recipe")
+       - Examples: "chicken recipe" → cooking chicken dishes, NOT chicken marinades unless specifically requested
 
     Additional factors:
     - Dietary requirements (high protein, low carb, etc.)
