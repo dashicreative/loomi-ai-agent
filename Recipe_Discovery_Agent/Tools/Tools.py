@@ -5,7 +5,12 @@ import asyncio
 import os
 import random
 import re
+import sys
+from pathlib import Path
 from dataclasses import dataclass
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from Dependencies import RecipeDeps
 # Import the parser and ingredient parsing
 from .Detailed_Recipe_Parsers.Parsers import parse_recipe
@@ -737,7 +742,7 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     
     # Step 4: Parse ALL 30 URLs for Stage 2 ranking (LLM needs ingredient data)
     # Process all Stage 1 ranked results to give LLM full ingredient information
-    candidates_to_parse = stage1_ranked_results[:25]  # Parse top 25 for Stage 2 ranking
+    candidates_to_parse = stage1_ranked_results[:15]  # Parse top 15 for Stage 2 ranking
     
     # Step 5: Parse all candidates
     extraction_tasks = []

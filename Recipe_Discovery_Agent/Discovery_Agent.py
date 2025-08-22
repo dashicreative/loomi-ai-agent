@@ -2,7 +2,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models import KnownModelName
 from pathlib import Path
 from Structured_Output import AgentOutput
-from Tools.Tools import search_and_extract_recipes
+from Tools import search_and_extract_recipes
 from Dependencies import RecipeDeps
 import os
 from dotenv import load_dotenv

@@ -1,4 +1,5 @@
-from typing import TypedDict, List, Optional, Dict
+from typing_extensions import TypedDict
+from typing import List, Optional, Dict
 
 
 #Structure of Nutritional info
