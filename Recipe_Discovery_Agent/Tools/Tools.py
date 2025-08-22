@@ -53,7 +53,8 @@ PRIORITY_SITES = [
     "foodandwine.com",
     "thepioneerwoman.com",
     "food.com",
-    "epicurious.com"
+    "epicurious.com",
+    "bbcgoodfood.com"  # Added at bottom - good site but lower priority
 ]
 
 # Sites to completely block from processing
@@ -770,15 +771,24 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     priority_urls = []
     non_priority_urls = []
     
-    # Separate priority sites from non-priority sites
+    # Separate priority sites from non-priority sites and rank by PRIORITY_SITES order
     for result in expanded_results:
         url = result.get('url', '').lower()
-        if any(priority_site in url for priority_site in PRIORITY_SITES):
-            priority_urls.append(result)
+        # Use more precise matching to avoid substring issues (e.g., bbcgoodfood.com containing food.com)
+        if any(f"//{priority_site}" in url or f".{priority_site}" in url for priority_site in PRIORITY_SITES):
+            # Find which priority site this URL belongs to and add its index for sorting
+            for i, priority_site in enumerate(PRIORITY_SITES):
+                if f"//{priority_site}" in url or f".{priority_site}" in url:
+                    result['_priority_index'] = i
+                    priority_urls.append(result)
+                    break
         else:
             non_priority_urls.append(result)
     
-    # Combine: priority sites first, then non-priority sites
+    # Sort priority URLs by their order in PRIORITY_SITES list (lower index = higher priority)
+    priority_urls.sort(key=lambda x: x.get('_priority_index', 999))
+    
+    # Combine: priority sites first (in PRIORITY_SITES order), then non-priority sites
     stage1_ranked_results = priority_urls + non_priority_urls
     
     print(f"📊 Stage 3: Initial Ranking - Selected top {min(15, len(stage1_ranked_results))} URLs for scraping")
@@ -786,6 +796,15 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     # Step 4: Parse ALL 30 URLs for Stage 2 ranking (LLM needs ingredient data)
     # Process all Stage 1 ranked results to give LLM full ingredient information
     candidates_to_parse = stage1_ranked_results[:15]  # Parse top 15 for Stage 2 ranking
+    
+    # DEBUG: Show which URLs made it to scraping and if they're priority sites
+    print("\n🔍 DEBUG: Top 15 URLs selected for scraping:")
+    for i, result in enumerate(candidates_to_parse, 1):
+        url = result.get('url', '')
+        is_priority = any(f"//{priority_site}" in url.lower() or f".{priority_site}" in url.lower() for priority_site in PRIORITY_SITES)
+        priority_marker = "✅ PRIORITY" if is_priority else "❌ NON-PRIORITY"
+        print(f"{i:2d}. {priority_marker} - {url}")
+    print()
     
     # Step 5: Parse all candidates
     extraction_tasks = []

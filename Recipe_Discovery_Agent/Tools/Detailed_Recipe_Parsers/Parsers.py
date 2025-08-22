@@ -1210,6 +1210,135 @@ async def parse_epicurious(url: str) -> Dict:
         return recipe
 
 
+async def parse_bbcgoodfood(url: str) -> Dict:
+    """
+    Parse recipe from BBCGoodFood.com
+    
+    COMPLIANCE:
+    - Checks robots.txt before scraping
+    - Respects crawl delays
+    - Only extracts data for user analysis, not for display
+    - Always preserves source URL for attribution
+    """
+    # COMPLIANCE CHECK: Respect robots.txt
+    is_allowed, crawl_delay = await check_robots_txt(url)
+    
+    if not is_allowed:
+        return {
+            'error': 'Robots.txt disallows scraping this URL',
+            'source_url': url
+        }
+    
+    # COMPLIANCE: Respect crawl delay
+    if crawl_delay > 0:
+        await asyncio.sleep(crawl_delay)
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, follow_redirects=True)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        recipe = {
+            'title': '',
+            'ingredients': [],
+            'instructions': [],
+            'nutrition': [],
+            'cook_time': '',
+            'servings': '',
+            'image_url': '',
+            'source_url': url
+        }
+        
+        # Try JSON-LD first
+        json_ld = soup.find('script', type='application/ld+json')
+        if json_ld:
+            try:
+                data = json.loads(json_ld.string)
+                
+                # Handle both list and dict JSON-LD structures
+                if isinstance(data, list):
+                    recipe_data = None
+                    for item in data:
+                        if isinstance(item, dict) and item.get('@type') == 'Recipe':
+                            recipe_data = item
+                            break
+                    if recipe_data:
+                        data = recipe_data
+                    else:
+                        data = data[0] if data and isinstance(data[0], dict) else {}
+                elif isinstance(data, dict) and '@graph' in data:
+                    for item in data['@graph']:
+                        if item.get('@type') == 'Recipe':
+                            data = item
+                            break
+                
+                recipe['title'] = data.get('name', '')
+                recipe['ingredients'] = data.get('recipeIngredient', [])
+                
+                # Instructions
+                instructions = data.get('recipeInstructions', [])
+                recipe['instructions'] = []
+                for inst in instructions:
+                    if isinstance(inst, dict):
+                        text = inst.get('text', inst.get('name', ''))
+                    else:
+                        text = str(inst)
+                    if text:
+                        recipe['instructions'].append(text.strip())
+                
+                recipe['cook_time'] = data.get('totalTime', data.get('cookTime', ''))
+                recipe['servings'] = str(data.get('recipeYield', ''))
+                
+                # Image
+                image = data.get('image', '')
+                if isinstance(image, dict):
+                    image = image.get('url', '')
+                elif isinstance(image, list) and image:
+                    image = image[0]
+                    if isinstance(image, dict):
+                        image = image.get('url', '')
+                recipe['image_url'] = image
+                
+                # Extract nutrition information
+                nutrition_info = data.get('nutrition', {})
+                recipe['nutrition'] = extract_nutrition_from_json_ld(nutrition_info)
+                
+                return recipe
+                
+            except (json.JSONDecodeError, KeyError):
+                pass
+        
+        # HTML fallback
+        title = soup.find('h1')
+        if title:
+            recipe['title'] = title.get_text(strip=True)
+        
+        # BBC Good Food specific selectors for ingredients
+        ingredients = soup.find_all('li', class_='pb-xxs')
+        if not ingredients:
+            ingredients = soup.find_all('li', {'data-testid': 'ingredient-item'})
+        recipe['ingredients'] = [ing.get_text(strip=True) for ing in ingredients if ing.get_text(strip=True)]
+        
+        # Instructions
+        instructions = soup.find_all('li', class_='pb-xs')
+        if not instructions:
+            instructions = soup.find_all('div', class_='editor-content')
+        recipe['instructions'] = [inst.get_text(strip=True) for inst in instructions if inst.get_text(strip=True)]
+        
+        # Image
+        img = soup.find('img', {'data-pin-media': True})
+        if not img:
+            img = soup.find('img', class_='image__img')
+        if img:
+            recipe['image_url'] = img.get('src', '') or img.get('data-src', '')
+        
+        # Nutrition
+        recipe['nutrition'] = extract_nutrition_from_html(soup)
+        
+        return recipe
+
+
 def validate_recipe_data(recipe_data: dict) -> tuple[bool, list]:
     """
     Validates that all required fields are present for iOS app UI.
@@ -1229,6 +1358,162 @@ def validate_recipe_data(recipe_data: dict) -> tuple[bool, list]:
     
     missing = [field for field, present in required_checks.items() if not present]
     return len(missing) == 0, missing
+
+
+async def universal_recipe_parser(url: str, openai_key: str) -> Dict:
+    """
+    Universal recipe parser using hybrid HTML + GPT-3.5 approach.
+    
+    Designed to handle ANY recipe site with robust error handling and validation.
+    Replaces all custom parsers for testing purposes.
+    """
+    if not openai_key:
+        return {'error': 'OpenAI API key required for universal parsing', 'source_url': url}
+    
+    try:
+        # Step 1: Fast HTML scraping with robust error handling
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(url, follow_redirects=True)
+            response.raise_for_status()
+            html_content = response.text
+        
+        # Step 2: Clean and prepare content for LLM
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Remove script, style, and other non-content elements
+        for element in soup(['script', 'style', 'nav', 'header', 'footer', 'aside']):
+            element.decompose()
+            
+        # Get text content with some structure preserved
+        clean_content = soup.get_text(separator='\n', strip=True)
+        
+        # Limit content size to control costs
+        max_chars = 15000  # ~3750 tokens
+        if len(clean_content) > max_chars:
+            clean_content = clean_content[:max_chars] + "...[content truncated]"
+        
+        # Step 3: LLM extraction with iOS app requirements
+        prompt = f"""You are extracting recipe data from a webpage for an iOS app. Extract the following information:
+
+REQUIRED FIELDS (must find ALL or mark as failed):
+1. INGREDIENTS: Extract the COMPLETE ingredient text including amounts, units, and names.
+   - PRESERVE EXACT TEXT: "2 cups all-purpose flour" NOT just "flour"
+   - Include ALL ingredients as a list
+   
+2. IMAGE: Find the main recipe image URL (usually the first large image, thumbnail, or hero image)
+   - Skip video thumbnails if present
+   - Look for image with recipe name or food photo
+   - Return full URL, not relative path
+   
+3. NUTRITION (extract EXACT text for these 4):
+   - Calories: (e.g., "250 calories" or "250 kcal")
+   - Protein: (e.g., "30g protein")
+   - Carbs: (e.g., "15g carbohydrates" or "15g carbs")  
+   - Fat: (e.g., "10g fat")
+   
+4. INSTRUCTIONS: Step-by-step cooking directions as separate items
+
+OPTIONAL FIELDS (include if found):
+- title: Recipe name
+- cook_time: Total or cook time
+- prep_time: Preparation time  
+- servings: Number of servings
+
+Return JSON format:
+{{
+  "status": "success",
+  "title": "Recipe Title",
+  "ingredients": ["2 cups flour", "1 tsp salt"],
+  "instructions": ["Step 1 text", "Step 2 text"],
+  "nutrition": ["250 calories", "30g protein", "15g carbs", "10g fat"],
+  "image_url": "https://example.com/image.jpg",
+  "cook_time": "30 minutes",
+  "prep_time": "15 minutes",
+  "servings": "4"
+}}
+
+If any REQUIRED field is missing, return:
+{{
+  "status": "failed",
+  "missing_required": ["ingredients", "image_url"],
+  "error": "Missing required fields"
+}}
+
+Content to analyze:
+{clean_content}"""
+
+        # Step 4: Call GPT-3.5
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {openai_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "gpt-3.5-turbo",
+                    "messages": [
+                        {"role": "system", "content": "You are a recipe extraction specialist. Return only valid JSON with all required fields."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 2000
+                }
+            )
+        
+        if response.status_code != 200:
+            return {'error': f'LLM API error: {response.status_code}', 'source_url': url}
+        
+        data = response.json()
+        llm_response = data['choices'][0]['message']['content'].strip()
+        
+        # Step 5: Parse JSON response
+        try:
+            # Clean up response in case LLM added extra text
+            if '```json' in llm_response:
+                llm_response = llm_response.split('```json')[1].split('```')[0]
+            elif '```' in llm_response:
+                llm_response = llm_response.split('```')[1]
+            
+            import json
+            recipe_data = json.loads(llm_response)
+            
+            # Step 6: Validate required fields
+            if recipe_data.get('status') == 'failed':
+                return {
+                    'error': f"Missing required fields: {recipe_data.get('missing_required', [])}",
+                    'source_url': url
+                }
+            
+            # Double-check validation with our own validator
+            is_valid, missing_fields = validate_recipe_data(recipe_data)
+            if not is_valid:
+                return {
+                    'error': f"Validation failed: missing {missing_fields}",
+                    'source_url': url
+                }
+            
+            # Step 7: Format for consistency with other parsers
+            formatted_recipe = {
+                'title': recipe_data.get('title', ''),
+                'ingredients': recipe_data.get('ingredients', []),
+                'instructions': recipe_data.get('instructions', []),
+                'nutrition': recipe_data.get('nutrition', []),
+                'cook_time': recipe_data.get('cook_time', ''),
+                'prep_time': recipe_data.get('prep_time', ''),
+                'servings': recipe_data.get('servings', ''),
+                'image_url': recipe_data.get('image_url', ''),
+                'source_url': url
+            }
+            
+            return formatted_recipe
+                
+        except json.JSONDecodeError as e:
+            return {'error': f'JSON parsing failed: {e}', 'source_url': url}
+        
+    except Exception as e:
+        return {'error': f'Universal parsing failed: {e}', 'source_url': url}
 
 
 async def parse_recipe_with_hybrid_approach(url: str, openai_key: str) -> Dict:
@@ -1525,33 +1810,38 @@ async def parse_recipe(url: str, openai_key: str = None) -> Dict:
     Returns:
         Dict with recipe data or error information
     """
-    # Try custom parsers first for priority sites
-    if 'allrecipes.com' in url:
-        return await parse_allrecipes(url)
-    elif 'simplyrecipes.com' in url:
-        return await parse_simplyrecipes(url)
-    elif 'eatingwell.com' in url:
-        return await parse_eatingwell(url)
-    elif 'foodnetwork.com' in url:
-        return await parse_foodnetwork(url)
-    elif 'delish.com' in url:
-        return await parse_delish(url)
-    elif 'seriouseats.com' in url:
-        return await parse_seriouseats(url)
-    elif 'foodandwine.com' in url:
-        return await parse_foodandwine(url)
-    elif 'thepioneerwoman.com' in url:
-        return await parse_thepioneerwoman(url)
-    elif 'food.com' in url:
-        return await parse_food_com(url)
-    elif 'epicurious.com' in url:
-        return await parse_epicurious(url)
+    # TESTING: Using universal parser for ALL sites instead of custom parsers
+    # This bypasses all custom parsers to test the universal approach
+    
+    # Custom parsers (temporarily disabled for testing):
+    # if 'allrecipes.com' in url:
+    #     return await parse_allrecipes(url)
+    # elif 'simplyrecipes.com' in url:
+    #     return await parse_simplyrecipes(url)
+    # elif 'eatingwell.com' in url:
+    #     return await parse_eatingwell(url)
+    # elif 'foodnetwork.com' in url:
+    #     return await parse_foodnetwork(url)
+    # elif 'delish.com' in url:
+    #     return await parse_delish(url)
+    # elif 'seriouseats.com' in url:
+    #     return await parse_seriouseats(url)
+    # elif 'foodandwine.com' in url:
+    #     return await parse_foodandwine(url)
+    # elif 'thepioneerwoman.com' in url:
+    #     return await parse_thepioneerwoman(url)
+    # elif 'food.com' in url:
+    #     return await parse_food_com(url)
+    # elif 'epicurious.com' in url:
+    #     return await parse_epicurious(url)
+    # elif 'bbcgoodfood.com' in url:
+    #     return await parse_bbcgoodfood(url)
+    
+    # Use universal parser for ALL sites (testing mode)
+    if openai_key:
+        return await universal_recipe_parser(url, openai_key)
     else:
-        # Use hybrid approach for any other site
-        if openai_key:
-            return await parse_recipe_with_hybrid_approach(url, openai_key)
-        else:
-            return {
-                'error': 'Site not supported and no OpenAI key provided',
-                'source_url': url
-            }
+        return {
+            'error': 'OpenAI key required for universal parsing',
+            'source_url': url
+        }
