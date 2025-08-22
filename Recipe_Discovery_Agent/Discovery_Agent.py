@@ -86,11 +86,15 @@ def main():
             print(f"\n{result.output['response']}")
             print(f"\nFound {result.output['totalResults']} recipes for: {result.output['searchQuery']}")
             
-            # Display first few recipes if any
+            # Display structured data for iOS app verification
             if result.output['recipes']:
-                print("\nTop recipes:")
-                for i, recipe in enumerate(result.output['recipes'][:5], 1):
-                    print(f"{i}. {recipe['title']} - Ready in {recipe['readyInMinutes']}")
+                print("\n" + "="*80)
+                print("📱 STRUCTURED DATA FOR iOS APP:")
+                print("="*80)
+                import json
+                for i, recipe in enumerate(result.output['recipes'], 1):
+                    print(f"\n🍳 Recipe {i}:")
+                    print(json.dumps(recipe, indent=2))
                     
         except Exception as e:
             print(f"Error: {e}")

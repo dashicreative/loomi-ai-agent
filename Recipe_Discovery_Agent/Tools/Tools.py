@@ -559,10 +559,11 @@ Instructions Preview: {instructions_preview}..."""
     3. EQUIPMENT REQUIREMENTS: Check instructions for equipment mentions (e.g., "no-bake", "slow cooker", "air fryer")
     4. COOKING METHOD: Match preparation methods from instructions (e.g., "grilled", "baked", "fried")
     5. SPECIFIC COOKING DIRECTIONS: Match any specific cooking techniques or directions the user requests that can be found in the recipe instructions
-    6. RECIPE TYPE MATCHING: 
-       - If query asks for "[food] recipe" (e.g., "steak recipe"), prioritize recipes that COOK that food, NOT just marinades/dressings/sauces for it
-       - Only rank marinades/dressings/sauces highly if user specifically asks for them (e.g., "steak marinade recipe")
-       - Examples: "chicken recipe" → cooking chicken dishes, NOT chicken marinades unless specifically requested
+    6. RECIPE TYPE MATCHING - EXCLUSION RULE: 
+       - If query asks for "[food] recipe" (e.g., "steak recipe"), EXCLUDE from consideration any recipes that are primarily marinades, sauces, or dressings
+       - These recipes CANNOT appear in the final ranking unless user specifically asks for them (e.g., "steak marinade recipe")
+       - Examples: "steak recipe" → EXCLUDE any steak marinades, "chicken recipe" → EXCLUDE chicken marinades/sauces
+       - Only rank actual cooking recipes that prepare the main food item
 
     Additional factors:
     - Dietary requirements (high protein, low carb, etc.)

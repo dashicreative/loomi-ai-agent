@@ -75,7 +75,12 @@ def parse_ingredient(ingredient_str: str) -> Dict[str, Optional[str]]:
         }
     
     original = ingredient_str.strip()
-    text = original.lower()
+    
+    # Convert Unicode fractions to regular fractions first
+    text = original.replace('½', '1/2').replace('⅓', '1/3').replace('⅔', '2/3').replace('¼', '1/4').replace('¾', '3/4')
+    text = text.replace('⅛', '1/8').replace('⅜', '3/8').replace('⅝', '5/8').replace('⅞', '7/8')
+    text = text.replace('⅙', '1/6').replace('⅚', '5/6').replace('⅕', '1/5').replace('⅖', '2/5').replace('⅗', '3/5').replace('⅘', '4/5')
+    text = text.lower()
     
     # Pattern to match: [quantity] [unit] [ingredient]
     # Quantity can be: 1, 1.5, 1/2, 1 1/2, 2-3, etc.
@@ -107,25 +112,32 @@ def parse_ingredient(ingredient_str: str) -> Dict[str, Optional[str]]:
         # Clean up ingredient (remove leading commas, etc.)
         ingredient = re.sub(r'^[,\s]+', '', ingredient)
         
-        # Preserve original capitalization for ingredient
-        # Find the ingredient part in the original string
-        orig_ingredient_start = len(quantity) + len(unit) + 2  # +2 for spaces
-        orig_ingredient = original[orig_ingredient_start:].strip()
-        orig_ingredient = re.sub(r'^[,\s]+', '', orig_ingredient)
+        # Extract ingredient from original string by finding it after the unit
+        # Search for the unit in the original string and take everything after it
+        unit_search = re.search(rf'\b{re.escape(unit)}\b', original, re.IGNORECASE)
+        if unit_search:
+            orig_ingredient = original[unit_search.end():].strip()
+            orig_ingredient = re.sub(r'^[,\s]+', '', orig_ingredient)
+        else:
+            orig_ingredient = ingredient
         
     else:
         # No unit found, everything after quantity is ingredient
         unit = None
         ingredient = remaining_text
         
-        # Preserve original capitalization
-        orig_ingredient_start = len(quantity) + 1  # +1 for space
-        orig_ingredient = original[orig_ingredient_start:].strip()
+        # Extract ingredient from original string by finding it after the quantity pattern
+        # Find where the quantity ends in the original string
+        orig_quantity_match = re.search(r'^(\d+\s+[\u00bc-\u00be\u2150-\u215e]|\d+[\u00bc-\u00be\u2150-\u215e]|[\u00bc-\u00be\u2150-\u215e]|\d+\s+\d+/\d+|\d+/\d+|\d+(?:\.\d+)?(?:\s*-\s*\d+(?:\.\d+)?)?)', original)
+        if orig_quantity_match:
+            orig_ingredient = original[orig_quantity_match.end():].strip()
+        else:
+            orig_ingredient = ingredient
     
     return {
         "quantity": quantity,
         "unit": unit,
-        "ingredient": orig_ingredient if unit else orig_ingredient,
+        "ingredient": orig_ingredient,
         "original": original
     }
 
