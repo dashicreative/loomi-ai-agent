@@ -76,25 +76,56 @@ BLOCKED_SITES = [
 # These are NOT agent tools - they are internal helper functions
 # =============================================================================
 
-def detect_page_type(url: str, title: str, content: str = "") -> str:
+async def classify_with_content_sampling(url: str, title: str) -> str:
     """
-    SUPPLEMENTAL FUNCTION: Tiered detection system to identify list pages vs individual recipes.
-    
-    Uses 4-tier detection:
-    1. Title + URL patterns (lightweight)
-    2. Content keywords (medium)  
-    3. HTML structure analysis (detailed)
-    4. Content length heuristic (fallback)
-    
-    Args:
-        url: The page URL
-        title: Page title from search results
-        content: Page content (optional, for deeper analysis)
-        
-    Returns:
-        "list" or "recipe"
+    Enhanced classification using lightweight content sampling.
+    Fetches first 2KB to check title tags, meta descriptions, and early content.
     """
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            # Stream just the first 2KB
+            async with client.stream('GET', url, follow_redirects=True) as response:
+                content_chunk = b""
+                async for chunk in response.aiter_bytes(chunk_size=512):
+                    content_chunk += chunk
+                    if len(content_chunk) >= 2048:  # 2KB limit
+                        break
+                
+                # Convert to text for analysis
+                sample_content = content_chunk.decode('utf-8', errors='ignore')
+                
+                # Extract key signals
+                return analyze_content_sample(sample_content, url, title)
+                
+    except Exception:
+        # Fallback to URL-only classification
+        return detect_page_type_fallback(url, title)
+
+def analyze_content_sample(content: str, url: str, title: str) -> str:
+    """Analyze the 2KB sample for classification signals."""
+    content_lower = content.lower()
     
+    # HIGH CONFIDENCE LIST INDICATORS
+    if re.search(r'<title>.*?(best|top|collection|roundup|\d+\s+recipes)', content_lower):
+        return "list"
+    if re.search(r'meta.*description.*?(best|top|collection|\d+\s+recipes)', content_lower):
+        return "list"
+    if content_lower.count('recipe-card') >= 3:  # Multiple recipe cards
+        return "list"
+    if any(signal in content_lower for signal in ['class="recipe-list', 'pagination', 'load more recipes']):
+        return "list"
+    
+    # HIGH CONFIDENCE RECIPE INDICATORS
+    if re.search(r'application/ld\+json.*"@type":\s*"recipe"', content_lower):
+        return "recipe"
+    if any(signal in content_lower for signal in ['recipe-instructions', 'ingredient-list', 'prep-time', 'recipe-nutrition']):
+        return "recipe"
+    
+    # Fallback to URL-only patterns
+    return detect_page_type_fallback(url, title)
+
+def detect_page_type_fallback(url: str, title: str) -> str:
+    """Fallback URL-only classification (original logic)."""
     # TIER 1: Title and URL Pattern Analysis (Lightweight - handles most cases)
     list_title_patterns = [
         r'\b(\d+)\s+(best|top|easy|quick|healthy|delicious)\b',  # "25 Best", "10 Easy"
@@ -127,64 +158,6 @@ def detect_page_type(url: str, title: str, content: str = "") -> str:
         return "list"
     if any(pattern in url_lower for pattern in ['/recipe/', '-recipe.', 'recipe-']):
         return "recipe"
-    
-    # TIER 2: Content Keywords (if content provided and Tier 1 indeterminate)
-    if content:
-        content_lower = content.lower()
-        
-        # List content indicators
-        list_content_patterns = [
-            r'\bhere are\s+(\d+|\w+)\s+(recipes?|ideas?|ways?)\b',  # "Here are 10 recipes"
-            r'\btry these\s+(\d+|\w+)\b',  # "Try these 5"
-            r'\brecipe roundup\b',
-            r'\bmultiple.*recipes?\b',
-            r'\bcollection of.*recipes?\b'
-        ]
-        
-        for pattern in list_content_patterns:
-            if re.search(pattern, content_lower):
-                return "list"
-        
-        # TIER 3: HTML Structure Analysis
-        if '<' in content:  # Basic check that we have HTML
-            try:
-                soup = BeautifulSoup(content, 'html.parser')
-                
-                # Count recipe-like headings (h2, h3, h4 that might be recipe titles)
-                headings = soup.find_all(['h2', 'h3', 'h4'])
-                recipe_heading_count = 0
-                
-                for heading in headings[:20]:  # Check first 20 headings
-                    heading_text = heading.get_text().lower()
-                    if any(word in heading_text for word in ['recipe', 'chicken', 'pasta', 'salad', 'cake', 'soup']):
-                        recipe_heading_count += 1
-                
-                # If we find 3+ recipe-like headings, likely a list page
-                if recipe_heading_count >= 3:
-                    return "list"
-                
-                # Count links to recipe pages
-                recipe_links = 0
-                links = soup.find_all('a', href=True)
-                for link in links[:50]:  # Check first 50 links
-                    href = link.get('href', '').lower()
-                    if any(pattern in href for pattern in ['recipe', '/recipes/', '.html']):
-                        recipe_links += 1
-                
-                # High number of recipe links suggests list page
-                if recipe_links >= 10:
-                    return "list"
-                    
-            except Exception:
-                pass  # HTML parsing failed, continue to Tier 4
-        
-        # TIER 4: Content Length Heuristic (final fallback)
-        word_count = len(content.split())
-        if word_count > 3000:  # Very long content often indicates list pages
-            # Check for recipe-specific patterns in long content
-            recipe_indicators = content_lower.count('ingredients') + content_lower.count('instructions') + content_lower.count('directions')
-            if recipe_indicators <= 2:  # Few recipe indicators in long content = likely list
-                return "list"
     
     # Default to recipe if uncertain
     return "recipe"
@@ -366,8 +339,8 @@ async def expand_urls_with_lists(initial_results: List[Dict], openai_key: str = 
             try:
                 # OPTIMIZED STRATEGY: Fast classification first, strategic FireCrawl for list extraction only
                 
-                # Step 1: Fast pre-classification using title/URL patterns only (no scraping needed)
-                fast_page_type = detect_page_type(url, title, "")  # Empty content = title/URL only
+                # Step 1: Enhanced classification using lightweight content sampling
+                fast_page_type = await classify_with_content_sampling(url, title)
                 
                 if fast_page_type == "recipe":
                     # Individual recipe identified - add directly (no scraping needed for classification)
@@ -759,6 +732,18 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     
     print(f"📊 Stage 2: URL Expansion - {len(search_results.get('results', []))} → {len(expanded_results)} URLs")
     
+    # Debug: Show URLs that were identified as lists
+    print(f"🔍 DEBUG: URLs identified as lists:")
+    for result in search_results["results"]:
+        url = result.get("url", "")
+        title = result.get("title", "")
+        try:
+            page_type = await classify_with_content_sampling(url, title)
+            if page_type == "list":
+                print(f"   📋 LIST: {url}")
+        except Exception:
+            pass
+    
     if not expanded_results:
         return {
             "results": [],
@@ -797,14 +782,6 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     # Process all Stage 1 ranked results to give LLM full ingredient information
     candidates_to_parse = stage1_ranked_results[:15]  # Parse top 15 for Stage 2 ranking
     
-    # DEBUG: Show which URLs made it to scraping and if they're priority sites
-    print("\n🔍 DEBUG: Top 15 URLs selected for scraping:")
-    for i, result in enumerate(candidates_to_parse, 1):
-        url = result.get('url', '')
-        is_priority = any(f"//{priority_site}" in url.lower() or f".{priority_site}" in url.lower() for priority_site in PRIORITY_SITES)
-        priority_marker = "✅ PRIORITY" if is_priority else "❌ NON-PRIORITY"
-        print(f"{i:2d}. {priority_marker} - {url}")
-    print()
     
     # Step 5: Parse all candidates
     extraction_tasks = []
@@ -842,6 +819,11 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
         extracted_recipes = successful_parses
     
     print(f"📊 Stage 4: Recipe Scraping - Successfully parsed {len(extracted_recipes)} recipes")
+    
+    # Print failed URLs
+    if failed_parses:
+        failed_urls = [fp.get("result", {}).get("url", "") for fp in failed_parses]
+        print(f"❌ Failed to parse: {', '.join(failed_urls)}")
     
     # STAGE 2: Deep content ranking using full recipe data
     if len(extracted_recipes) > 1:  # Only re-rank if we have multiple recipes
