@@ -16,6 +16,7 @@ from Dependencies import RecipeDeps
 from .Detailed_Recipe_Parsers.Parsers import parse_recipe
 from .Detailed_Recipe_Parsers.ingredient_parser import parse_ingredients_list
 from .Detailed_Recipe_Parsers.list_parser import ListParser
+from .Detailed_Recipe_Parsers.url_classifier import classify_urls_batch
 from bs4 import BeautifulSoup
 
 """Complete Data Flow:
@@ -69,98 +70,6 @@ BLOCKED_SITES = [
 ]
 
 
-
-
-# =============================================================================
-# SUPPLEMENTAL FUNCTIONS: List vs Individual Recipe Detection
-# These are NOT agent tools - they are internal helper functions
-# =============================================================================
-
-async def classify_with_content_sampling(url: str, title: str) -> str:
-    """
-    Enhanced classification using lightweight content sampling.
-    Fetches first 2KB to check title tags, meta descriptions, and early content.
-    """
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            # Stream just the first 2KB
-            async with client.stream('GET', url, follow_redirects=True) as response:
-                content_chunk = b""
-                async for chunk in response.aiter_bytes(chunk_size=512):
-                    content_chunk += chunk
-                    if len(content_chunk) >= 2048:  # 2KB limit
-                        break
-                
-                # Convert to text for analysis
-                sample_content = content_chunk.decode('utf-8', errors='ignore')
-                
-                # Extract key signals
-                return analyze_content_sample(sample_content, url, title)
-                
-    except Exception:
-        # Fallback to URL-only classification
-        return detect_page_type_fallback(url, title)
-
-def analyze_content_sample(content: str, url: str, title: str) -> str:
-    """Analyze the 2KB sample for classification signals."""
-    content_lower = content.lower()
-    
-    # HIGH CONFIDENCE LIST INDICATORS
-    if re.search(r'<title>.*?(best|top|collection|roundup|\d+\s+recipes)', content_lower):
-        return "list"
-    if re.search(r'meta.*description.*?(best|top|collection|\d+\s+recipes)', content_lower):
-        return "list"
-    if content_lower.count('recipe-card') >= 3:  # Multiple recipe cards
-        return "list"
-    if any(signal in content_lower for signal in ['class="recipe-list', 'pagination', 'load more recipes']):
-        return "list"
-    
-    # HIGH CONFIDENCE RECIPE INDICATORS
-    if re.search(r'application/ld\+json.*"@type":\s*"recipe"', content_lower):
-        return "recipe"
-    if any(signal in content_lower for signal in ['recipe-instructions', 'ingredient-list', 'prep-time', 'recipe-nutrition']):
-        return "recipe"
-    
-    # Fallback to URL-only patterns
-    return detect_page_type_fallback(url, title)
-
-def detect_page_type_fallback(url: str, title: str) -> str:
-    """Fallback URL-only classification (original logic)."""
-    # TIER 1: Title and URL Pattern Analysis (Lightweight - handles most cases)
-    list_title_patterns = [
-        r'\b(\d+)\s+(best|top|easy|quick|healthy|delicious)\b',  # "25 Best", "10 Easy"
-        r'\b(best|top|easy|quick)\s+(\d+)\b',  # "Best 15", "Top 10"
-        r'\b(\d+)\s+(recipes?|breakfasts?|lunches?|dinners?|meals?|dishes?|ideas?|ways?)\b',  # "16 Breakfasts", "30 Recipes"
-        r'\b(recipes?|ideas?|ways?|dishes?|meals?)\s*(for|to)\b',  # "Recipes for", "Ideas to"
-        r'\b(collection|roundup|list)\b',  # "Recipe Collection", "Roundup"
-        r'\bmultiple\b.*\b(recipes?|dishes?)\b'  # "Multiple recipes"
-    ]
-    
-    recipe_title_patterns = [
-        r'\b(recipe|how to make)\b',  # "Chocolate Cake Recipe", "How to make"
-        r'\bcooking\s+\w+',  # "Cooking Chicken"
-    ]
-    
-    # Check for list patterns in title
-    title_lower = title.lower()
-    for pattern in list_title_patterns:
-        if re.search(pattern, title_lower):
-            return "list"
-    
-    # Check for recipe patterns in title  
-    for pattern in recipe_title_patterns:
-        if re.search(pattern, title_lower) and not any(re.search(lp, title_lower) for lp in list_title_patterns):
-            return "recipe"
-    
-    # Check URL patterns
-    url_lower = url.lower()
-    if any(pattern in url_lower for pattern in ['/best-', '/top-', '/roundup', '/collection', '/ideas', '/ways', '-recipes-with-', 'breakfast-recipes-with']):
-        return "list"
-    if any(pattern in url_lower for pattern in ['/recipe/', '-recipe.', 'recipe-']):
-        return "recipe"
-    
-    # Default to recipe if uncertain
-    return "recipe"
 
 
 # Initialize the advanced list parser
@@ -308,85 +217,103 @@ async def expand_urls_with_lists(initial_results: List[Dict], openai_key: str = 
     """
     SUPPLEMENTAL FUNCTION: Smart URL expansion that processes list pages to extract individual recipes.
     
-    Takes initial search results and expands any list pages into individual recipe URLs.
-    Caps total URLs at max_total_urls and ensures no list URLs reach the ranking stage.
+    Uses batch classification for efficient URL type detection, then expands list pages
+    into individual recipe URLs while filtering out irrelevant content.
     
     Args:
         initial_results: List of search result dictionaries from SerpAPI
-        openai_key: OpenAI API key for hybrid extraction
+        openai_key: OpenAI API key for classification and extraction
         max_total_urls: Maximum total URLs to return (default 60)
         
     Returns:
         Expanded list of individual recipe URLs with safety metadata
     """
+    if not initial_results or not openai_key:
+        return [], []
+    
+    # Step 1: Batch classify all URLs at once (much faster than individual classification)
+    print(f"🔍 Classifying {len(initial_results)} URLs in batch...")
+    classifications = await classify_urls_batch(initial_results, openai_key)
+    
+    # Create a mapping of URL to classification for easy lookup
+    classification_map = {c.url: c for c in classifications}
+    
     expanded_urls = []
-    fp1_failures = []  # Track Content_Scraping_Failure_Point
-    processed_count = 0
+    fp1_failures = []  # Track failures
     list_urls_processed = 0  # Counter for strategic list processing
     
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        for result in initial_results:
-            # Stop if we've reached our URL limit
-            if len(expanded_urls) >= max_total_urls:
-                break
-                
-            url = result.get("url", "")
-            title = result.get("title", "")
+    # Step 2: Process URLs based on their classification
+    for result in initial_results:
+        # Stop if we've reached our URL limit
+        if len(expanded_urls) >= max_total_urls:
+            break
             
-            if not url:
+        url = result.get("url", "")
+        title = result.get("title", "")
+        
+        if not url:
+            continue
+        
+        # Get classification for this URL
+        classification = classification_map.get(url)
+        if not classification:
+            # No classification available - skip
+            fp1_failures.append({
+                "url": url,
+                "title": title,
+                "error": "No classification available",
+                "failure_point": "Classification_Failure_Point"
+            })
+            continue
+        
+        # Process based on classification type
+        if classification.type == "recipe":
+            # Individual recipe - add directly
+            result_copy = result.copy()
+            result_copy["type"] = "recipe"
+            result_copy["classification_confidence"] = classification.confidence
+            expanded_urls.append(result_copy)
+            
+        elif classification.type == "list":
+            # List page - extract individual recipes
+            list_urls_processed += 1
+            
+            # Cap list processing to avoid rate limits and control costs
+            if list_urls_processed > 6:
                 continue
             
-            try:
-                # OPTIMIZED STRATEGY: Fast classification first, strategic FireCrawl for list extraction only
-                
-                # Step 1: Enhanced classification using lightweight content sampling
-                fast_page_type = await classify_with_content_sampling(url, title)
-                
-                if fast_page_type == "recipe":
-                    # Individual recipe identified - add directly (no scraping needed for classification)
-                    result_copy = result.copy()
-                    result_copy["type"] = "recipe"
-                    expanded_urls.append(result_copy)
-                    
-                elif fast_page_type == "list":
-                    # List page identified - use strategic FireCrawl for reliable extraction
-                    list_urls_processed += 1
-                    
-                    # Cap list processing to avoid rate limits and control costs
-                    if list_urls_processed > 6:
-                        continue
-                    
-                    remaining_slots = max_total_urls - len(expanded_urls)
-                    max_extract = min(5, remaining_slots)  # Extract up to 5 or remaining slots
-                    
-                    if max_extract > 0:
-                        extracted_urls = await extract_list_with_hybrid_approach(url, openai_key, max_extract)
-                        
-                        # Add extracted URLs to our pool
-                        for extracted_url in extracted_urls:
-                            extracted_url["type"] = "recipe"  # Mark as recipe for safety
-                            extracted_url["google_position"] = result.get("google_position", 999)
-                            expanded_urls.append(extracted_url)
-                            
-                            # Stop if we hit the limit while processing this list
-                            if len(expanded_urls) >= max_total_urls:
-                                break
-                    
-                    # Note: Original list URL is NOT added to expanded_urls (filtered out)
-                
-            except Exception as e:
-                # CONTENT SCRAPING FAILURE POINT: Can't determine if list or recipe - track and discard
-                fp1_failures.append({
-                    "url": url,
-                    "title": title,
-                    "error": str(e),
-                    "failure_point": "Content_Scraping_Failure_Point"
-                })
-                # Don't add URL to expanded_urls - let it be filtered out entirely
+            remaining_slots = max_total_urls - len(expanded_urls)
+            max_extract = min(5, remaining_slots)  # Extract up to 5 or remaining slots
             
-            processed_count += 1
+            if max_extract > 0:
+                try:
+                    extracted_urls = await extract_list_with_hybrid_approach(url, openai_key, max_extract)
+                    
+                    # Add extracted URLs to our pool
+                    for extracted_url in extracted_urls:
+                        extracted_url["type"] = "recipe"  # Mark as recipe
+                        extracted_url["google_position"] = result.get("google_position", 999)
+                        extracted_url["from_list"] = url  # Track source list
+                        expanded_urls.append(extracted_url)
+                        
+                        # Stop if we hit the limit while processing this list
+                        if len(expanded_urls) >= max_total_urls:
+                            break
+                            
+                except Exception as e:
+                    fp1_failures.append({
+                        "url": url,
+                        "title": title,
+                        "error": str(e),
+                        "failure_point": "List_Extraction_Failure_Point"
+                    })
+            
+        else:
+            # Other types (blog, social, other) - filter out entirely
+            # These don't move forward to the next stage
+            pass
     
-    # SAFETY CHECK: Filter out any URLs that might still be marked as lists
+    # SAFETY CHECK: Ensure only recipe URLs are returned
     safe_urls = [url for url in expanded_urls if url.get("type") == "recipe"]
     
     return safe_urls[:max_total_urls], fp1_failures  # Return both expanded URLs and FP1 failures
@@ -731,18 +658,6 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     )
     
     print(f"📊 Stage 2: URL Expansion - {len(search_results.get('results', []))} → {len(expanded_results)} URLs")
-    
-    # Debug: Show URLs that were identified as lists
-    print(f"🔍 DEBUG: URLs identified as lists:")
-    for result in search_results["results"]:
-        url = result.get("url", "")
-        title = result.get("title", "")
-        try:
-            page_type = await classify_with_content_sampling(url, title)
-            if page_type == "list":
-                print(f"   📋 LIST: {url}")
-        except Exception:
-            pass
     
     if not expanded_results:
         return {
