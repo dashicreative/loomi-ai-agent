@@ -385,14 +385,14 @@ async def expand_urls_with_lists(initial_results: List[Dict], firecrawl_key: str
 # These are NOT agent tools - they are internal helper functions
 # =============================================================================
 
-async def search_recipes_serpapi(ctx: RunContext[RecipeDeps], query: str, number: int = 40) -> Dict:
+async def search_recipes_serpapi(ctx: RunContext[RecipeDeps], query: str, number: int = 25) -> Dict:
     """
     SUPPLEMENTAL FUNCTION: Search for recipes on the web using SerpAPI.
-    Internal function for the search step.
+    Internal function for the search step with priority site targeting.
     
     Args:
         query: The search query for recipes
-        number: Number of results to return (default 40, filtered down)
+        number: Number of results to return (default 25)
     
     Returns:
         Dictionary containing search results with URLs and snippets
@@ -402,14 +402,20 @@ async def search_recipes_serpapi(ctx: RunContext[RecipeDeps], query: str, number
         if "recipe" not in query.lower():
             query = f"{query} recipe"
         
-        # Search broadly without site restrictions for quality results
+        # Build site-specific search query for all 10 priority sites
+        priority_sites_query = " OR ".join([f"site:{site}" for site in PRIORITY_SITES])
+        enhanced_query = f"{query} ({priority_sites_query})"
+        
         params = {
             "api_key": ctx.deps.serpapi_key,
             "engine": "google",
-            "q": query,
+            "q": enhanced_query,
             "num": number,
             "hl": "en",
-            "gl": "us"
+            "gl": "us",
+            "tbs": "qdr:y4",  # Results from last 4 years
+            "nfpr": "1",  # Disable auto-correction
+            "lr": "lang_en"  # English results only
         }
         
         try:
@@ -691,7 +697,7 @@ Instructions Preview: {instructions_preview}..."""
 # MAIN AGENT TOOL: This is the ONLY function the agent can invoke
 # =============================================================================
 
-async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, max_recipes: int = 5) -> Dict:
+async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, max_recipes: int = 3) -> Dict:
     """
     **MAIN AGENT TOOL**: Complete recipe discovery flow with smart list processing.
     
@@ -704,16 +710,25 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     
     Args:
         query: User's search query (supports criteria like "breakfast with 30g+ protein")
-        max_recipes: Maximum number of recipes to return with full details (default 5)
+        max_recipes: Maximum number of recipes to return with full details (default 3)
     
     Returns:
         Dictionary with structured recipe data ready for agent processing
     """
+    import time
+    
+    # Performance tracking
+    step_times = {}
+    total_start = time.time()
+    
     # Reset cache between requests to prevent pollution
     reset_html_cache()
     
-    # Step 1: Search for recipes using SerpAPI (gets up to 30 URLs after blacklist filtering)
+    # Step 1: Search for recipes using SerpAPI
+    step_start = time.time()
     search_results = await search_recipes_serpapi(ctx, query)
+    step_times['1_serpapi_search'] = time.time() - step_start
+    print(f"⏱️ Step 1 (SerpAPI Search): {step_times['1_serpapi_search']:.2f}s")
     
     # DEBUG: Show initial URLs from SerpAPI
     print(f"\n=== DEBUG: After Blacklist Filtering ===")
@@ -732,18 +747,23 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
         }
     
     # Step 1.5: Batch prefetch HTML for all URLs
+    step_start = time.time()
     html_cache = get_html_cache(ctx.deps.firecrawl_key)
     all_urls = [result.get("url") for result in search_results.get("results", []) if result.get("url")]
     if all_urls:
         await html_cache.batch_fetch(all_urls)
+    step_times['2_html_prefetch'] = time.time() - step_start
+    print(f"⏱️ Step 2 (HTML Prefetch): {step_times['2_html_prefetch']:.2f}s")
     
-    # Step 2: Smart URL Expansion (process list pages → extract individual recipe URLs)
-    # This is where the magic happens - converts list pages into individual recipe URLs
+    # Step 3: Smart URL Expansion (process list pages → extract individual recipe URLs)
+    step_start = time.time()
     expanded_results, fp1_failures = await expand_urls_with_lists(
         search_results["results"], 
         firecrawl_key=ctx.deps.firecrawl_key,
         max_total_urls=60
     )
+    step_times['3_url_expansion'] = time.time() - step_start
+    print(f"⏱️ Step 3 (URL Expansion): {step_times['3_url_expansion']:.2f}s")
     
     if not expanded_results:
         return {
@@ -754,6 +774,7 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
         }
     
     # Step 4: Priority Site Pre-Processing
+    step_start = time.time()
     from .early_exit_manager import PriorityURLOrdering
     
     priority_orderer = PriorityURLOrdering()
@@ -774,8 +795,11 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     
     print(f"🎯 Priority sites found: {len(priority_sites)}")
     print(f"📊 Non-priority sites: {len(non_priority_sites)}")
+    step_times['4_priority_sorting'] = time.time() - step_start
+    print(f"⏱️ Step 4 (Priority Sorting): {step_times['4_priority_sorting']:.2f}s")
     
-    # Step 5: Progressive parsing with priority site preference
+    # Step 5: Progressive parsing with priority site preference (MAX 2 ATTEMPTS)
+    step_start = time.time()
     early_exit_manager = EarlyExitManager(
         quality_threshold=0.7,
         min_recipes=max_recipes,
@@ -783,17 +807,24 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
         firecrawl_key=ctx.deps.firecrawl_key
     )
     
-    # Process priority sites first
-    if priority_sites:
-        print("🏆 Processing priority sites first...")
+    attempts = 0
+    max_attempts = 2
+    high_quality_recipes = []
+    all_parsed_recipes = []
+    
+    # Attempt 1: Process priority sites first
+    if priority_sites and attempts < max_attempts:
+        attempts += 1
+        print(f"🏆 Attempt {attempts}: Processing priority sites...")
         high_quality_recipes, all_parsed_recipes = await early_exit_manager.progressive_parse_with_exit(
             priority_sites,
             query
         )
         
-        # If we didn't get enough high-quality recipes, supplement with non-priority sites
-        if len(high_quality_recipes) < max_recipes and non_priority_sites:
-            print(f"🔄 Need more recipes, processing non-priority sites...")
+        # Attempt 2: If we didn't get enough, try non-priority sites
+        if len(high_quality_recipes) < max_recipes and non_priority_sites and attempts < max_attempts:
+            attempts += 1
+            print(f"🔄 Attempt {attempts}: Need more recipes, processing non-priority sites...")
             early_exit_manager.reset_stats()  # Reset for second round
             
             additional_recipes, additional_parsed = await early_exit_manager.progressive_parse_with_exit(
@@ -804,13 +835,44 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
             # Combine results
             high_quality_recipes.extend(additional_recipes)
             all_parsed_recipes.extend(additional_parsed)
-    else:
+    elif not priority_sites and attempts < max_attempts:
         # Fallback: process all non-priority sites if no priority sites found
-        print("⚠️ No priority sites found, processing all results...")
+        attempts += 1
+        print(f"⚠️ Attempt {attempts}: No priority sites found, processing all results...")
         high_quality_recipes, all_parsed_recipes = await early_exit_manager.progressive_parse_with_exit(
             priority_ordered_results[:25],
             query
         )
+    
+    step_times['5_progressive_parsing'] = time.time() - step_start
+    print(f"⏱️ Step 5 (Progressive Parsing): {step_times['5_progressive_parsing']:.2f}s")
+    
+    # Check if we failed to get enough recipes after max attempts
+    if len(high_quality_recipes) < max_recipes and attempts >= max_attempts:
+        stats = early_exit_manager.get_stats()
+        error_msg = f"Failed to find {max_recipes} quality recipes after {attempts} attempts. "
+        error_msg += f"Stats: Attempted={stats['total_attempted']}, "
+        error_msg += f"Successful={stats['successful_parses']}, "
+        error_msg += f"Failed={stats['failed_parses']}, "
+        error_msg += f"High_quality={stats['high_quality_found']}"
+        
+        print(f"❌ ERROR: {error_msg}")
+        
+        # Return what we have with error details
+        if not high_quality_recipes:
+            return {
+                "results": [],
+                "totalResults": 0,
+                "searchQuery": query,
+                "error": error_msg,
+                "_debug": {
+                    "attempts": attempts,
+                    "stats": stats,
+                    "step_times": step_times,
+                    "priority_sites_found": len(priority_sites),
+                    "non_priority_sites_found": len(non_priority_sites)
+                }
+            }
     
     # Use high quality recipes as final result (no need for Stage 2 reranking)
     final_ranked_recipes = high_quality_recipes
@@ -819,7 +881,8 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     stats = early_exit_manager.get_stats()
     failed_parses = []  # Early Exit Manager handles failure tracking internally
     
-    # Step 6: Format final results for agent  
+    # Step 6: Format final results for agent
+    step_start = time.time()
     formatted_recipes = []
     for recipe in final_ranked_recipes[:max_recipes]:  # Use final ranked results
         # Parse raw ingredient strings into structured format
@@ -837,6 +900,17 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
             # Instructions are available for agent analysis but won't be displayed
             "_instructions_for_analysis": recipe.get("instructions", [])
         })
+    step_times['6_formatting'] = time.time() - step_start
+    print(f"⏱️ Step 6 (Formatting): {step_times['6_formatting']:.2f}s")
+    
+    # Calculate total time
+    total_time = time.time() - total_start
+    print(f"\n📊 PERFORMANCE SUMMARY:")
+    print(f"   Total Time: {total_time:.2f}s")
+    print(f"   Breakdown:")
+    for step, duration in step_times.items():
+        percentage = (duration / total_time) * 100
+        print(f"     - {step}: {duration:.2f}s ({percentage:.1f}%)")
     
     # Track all failure points for business reporting
     all_failures = fp1_failures + failed_parses  # Combine Content_Scraping and Recipe_Parsing failures
@@ -851,7 +925,12 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
                 "error": fp.get("error", "Unknown error")
             }
             for fp in all_failures
-        ]
+        ],
+        "performance": {
+            "total_time": total_time,
+            "step_times": step_times,
+            "attempts": attempts if 'attempts' in locals() else 0
+        }
     }
     
     return {
