@@ -231,7 +231,34 @@ Return JSON format:
 {{
   "status": "success",
   "title": "Recipe Title",
-  "ingredients": ["2 cups flour", "1 tsp salt"],
+  "ingredients": [
+    {{
+      "quantity": "2",
+      "unit": "cup",
+      "ingredient": "flour",
+      "amount": null,
+      "size": null,
+      "additional_context": null,
+      "alternatives": [],
+      "pantry_staple": true,
+      "optional": false,
+      "disqualified": false,
+      "original": "2 cups flour"
+    }},
+    {{
+      "quantity": "1",
+      "unit": "tsp",
+      "ingredient": "salt",
+      "amount": null,
+      "size": null,
+      "additional_context": null,
+      "alternatives": [],
+      "pantry_staple": true,
+      "optional": false,
+      "disqualified": false,
+      "original": "1 tsp salt"
+    }}
+  ],
   "instructions": ["Step 1 text", "Step 2 text"],
   "nutrition": ["250 calories", "30g protein", "15g carbs", "10g fat"],
   "image_url": "https://example.com/image.jpg",
@@ -360,9 +387,34 @@ async def parse_recipe_with_hybrid_approach(url: str, openai_key: str) -> Dict:
         prompt = f"""You are extracting recipe data from a webpage. Extract the following information:
 
 REQUIRED FIELDS (must find ALL or mark as failed):
-1. INGREDIENTS: Extract the COMPLETE ingredient text including amounts, units, and names.
-   - PRESERVE EXACT TEXT: "2 cups all-purpose flour" NOT just "flour"
-   - Include ALL ingredients as a list
+1. INGREDIENTS: Extract as STRUCTURED objects with shopping-aware parsing.
+   Parse each ingredient into this exact format:
+   {
+     "quantity": Shopping quantity (ROUND UP whole items: "half lime"→"1", keep precise for weight/volume: "1.5 lb"→"1.5"),
+     "unit": Shopping unit ("count" for whole items, "lb"/"cup"/"tsp" for measurements),
+     "ingredient": Clean name without prep instructions,
+     "amount": Recipe amount if different from quantity ("0.5" for half lime, "4 cloves" for garlic),
+     "size": Size descriptor ("large", "small", "medium"),
+     "additional_context": Prep/state ("melted", "minced", "softened", "store-bought"),
+     "alternatives": Array of alternatives (split "milk or almond milk" → ["almond milk"]),
+     "pantry_staple": true for salt/pepper/oil/flour/sugar/basic spices,
+     "optional": true for "to taste"/garnish/serving items,
+     "disqualified": true for "see recipe"/homemade/cross-references,
+     "original": Original text exactly as written
+   }
+   
+   CRITICAL RULES:
+   - "salt and pepper to taste" → Split into 2 separate items, quantity: "1", unit: "pinch", pantry_staple: true, optional: true
+   - "X cloves garlic" → ALWAYS convert to quantity: "1", unit: "head", amount: "X cloves" (people buy heads not cloves)
+   - Nested measurements "1 (14.5 oz) can tomatoes" → quantity: "1", unit: "can", amount: "14.5 oz"
+   - "Juice from half a lime" → quantity: "1", unit: "count", amount: "0.5", additional_context: "juiced"
+   - Round UP whole items for shopping: limes/onions/peppers → nearest whole number in quantity field
+   - Average ranges: "1.5 to 2 lb beef" → quantity: "1.75", amount: null
+   - Items with "or" → first is main ingredient, rest in alternatives array
+   - "cilantro for garnish" → quantity: "1", unit: "bunch", ingredient: "cilantro", additional_context: "for garnish", optional: true
+   - "1 batch pizza dough (see recipe)" → quantity: null, unit: null, ingredient: "pizza dough", additional_context: "see recipe", disqualified: true
+   - "store-bought" → goes in additional_context, ingredient name should NOT include "store-bought"
+   - Use "count" for whole items (vegetables, fruits), "pieces" for cuts of meat/fish (steaks, fillets, chops)
    
 2. IMAGE: Find the main recipe image URL (usually the first large image, thumbnail, or hero image)
    - Skip video thumbnails if present
@@ -387,7 +439,34 @@ Return JSON format:
 {{
   "status": "success",
   "title": "Recipe Title",
-  "ingredients": ["2 cups flour", "1 tsp salt"],
+  "ingredients": [
+    {{
+      "quantity": "2",
+      "unit": "cup",
+      "ingredient": "flour",
+      "amount": null,
+      "size": null,
+      "additional_context": null,
+      "alternatives": [],
+      "pantry_staple": true,
+      "optional": false,
+      "disqualified": false,
+      "original": "2 cups flour"
+    }},
+    {{
+      "quantity": "1",
+      "unit": "tsp",
+      "ingredient": "salt",
+      "amount": null,
+      "size": null,
+      "additional_context": null,
+      "alternatives": [],
+      "pantry_staple": true,
+      "optional": false,
+      "disqualified": false,
+      "original": "1 tsp salt"
+    }}
+  ],
   "instructions": ["Step 1 text", "Step 2 text"],
   "nutrition": ["250 calories", "30g protein", "15g carbs", "10g fat"],
   "image_url": "https://example.com/image.jpg",
