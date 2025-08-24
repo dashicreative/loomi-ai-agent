@@ -6,6 +6,7 @@ import os
 import random
 import re
 import sys
+import time
 from pathlib import Path
 from dataclasses import dataclass
 
@@ -532,7 +533,8 @@ async def rerank_with_full_recipe_data(scraped_recipes: List[Dict], query: str, 
     if not scraped_recipes:
         return []
     
-    # Prepare detailed recipe data for LLM
+    # STAGE 5A: Data Preparation
+    substage5a_start = time.time()
     detailed_recipes = []
     for i, recipe in enumerate(scraped_recipes):
         # Build comprehensive recipe summary for LLM analysis
@@ -553,7 +555,10 @@ Servings: {recipe.get('servings', 'Not specified')}
 Instructions Preview: {instructions_preview}..."""
         
         detailed_recipes.append(recipe_summary)
+    substage5a_time = time.time() - substage5a_start
     
+    # STAGE 5B: Prompt Construction  
+    substage5b_start = time.time()
     recipes_text = "\n\n".join(detailed_recipes)
     
     prompt = f"""User is searching for: "{query}"
@@ -584,7 +589,10 @@ Instructions Preview: {instructions_preview}..."""
 
     Return ONLY a comma-separated list of numbers in order of relevance (e.g., "3,1,5,2,4...")
     Best match first based on the COMPLETE recipe content."""
+    substage5b_time = time.time() - substage5b_start
 
+    # STAGE 5C: LLM API Call
+    substage5c_start = time.time()
     async with httpx.AsyncClient() as client:
         response = await client.post(
             "https://api.openai.com/v1/chat/completions",
@@ -609,8 +617,11 @@ Instructions Preview: {instructions_preview}..."""
         
         data = response.json()
         ranking_text = data['choices'][0]['message']['content'].strip()
+    substage5c_time = time.time() - substage5c_start
         
-        # Parse the ranking
+    # STAGE 5D: Response Processing
+    substage5d_start = time.time()
+    # Parse the ranking
         try:
             rankings = [int(x.strip()) - 1 for x in ranking_text.split(',')]
             reranked = []
@@ -630,6 +641,14 @@ Instructions Preview: {instructions_preview}..."""
         except (ValueError, IndexError):
             # If parsing fails, return original order
             return scraped_recipes
+        finally:
+            substage5d_time = time.time() - substage5d_start
+            
+            # Print Stage 5 sub-timings
+            print(f"   🔍 Stage 5A (Data Prep): {substage5a_time:.3f}s")
+            print(f"   🔍 Stage 5B (Prompt Build): {substage5b_time:.3f}s") 
+            print(f"   🔍 Stage 5C (LLM API Call): {substage5c_time:.3f}s")
+            print(f"   🔍 Stage 5D (Response Parse): {substage5d_time:.3f}s")
 
 
 
@@ -655,13 +674,18 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     Returns:
         Dictionary with structured recipe data ready for agent processing
     """
-    # Step 1: Search for recipes using SerpAPI (gets up to 30 URLs after blacklist filtering)
+    # PERFORMANCE TIMING: Start total timer
+    total_start = time.time()
+    
+    # STAGE 1: Search for recipes using SerpAPI
+    stage1_start = time.time()
     search_results = await search_recipes_serpapi(ctx, query)
+    stage1_time = time.time() - stage1_start
     
     # Clean stage summary with priority sites count
     results = search_results.get('results', [])
     priority_count = sum(1 for result in results if any(priority_site in result.get('url', '').lower() for priority_site in PRIORITY_SITES))
-    print(f"\n📊 Stage 1: Web Search - Found {len(results)} URLs ({priority_count} from priority sites)")
+    print(f"\n📊 Stage 1: Web Search - Found {len(results)} URLs ({priority_count} from priority sites) - {stage1_time:.2f}s")
     
     if not search_results.get("results"):
         return {
@@ -671,15 +695,16 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
             "error": "No recipes found for your search"
         }
     
-    # Step 2: Smart URL Expansion (process list pages → extract individual recipe URLs)
-    # This is where the magic happens - converts list pages into individual recipe URLs
+    # STAGE 2: Smart URL Expansion (process list pages → extract individual recipe URLs)
+    stage2_start = time.time()
     expanded_results, fp1_failures = await expand_urls_with_lists(
         search_results["results"], 
         openai_key=ctx.deps.openai_key,
         max_total_urls=60
     )
+    stage2_time = time.time() - stage2_start
     
-    print(f"📊 Stage 2: URL Expansion - {len(search_results.get('results', []))} → {len(expanded_results)} URLs")
+    print(f"📊 Stage 2: URL Expansion - {len(search_results.get('results', []))} → {len(expanded_results)} URLs - {stage2_time:.2f}s")
     
     if not expanded_results:
         return {
@@ -689,7 +714,8 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
             "error": "No valid recipes found after processing search results"
         }
     
-    # STAGE 1: Initial ranking by priority sites (quality over relevance)
+    # STAGE 3: Initial ranking by priority sites (quality over relevance)
+    stage3_start = time.time()
     priority_urls = []
     non_priority_urls = []
     
@@ -712,15 +738,15 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     
     # Combine: priority sites first (in PRIORITY_SITES order), then non-priority sites
     stage1_ranked_results = priority_urls + non_priority_urls
+    stage3_time = time.time() - stage3_start
     
-    print(f"📊 Stage 3: Initial Ranking - Selected top {min(15, len(stage1_ranked_results))} URLs for scraping")
+    print(f"📊 Stage 3: Initial Ranking - Selected top {min(15, len(stage1_ranked_results))} URLs for scraping - {stage3_time:.2f}s")
     
-    # Step 4: Parse ALL 30 URLs for Stage 2 ranking (LLM needs ingredient data)
-    # Process all Stage 1 ranked results to give LLM full ingredient information
+    # STAGE 4: Parse recipes for full data extraction
+    stage4_start = time.time()
     candidates_to_parse = stage1_ranked_results[:15]  # Parse top 15 for Stage 2 ranking
     
-    
-    # Step 5: Parse all candidates
+    # Build extraction tasks
     extraction_tasks = []
     successful_parses = []
     failed_parses = []
@@ -759,15 +785,17 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
             recipe["structured_nutrition"] = parse_nutrition_list(raw_nutrition)
         
         extracted_recipes = successful_parses
+    stage4_time = time.time() - stage4_start
     
-    print(f"📊 Stage 4: Recipe Scraping - Successfully parsed {len(extracted_recipes)} recipes")
+    print(f"📊 Stage 4: Recipe Scraping - Successfully parsed {len(extracted_recipes)} recipes - {stage4_time:.2f}s")
     
     # Print failed URLs
     if failed_parses:
         failed_urls = [fp.get("result", {}).get("url", "") for fp in failed_parses]
         print(f"❌ Failed to parse: {', '.join(failed_urls)}")
     
-    # STAGE 2: Deep content ranking using full recipe data
+    # STAGE 5: Deep content ranking using full recipe data
+    stage5_start = time.time()
     if len(extracted_recipes) > 1:  # Only re-rank if we have multiple recipes
         final_ranked_recipes = await rerank_with_full_recipe_data(
             extracted_recipes,
@@ -776,8 +804,9 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
         )
     else:
         final_ranked_recipes = extracted_recipes
+    stage5_time = time.time() - stage5_start
     
-    print(f"📊 Stage 5: Final Ranking - Returning top {min(max_recipes, len(final_ranked_recipes))} recipes\n")
+    print(f"📊 Stage 5: Final Ranking - Returning top {min(max_recipes, len(final_ranked_recipes))} recipes - {stage5_time:.2f}s\n")
     
     # Step 6: Format final results for agent  
     formatted_recipes = []
@@ -818,6 +847,16 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
             for fp in all_failures
         ]
     }
+    
+    # PERFORMANCE SUMMARY
+    total_time = time.time() - total_start
+    print(f"\n⏱️  PERFORMANCE SUMMARY:")
+    print(f"   Total Time: {total_time:.2f}s")
+    print(f"   Stage 1 (Web Search): {stage1_time:.2f}s ({(stage1_time/total_time)*100:.1f}%)")
+    print(f"   Stage 2 (URL Expansion): {stage2_time:.2f}s ({(stage2_time/total_time)*100:.1f}%)")
+    print(f"   Stage 3 (Initial Ranking): {stage3_time:.2f}s ({(stage3_time/total_time)*100:.1f}%)")
+    print(f"   Stage 4 (Recipe Scraping): {stage4_time:.2f}s ({(stage4_time/total_time)*100:.1f}%)")
+    print(f"   Stage 5 (Final Ranking): {stage5_time:.2f}s ({(stage5_time/total_time)*100:.1f}%)")
     
     return {
         "results": formatted_recipes,
