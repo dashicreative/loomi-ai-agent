@@ -2,7 +2,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models import KnownModelName
 from pathlib import Path
 from Structured_Output import AgentOutput
-from Tools import search_and_extract_recipes
+from Tools import web_search_tool, process_recipe_batch_tool
 from Dependencies import RecipeDeps
 import os
 import time
@@ -39,7 +39,7 @@ recipe_discovery_agent = Agent(
     model,
     system_prompt=load_system_prompt("System_Prompt.txt"),
     # Removed output_type=AgentOutput for performance - agent only returns response text
-    tools=[search_and_extract_recipes],
+    tools=[web_search_tool, process_recipe_batch_tool],
     deps_type=RecipeDeps
 )
 
@@ -92,17 +92,47 @@ def main():
             # Agent now returns plain text response only (no expensive JSON generation)
             agent_response = result.data if hasattr(result, 'data') else str(result)
             
-            # Get structured data directly from tool results (no restructuring)
-            tool_data = None
+            # Get structured data from all process_recipe_batch_tool calls
+            all_recipes = []
+            search_query = user_input
+            total_results = 0
+            failed_reports = []
+            
             for message in result.all_messages():
                 if hasattr(message, 'content') and isinstance(message.content, list):
                     for item in message.content:
                         if hasattr(item, 'output') and isinstance(item.output, dict):
-                            if 'full_recipes' in item.output:
-                                tool_data = item.output
-                                break
-                    if tool_data:
-                        break
+                            output = item.output
+                            # Collect data from process_recipe_batch_tool calls
+                            if 'full_recipes' in output:
+                                batch_recipes = output.get('full_recipes', [])
+                                all_recipes.extend(batch_recipes)
+                                search_query = output.get('searchQuery', search_query)
+                                if output.get('_failed_parse_report'):
+                                    failed_reports.append(output['_failed_parse_report'])
+            
+            # Aggregate all batch results
+            total_results = len(all_recipes)
+            
+            # Create aggregated tool data for display
+            tool_data = None
+            if all_recipes:
+                # Combine failed reports from all batches
+                combined_failed_report = {
+                    "total_failed": sum(report.get("total_failed", 0) for report in failed_reports),
+                    "content_scraping_failures": sum(report.get("content_scraping_failures", 0) for report in failed_reports),
+                    "recipe_parsing_failures": sum(report.get("recipe_parsing_failures", 0) for report in failed_reports),
+                    "failed_urls": []
+                }
+                for report in failed_reports:
+                    combined_failed_report["failed_urls"].extend(report.get("failed_urls", []))
+                
+                tool_data = {
+                    'full_recipes': all_recipes,
+                    'totalResults': total_results,
+                    'searchQuery': search_query,
+                    '_failed_parse_report': combined_failed_report
+                }
             
             # Display agent's conversational response
             print(f"\n{agent_response}")
