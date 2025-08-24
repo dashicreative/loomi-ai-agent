@@ -536,13 +536,8 @@ async def rerank_with_full_recipe_data(scraped_recipes: List[Dict], query: str, 
     for i, recipe in enumerate(scraped_recipes):
         # Build comprehensive recipe summary for LLM analysis
         ingredients_list = recipe.get("ingredients", [])[:10]  # First 10 ingredients
-        # Handle both dict format (new) and string format (old)
-        if ingredients_list and isinstance(ingredients_list[0], dict):
-            # New structured format - extract the ingredient names
-            ingredients_text = ", ".join([ing.get("ingredient", "") for ing in ingredients_list if ing.get("ingredient")])
-        else:
-            # Old string format
-            ingredients_text = ", ".join(ingredients_list)
+        # Extract ingredient names from structured format
+        ingredients_text = ", ".join([ing.get("ingredient", "") for ing in ingredients_list if ing.get("ingredient")])
         instructions_preview = " ".join(recipe.get("instructions", [])[:2])[:200]  # First 2 steps, truncated
         
         recipe_summary = f"""{i+1}. {recipe.get('title', 'Untitled Recipe')}
