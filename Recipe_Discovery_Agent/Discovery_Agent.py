@@ -38,7 +38,7 @@ deps = RecipeDeps(
 recipe_discovery_agent = Agent(
     model,
     system_prompt=load_system_prompt("System_Prompt.txt"),
-    output_type=AgentOutput,
+    # Removed output_type=AgentOutput for performance - agent only returns response text
     tools=[search_and_extract_recipes],
     deps_type=RecipeDeps
 )
@@ -89,19 +89,37 @@ def main():
             agent_time = time.time() - agent_start
             print(f"\n⏱️  AGENT RESPONSE GENERATION: {agent_time:.2f}s")
             
-            # Display the response
-            print(f"\n{result.output['response']}")
-            print(f"\nFound {result.output['totalResults']} recipes for: {result.output['searchQuery']}")
+            # Agent now returns plain text response only (no expensive JSON generation)
+            agent_response = result.data
             
-            # Display structured data for iOS app verification
-            if result.output.get('full_recipes'):
-                print("\n" + "="*80)
-                print("📱 STRUCTURED DATA FOR iOS APP:")
-                print("="*80)
-                import json
-                for i, recipe in enumerate(result.output['full_recipes'], 1):
-                    print(f"\n🍳 Recipe {i}:")
-                    print(json.dumps(recipe, indent=2))
+            # Get structured data directly from tool results (no restructuring)
+            tool_data = None
+            for message in result.all_messages():
+                if hasattr(message, 'content') and isinstance(message.content, list):
+                    for item in message.content:
+                        if hasattr(item, 'output') and isinstance(item.output, dict):
+                            if 'full_recipes' in item.output:
+                                tool_data = item.output
+                                break
+                    if tool_data:
+                        break
+            
+            # Display agent's conversational response
+            print(f"\n{agent_response}")
+            
+            # Display structured data info
+            if tool_data:
+                print(f"\nFound {tool_data['totalResults']} recipes for: {tool_data['searchQuery']}")
+                
+                # Display structured data for iOS app verification
+                if tool_data.get('full_recipes'):
+                    print("\n" + "="*80)
+                    print("📱 STRUCTURED DATA FOR iOS APP:")
+                    print("="*80)
+                    import json
+                    for i, recipe in enumerate(tool_data['full_recipes'], 1):
+                        print(f"\n🍳 Recipe {i}:")
+                        print(json.dumps(recipe, indent=2))
                     
         except Exception as e:
             print(f"Error: {e}")
