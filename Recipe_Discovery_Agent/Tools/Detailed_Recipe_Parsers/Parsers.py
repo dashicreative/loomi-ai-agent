@@ -234,8 +234,10 @@ Return JSON format:
   "ingredients": [
     {{
       "quantity": "2",
-      "unit": "cup",
+      "unit": "cups",
       "ingredient": "flour",
+      "store_quantity": "2",
+      "store_unit": "cups",
       "amount": null,
       "size": null,
       "additional_context": null,
@@ -246,17 +248,19 @@ Return JSON format:
       "original": "2 cups flour"
     }},
     {{
-      "quantity": "1",
-      "unit": "tsp",
-      "ingredient": "salt",
-      "amount": null,
+      "quantity": "4",
+      "unit": "cloves",
+      "ingredient": "garlic",
+      "store_quantity": "1",
+      "store_unit": "count",
+      "amount": "4 cloves",
       "size": null,
-      "additional_context": null,
+      "additional_context": "minced",
       "alternatives": [],
-      "pantry_staple": true,
+      "pantry_staple": false,
       "optional": false,
       "disqualified": false,
-      "original": "1 tsp salt"
+      "original": "4 cloves garlic, minced"
     }}
   ],
   "instructions": ["Step 1 text", "Step 2 text"],
@@ -387,34 +391,43 @@ async def parse_recipe_with_hybrid_approach(url: str, openai_key: str) -> Dict:
         prompt = f"""You are extracting recipe data from a webpage. Extract the following information:
 
 REQUIRED FIELDS (must find ALL or mark as failed):
-1. INGREDIENTS: Extract as STRUCTURED objects with shopping-aware parsing.
+1. INGREDIENTS: Extract as STRUCTURED objects with TWO-STEP parsing.
    Parse each ingredient into this exact format:
    {
-     "quantity": Shopping quantity (ROUND UP whole items: "half lime"→"1", keep precise for weight/volume: "1.5 lb"→"1.5"),
-     "unit": Shopping unit ("count" for whole items, "lb"/"cup"/"tsp" for measurements),
+     "quantity": Recipe quantity exactly as written,
+     "unit": Recipe unit exactly as written, 
      "ingredient": Clean name without prep instructions,
-     "amount": Recipe amount if different from quantity ("0.5" for half lime, "4 cloves" for garlic),
+     "store_quantity": Shopping quantity (converted for practical shopping),
+     "store_unit": Shopping unit (converted for practical shopping),
+     "amount": Recipe amount if different from store quantity,
      "size": Size descriptor ("large", "small", "medium"),
      "additional_context": Prep/state ("melted", "minced", "softened", "store-bought"),
      "alternatives": Array of alternatives (split "milk or almond milk" → ["almond milk"]),
-     "pantry_staple": true for salt/pepper/oil/flour/sugar/basic spices,
+     "pantry_staple": true ONLY for salt/pepper/oil/flour/sugar/basic spices,
      "optional": true for "to taste"/garnish/serving items,
      "disqualified": true for "see recipe"/homemade/cross-references,
      "original": Original text exactly as written
    }
    
-   CRITICAL RULES:
-   - "salt and pepper to taste" → Split into 2 separate items, quantity: "1", unit: "pinch", pantry_staple: true, optional: true
-   - "X cloves garlic" → ALWAYS convert to quantity: "1", unit: "head", amount: "X cloves" (people buy heads not cloves)
-   - Nested measurements "1 (14.5 oz) can tomatoes" → quantity: "1", unit: "can", amount: "14.5 oz"
-   - "Juice from half a lime" → quantity: "1", unit: "count", amount: "0.5", additional_context: "juiced"
-   - Round UP whole items for shopping: limes/onions/peppers → nearest whole number in quantity field
-   - Average ranges: "1.5 to 2 lb beef" → quantity: "1.75", amount: null
-   - Items with "or" → first is main ingredient, rest in alternatives array
-   - "cilantro for garnish" → quantity: "1", unit: "bunch", ingredient: "cilantro", additional_context: "for garnish", optional: true
-   - "1 batch pizza dough (see recipe)" → quantity: null, unit: null, ingredient: "pizza dough", additional_context: "see recipe", disqualified: true
-   - "store-bought" → goes in additional_context, ingredient name should NOT include "store-bought"
-   - Use "count" for whole items (vegetables, fruits), "pieces" for cuts of meat/fish (steaks, fillets, chops)
+   STEP 1 - DIRECT RECIPE PARSING (quantity, unit, ingredient):
+   - Parse exactly what the recipe says: "4 cloves garlic" → quantity: "4", unit: "cloves", ingredient: "garlic"
+   - "half a lime" → quantity: "half", unit: null, ingredient: "lime" 
+   - "1 1/2 to 2 pounds beef" → quantity: "1 1/2 to 2", unit: "pounds", ingredient: "beef"
+   - "salt and pepper to taste" → Split into 2 items: ("salt", "to taste", null) and ("pepper", "to taste", null)
+   - Remove prep instructions from ingredient name: "garlic, minced" → ingredient: "garlic"
+   
+   STEP 2 - STORE CONVERSION (store_quantity, store_unit):
+   - Garlic cloves → store_quantity: "1", store_unit: "count" (buy 1 head)
+   - Half lime → store_quantity: "1", store_unit: "count" (buy 1 lime)
+   - Ranges → average: "1 1/2 to 2" → store_quantity: "1.75"
+   - Whole items → store_unit: "count" (vegetables, fruits, individual items)
+   - Weight/volume → keep precise: store_quantity: "1.5", store_unit: "lb"
+   - "to taste" items → store_quantity: "1", store_unit: "pinch"
+   
+   METADATA RULES:
+   - pantry_staple: true ONLY for salt, pepper, cooking oil, flour, sugar, dried spices/herbs
+   - optional: true for "to taste", "for garnish", "for serving"
+   - disqualified: true for "(see recipe)", "homemade", cross-references → store_quantity: null, store_unit: null
    
 2. IMAGE: Find the main recipe image URL (usually the first large image, thumbnail, or hero image)
    - Skip video thumbnails if present
@@ -442,8 +455,10 @@ Return JSON format:
   "ingredients": [
     {{
       "quantity": "2",
-      "unit": "cup",
+      "unit": "cups",
       "ingredient": "flour",
+      "store_quantity": "2",
+      "store_unit": "cups",
       "amount": null,
       "size": null,
       "additional_context": null,
@@ -454,17 +469,19 @@ Return JSON format:
       "original": "2 cups flour"
     }},
     {{
-      "quantity": "1",
-      "unit": "tsp",
-      "ingredient": "salt",
-      "amount": null,
+      "quantity": "4",
+      "unit": "cloves",
+      "ingredient": "garlic",
+      "store_quantity": "1",
+      "store_unit": "count",
+      "amount": "4 cloves",
       "size": null,
-      "additional_context": null,
+      "additional_context": "minced",
       "alternatives": [],
-      "pantry_staple": true,
+      "pantry_staple": false,
       "optional": false,
       "disqualified": false,
-      "original": "1 tsp salt"
+      "original": "4 cloves garlic, minced"
     }}
   ],
   "instructions": ["Step 1 text", "Step 2 text"],

@@ -32,6 +32,8 @@ def validate_ingredient(ingredient: Dict) -> Dict:
     ingredient.setdefault('quantity', None)
     ingredient.setdefault('unit', None)
     ingredient.setdefault('ingredient', '')
+    ingredient.setdefault('store_quantity', None)
+    ingredient.setdefault('store_unit', None)
     ingredient.setdefault('amount', None)
     ingredient.setdefault('size', None)
     ingredient.setdefault('additional_context', None)
@@ -41,10 +43,10 @@ def validate_ingredient(ingredient: Dict) -> Dict:
     ingredient.setdefault('disqualified', False)
     ingredient.setdefault('original', '')
     
-    # Add cart_friendly logic - false if any required field is null or flagged
+    # Add cart_friendly logic - use store fields for cart eligibility
     ingredient['cart_friendly'] = bool(
-        ingredient.get('quantity') and 
-        ingredient.get('unit') and 
+        ingredient.get('store_quantity') and 
+        ingredient.get('store_unit') and 
         ingredient.get('ingredient') and
         not ingredient.get('disqualified', False) and
         not ingredient.get('optional', False)
