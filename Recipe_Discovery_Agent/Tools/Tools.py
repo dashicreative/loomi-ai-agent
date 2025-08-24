@@ -864,8 +864,21 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     print(f"   Stage 5 (Final Ranking): {stage5_time:.2f}s ({(stage5_time/total_time)*100:.1f}%)")
     print(f"   Stage 6 (Final Formatting): {stage6_time:.2f}s ({(stage6_time/total_time)*100:.1f}%)")
     
+    # Create minimal context for agent (reduce 101s response time)
+    minimal_recipes = []
+    for recipe in formatted_recipes:
+        minimal_recipes.append({
+            "id": recipe["id"],
+            "title": recipe["title"],
+            "servings": recipe["servings"],
+            "readyInMinutes": recipe["readyInMinutes"],
+            "ingredients": [ing["ingredient"] for ing in recipe["ingredients"][:8]],  # Just ingredient names, first 8
+            "nutrition": recipe.get("nutrition", [])  # Small nutrition data
+        })
+    
     return {
-        "results": formatted_recipes,
+        "results": minimal_recipes,  # Minimal context for agent
+        "full_recipes": formatted_recipes,  # Full data for iOS (passed through unchanged)
         "totalResults": len(formatted_recipes),
         "searchQuery": query,
         "_failed_parse_report": failed_parse_report  # For business analytics

@@ -94,12 +94,12 @@ def main():
             print(f"\nFound {result.output['totalResults']} recipes for: {result.output['searchQuery']}")
             
             # Display structured data for iOS app verification
-            if result.output['recipes']:
+            if result.output.get('full_recipes'):
                 print("\n" + "="*80)
                 print("📱 STRUCTURED DATA FOR iOS APP:")
                 print("="*80)
                 import json
-                for i, recipe in enumerate(result.output['recipes'], 1):
+                for i, recipe in enumerate(result.output['full_recipes'], 1):
                     print(f"\n🍳 Recipe {i}:")
                     print(json.dumps(recipe, indent=2))
                     
