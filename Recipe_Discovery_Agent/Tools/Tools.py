@@ -15,6 +15,7 @@ from Dependencies import RecipeDeps
 # Import the parser and ingredient parsing
 from .Detailed_Recipe_Parsers.Parsers import parse_recipe
 from .Detailed_Recipe_Parsers.ingredient_parser import parse_ingredients_list
+from .Detailed_Recipe_Parsers.nutrition_parser import parse_nutrition_list
 from .Detailed_Recipe_Parsers.list_parser import ListParser
 from .Detailed_Recipe_Parsers.url_classifier import classify_urls_batch
 from bs4 import BeautifulSoup
@@ -536,12 +537,17 @@ async def rerank_with_full_recipe_data(scraped_recipes: List[Dict], query: str, 
     for i, recipe in enumerate(scraped_recipes):
         # Build comprehensive recipe summary for LLM analysis
         ingredients_list = recipe.get("ingredients", [])[:10]  # First 10 ingredients
-        # Extract ingredient names from structured format
-        ingredients_text = ", ".join([ing.get("ingredient", "") for ing in ingredients_list if ing.get("ingredient")])
-        instructions_preview = " ".join(recipe.get("instructions", [])[:2])[:200]  # First 2 steps, truncated
+        # Extract full ingredient amounts from structured format
+        ingredients_text = ", ".join([f"{ing.get('quantity', '')} {ing.get('unit', '')} {ing.get('ingredient', '')}" for ing in ingredients_list if ing.get('ingredient')])
+        instructions_preview = " ".join(recipe.get("instructions", [])[:2])[:1000]  # First 2 steps, expanded context
+        
+        # Build nutrition text from structured nutrition data
+        structured_nutrition = recipe.get("structured_nutrition", [])
+        nutrition_text = ", ".join([f"{n.get('amount', '')} {n.get('unit', '')} {n.get('name', '')}" for n in structured_nutrition if n.get('name')])
         
         recipe_summary = f"""{i+1}. {recipe.get('title', 'Untitled Recipe')}
 Ingredients: {ingredients_text}
+Nutrition: {nutrition_text}
 Cook Time: {recipe.get('cook_time', 'Not specified')}
 Servings: {recipe.get('servings', 'Not specified')}
 Instructions Preview: {instructions_preview}..."""
@@ -568,7 +574,8 @@ Instructions Preview: {instructions_preview}..."""
        - Only rank actual cooking recipes that prepare the main food item
 
     Additional factors:
-    - Dietary requirements (high protein, low carb, etc.)
+    - NUTRITION REQUIREMENTS: ONLY use the provided nutrition values (calories, protein, carbs, fat) - DO NOT estimate or guess nutrition from ingredients
+    - Dietary requirements (high protein, low carb, etc.) - use exact nutrition numbers provided
     - Time constraints (quick, under 30 minutes, etc.)
     - Meal type appropriateness
 
@@ -746,6 +753,11 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
         
         # No more quality checking - failed parses are simply tracked for reporting
         
+        # Parse nutrition data immediately after successful extraction
+        for recipe in successful_parses:
+            raw_nutrition = recipe.get("nutrition", [])
+            recipe["structured_nutrition"] = parse_nutrition_list(raw_nutrition)
+        
         extracted_recipes = successful_parses
     
     print(f"📊 Stage 4: Recipe Scraping - Successfully parsed {len(extracted_recipes)} recipes")
@@ -774,6 +786,10 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
         raw_ingredients = recipe.get("ingredients", [])
         structured_ingredients = parse_ingredients_list(raw_ingredients)
         
+        # Parse raw nutrition strings into structured format
+        raw_nutrition = recipe.get("nutrition", [])
+        structured_nutrition = parse_nutrition_list(raw_nutrition)
+        
         formatted_recipes.append({
             "id": len(formatted_recipes) + 1,  # Simple ID generation
             "title": recipe.get("title", recipe.get("search_title", "")),
@@ -782,6 +798,7 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
             "servings": recipe.get("servings", ""),
             "readyInMinutes": recipe.get("cook_time", ""),
             "ingredients": structured_ingredients,  # Now structured!
+            "nutrition": structured_nutrition,  # Now structured!
             # Instructions are available for agent analysis but won't be displayed
             "_instructions_for_analysis": recipe.get("instructions", [])
         })

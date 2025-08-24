@@ -204,9 +204,34 @@ async def universal_recipe_parser(url: str, openai_key: str) -> Dict:
         prompt = f"""You are extracting recipe data from a webpage for an iOS app. Extract the following information:
 
 REQUIRED FIELDS (must find ALL or mark as failed):
-1. INGREDIENTS: Extract the COMPLETE ingredient text including amounts, units, and names.
-   - PRESERVE EXACT TEXT: "2 cups all-purpose flour" NOT just "flour"
-   - Include ALL ingredients as a list
+1. INGREDIENTS: Extract as STRUCTURED objects with shopping-aware parsing.
+   
+   CRITICAL: Parse each ingredient using STORE-FOCUSED logic FIRST:
+   
+   STORE QUANTITY/UNIT CONVERSION RULES (HIGHEST PRIORITY):
+   - Fresh herbs (parsley, cilantro, basil, etc.) → store_quantity: "1", store_unit: "count" (sold as bunches)
+   - Bottled liquids (vinegar, oils, extracts, etc.) → store_quantity: "1", store_unit: "count" (sold as bottles)
+   - "X cloves garlic" → store_quantity: "1", store_unit: "count", amount: "X cloves" (people buy heads not cloves)
+   - "Juice from half a lime" → store_quantity: "1", store_unit: "count", amount: "0.5" (round up whole items)
+   - Maintain weight units for common grocery items: "1 pound skirt steak" → store_quantity: "1", store_unit: "lb"
+   - Use "count" only for vague quantities: "3-4 pieces flank steak" → store_quantity: "4", store_unit: "count"
+   - Ranges "1.5 to 2 lb beef" → store_quantity: "1.75", store_unit: "lb" (average ranges)
+   - Nested measurements "1 (14.5 oz) can tomatoes" → store_quantity: "1", store_unit: "count", amount: "14.5 oz"
+   - Packaged items (flour, sugar) → store_quantity: "1", store_unit: "count" (sold in bags)
+   - "salt and pepper to taste" → Split into 2 items, store_quantity: "1", store_unit: "count", pantry_staple: true, optional: true
+   
+   OTHER FIELD PARSING (ALONGSIDE STORE LOGIC):
+   - alternatives: Split "milk or almond milk" → alternatives: ["almond milk"]
+   - additional_context: Prep state ("melted", "minced", "softened", "store-bought", "for garnish")
+   - optional: true for "to taste"/garnish/serving items
+   - disqualified: true for "see recipe"/homemade/cross-references
+   - pantry_staple: true for salt/pepper/oil/flour/sugar/basic spices
+   - original: Original text exactly as written
+   
+   BASIC QUANTITY/UNIT (SIMPLE EXTRACTION - DO LAST):
+   - quantity: Recipe quantity as written (copy from original)
+   - unit: Recipe unit as written (copy from original)
+   - ingredient: Clean name without prep instructions
    
 2. IMAGE: Find the main recipe image URL (usually the first large image, thumbnail, or hero image)
    - Skip video thumbnails if present
@@ -236,8 +261,8 @@ Return JSON format:
       "quantity": "2",
       "unit": "cups",
       "ingredient": "flour",
-      "store_quantity": "2",
-      "store_unit": "cups",
+      "store_quantity": "1",
+      "store_unit": "count",
       "amount": null,
       "size": null,
       "additional_context": null,
@@ -263,9 +288,9 @@ Return JSON format:
       "original": "4 cloves garlic, minced"
     }},
     {{
-      "quantity": "1/4",
-      "unit": "cup",
-      "ingredient": "vinegar",
+      "quantity": "2",
+      "unit": "tablespoons",
+      "ingredient": "red wine vinegar",
       "store_quantity": "1",
       "store_unit": "count",
       "amount": null,
@@ -275,7 +300,7 @@ Return JSON format:
       "pantry_staple": false,
       "optional": false,
       "disqualified": false,
-      "original": "1/4 cup white wine vinegar"
+      "original": "2 tablespoons red wine vinegar"
     }}
   ],
   "instructions": ["Step 1 text", "Step 2 text"],
@@ -437,7 +462,7 @@ REQUIRED FIELDS (must find ALL or mark as failed):
    - Small liquid amounts → store_quantity: "1", store_unit: "count" (buy 1 bottle/container)
    - Examples: "1/4 cup vinegar" → store_quantity: "1", store_unit: "count" (buy 1 bottle)
    - Examples: "2 tbsp Worcestershire" → store_quantity: "1", store_unit: "count" (buy 1 bottle)
-   - Large amounts → keep precise: "2 cups flour" → store_quantity: "2", store_unit: "cups"
+   - Packaged items → store_quantity: "1", store_unit: "count" (flour/sugar sold in bags, not by cup)
    - Weight/volume for bulk items → keep precise: "1.5 lb beef" → store_quantity: "1.5", store_unit: "lb"
    - Whole items → store_unit: "count", ALWAYS round UP: "half onion" → store_quantity: "1", store_unit: "count"
    - "to taste" items → store_quantity: "1", store_unit: "pinch"
