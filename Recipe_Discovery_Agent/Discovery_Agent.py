@@ -5,6 +5,7 @@ from Structured_Output import AgentOutput
 from Tools import search_and_extract_recipes
 from Dependencies import RecipeDeps
 import os
+import time
 from dotenv import load_dotenv
 import logfire
 
@@ -77,10 +78,16 @@ def main():
             break
         
         try:
+            print(f"\n⏱️  AGENT PROCESSING STARTED...")
+            agent_start = time.time()
+            
             result = recipe_discovery_agent.run_sync(
                 user_input,
                 deps=deps
             )
+            
+            agent_time = time.time() - agent_start
+            print(f"\n⏱️  AGENT RESPONSE GENERATION: {agent_time:.2f}s")
             
             # Display the response
             print(f"\n{result.output['response']}")

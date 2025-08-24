@@ -808,7 +808,8 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     
     print(f"📊 Stage 5: Final Ranking - Returning top {min(max_recipes, len(final_ranked_recipes))} recipes - {stage5_time:.2f}s\n")
     
-    # Step 6: Format final results for agent  
+    # STAGE 6: Format final results for agent
+    stage6_start = time.time()
     formatted_recipes = []
     for recipe in final_ranked_recipes[:max_recipes]:  # Use final ranked results
         # Parse raw ingredient strings into structured format
@@ -847,6 +848,10 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
             for fp in all_failures
         ]
     }
+    stage6_time = time.time() - stage6_start
+    
+    print(f"📊 Stage 6: Final Formatting - Structured {len(formatted_recipes)} recipes for iOS - {stage6_time:.2f}s")
+    print(f"🎯 RETURNING TO AGENT - Agent will now generate response...")
     
     # PERFORMANCE SUMMARY
     total_time = time.time() - total_start
@@ -857,6 +862,7 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     print(f"   Stage 3 (Initial Ranking): {stage3_time:.2f}s ({(stage3_time/total_time)*100:.1f}%)")
     print(f"   Stage 4 (Recipe Scraping): {stage4_time:.2f}s ({(stage4_time/total_time)*100:.1f}%)")
     print(f"   Stage 5 (Final Ranking): {stage5_time:.2f}s ({(stage5_time/total_time)*100:.1f}%)")
+    print(f"   Stage 6 (Final Formatting): {stage6_time:.2f}s ({(stage6_time/total_time)*100:.1f}%)")
     
     return {
         "results": formatted_recipes,
