@@ -261,6 +261,21 @@ Return JSON format:
       "optional": false,
       "disqualified": false,
       "original": "4 cloves garlic, minced"
+    }},
+    {{
+      "quantity": "1/4",
+      "unit": "cup",
+      "ingredient": "vinegar",
+      "store_quantity": "1",
+      "store_unit": "count",
+      "amount": null,
+      "size": null,
+      "additional_context": null,
+      "alternatives": [],
+      "pantry_staple": false,
+      "optional": false,
+      "disqualified": false,
+      "original": "1/4 cup white wine vinegar"
     }}
   ],
   "instructions": ["Step 1 text", "Step 2 text"],
@@ -418,11 +433,16 @@ REQUIRED FIELDS (must find ALL or mark as failed):
    
    STEP 2 - STORE CONVERSION (store_quantity, store_unit):
    - Garlic cloves → store_quantity: "1", store_unit: "count" (buy 1 head)
-   - Half lime → store_quantity: "1", store_unit: "count" (buy 1 lime)
-   - Ranges → average: "1 1/2 to 2" → store_quantity: "1.75"
-   - Whole items → store_unit: "count" (vegetables, fruits, individual items)
-   - Weight/volume → keep precise: store_quantity: "1.5", store_unit: "lb"
+   - Half lime → store_quantity: "1", store_unit: "count" (buy 1 lime - ALWAYS round UP)
+   - Small liquid amounts → store_quantity: "1", store_unit: "count" (buy 1 bottle/container)
+   - Examples: "1/4 cup vinegar" → store_quantity: "1", store_unit: "count" (buy 1 bottle)
+   - Examples: "2 tbsp Worcestershire" → store_quantity: "1", store_unit: "count" (buy 1 bottle)
+   - Large amounts → keep precise: "2 cups flour" → store_quantity: "2", store_unit: "cups"
+   - Weight/volume for bulk items → keep precise: "1.5 lb beef" → store_quantity: "1.5", store_unit: "lb"
+   - Whole items → store_unit: "count", ALWAYS round UP: "half onion" → store_quantity: "1", store_unit: "count"
    - "to taste" items → store_quantity: "1", store_unit: "pinch"
+   
+   CRITICAL ROUNDING RULE: If recipe needs fraction of a whole item or small amount of liquid/seasoning, ALWAYS round store_quantity UP to "1" with store_unit: "count"
    
    METADATA RULES:
    - pantry_staple: true ONLY for salt, pepper, cooking oil, flour, sugar, dried spices/herbs
@@ -482,6 +502,21 @@ Return JSON format:
       "optional": false,
       "disqualified": false,
       "original": "4 cloves garlic, minced"
+    }},
+    {{
+      "quantity": "1/4",
+      "unit": "cup",
+      "ingredient": "vinegar",
+      "store_quantity": "1",
+      "store_unit": "count",
+      "amount": null,
+      "size": null,
+      "additional_context": null,
+      "alternatives": [],
+      "pantry_staple": false,
+      "optional": false,
+      "disqualified": false,
+      "original": "1/4 cup white wine vinegar"
     }}
   ],
   "instructions": ["Step 1 text", "Step 2 text"],
