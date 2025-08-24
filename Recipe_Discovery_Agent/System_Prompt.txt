@@ -63,7 +63,11 @@ Build your search query using web search operators:
    - This returns: `{ranked_urls: [...all URLs...], total_count: number}`
 
 2. **SECOND: Process ALL URLs with internal batching**
-   - Call: `process_recipe_batch_tool(urls=all_ranked_urls, user_query="original query", needed_count=5)`
+   - Extract the ranked_urls list from web_search_tool result
+   - Call: `process_recipe_batch_tool` with parameters:
+     - urls: The ranked_urls list from step 1
+     - user_query: The original search query
+     - needed_count: 5 (default)
    - The tool handles internal batching automatically (10 URLs at a time)
    - The tool stops when it finds 5 recipes OR runs out of URLs
    - **BATCHING IS INVISIBLE**: Tool manages all internal batching logic
@@ -78,10 +82,13 @@ Build your search query using web search operators:
 **Simple flow (never expose to user):**
 ```
 User: "steak recipes"
-1. web_search_tool() → Gets 35 URLs
-2. process_recipe_batch_tool(all_35_urls) → Tool processes in batches internally, returns 5 recipes
-3. Respond conversationally to user
+1. result = web_search_tool(query="steak recipes")
+2. urls = result["ranked_urls"]  # EXTRACT the URLs from the result
+3. process_recipe_batch_tool(urls=urls, user_query="steak recipes", needed_count=5)
+4. Respond conversationally to user
 ```
+
+**CRITICAL: You MUST extract the "ranked_urls" field from web_search_tool's result and pass it as the "urls" parameter to process_recipe_batch_tool**
 
 ### STEP 5: SELECTION CRITERIA
 When the tools analyze results, they consider modifiers:
