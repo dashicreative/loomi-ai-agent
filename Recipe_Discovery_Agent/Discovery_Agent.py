@@ -90,7 +90,7 @@ def main():
             print(f"\n⏱️  AGENT RESPONSE GENERATION: {agent_time:.2f}s")
             
             # Agent now returns plain text response only (no expensive JSON generation)
-            agent_response = result.data
+            agent_response = result.data if hasattr(result, 'data') else str(result)
             
             # Get structured data directly from tool results (no restructuring)
             tool_data = None
