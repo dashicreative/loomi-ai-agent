@@ -622,33 +622,33 @@ Instructions Preview: {instructions_preview}..."""
     # STAGE 5D: Response Processing
     substage5d_start = time.time()
     # Parse the ranking
-        try:
-            rankings = [int(x.strip()) - 1 for x in ranking_text.split(',')]
-            reranked = []
-            
-            # Add recipes in the ranked order
-            for idx in rankings:
-                if 0 <= idx < len(scraped_recipes) and scraped_recipes[idx] not in reranked:
-                    reranked.append(scraped_recipes[idx])
-            
-            # Add any missing recipes
-            for recipe in scraped_recipes:
-                if recipe not in reranked:
-                    reranked.append(recipe)
-            
-            return reranked
-            
-        except (ValueError, IndexError):
-            # If parsing fails, return original order
-            return scraped_recipes
-        finally:
-            substage5d_time = time.time() - substage5d_start
-            
-            # Print Stage 5 sub-timings
-            print(f"   🔍 Stage 5A (Data Prep): {substage5a_time:.3f}s")
-            print(f"   🔍 Stage 5B (Prompt Build): {substage5b_time:.3f}s") 
-            print(f"   🔍 Stage 5C (LLM API Call): {substage5c_time:.3f}s")
-            print(f"   🔍 Stage 5D (Response Parse): {substage5d_time:.3f}s")
+    try:
+        rankings = [int(x.strip()) - 1 for x in ranking_text.split(',')]
+        reranked = []
+        
+        # Add recipes in the ranked order
+        for idx in rankings:
+            if 0 <= idx < len(scraped_recipes) and scraped_recipes[idx] not in reranked:
+                reranked.append(scraped_recipes[idx])
+        
+        # Add any missing recipes
+        for recipe in scraped_recipes:
+            if recipe not in reranked:
+                reranked.append(recipe)
+        
+        return reranked
+        
+    except (ValueError, IndexError):
+        # If parsing fails, return original order
+        return scraped_recipes
+    finally:
+        substage5d_time = time.time() - substage5d_start
+        
+        # Print Stage 5 sub-timings
+        print(f"   🔍 Stage 5A (Data Prep): {substage5a_time:.3f}s")
+        print(f"   🔍 Stage 5B (Prompt Build): {substage5b_time:.3f}s") 
+        print(f"   🔍 Stage 5C (LLM API Call): {substage5c_time:.3f}s")
+        print(f"   🔍 Stage 5D (Response Parse): {substage5d_time:.3f}s")
 
 
 
