@@ -47,7 +47,7 @@ async def check_robots_txt(url: str, user_agent: str = "RecipeDiscoveryBot") -> 
         try:
             # Use httpx to fetch robots.txt
             async with httpx.AsyncClient() as client:
-                response = await client.get(f"{base_url}/robots.txt", timeout=5.0)
+                response = await client.get(f"{base_url}/robots.txt", timeout=15.0)
                 if response.status_code == 200:
                     rp.parse(response.text.splitlines())
                 else:

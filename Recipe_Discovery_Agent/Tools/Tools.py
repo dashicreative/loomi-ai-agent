@@ -139,7 +139,20 @@ async def process_recipe_batch_tool(ctx: RunContext[RecipeDeps], urls: List[Dict
     Returns:
         Dict with structured recipe data ready for agent processing
     """
-    print("DEBUG: process_recipe_batch_tool CALLED!")  # Debug after docstring
+    try:
+        # DEBUG: Move inside try to catch parameter issues
+        print(f"DEBUG: process_recipe_batch_tool CALLED with urls type={type(urls)}, len={len(urls) if urls else 'None'}")
+        
+        # Extra debug for the duplicate call issue
+        if urls and len(urls) <= 5:
+            print(f"⚠️  WARNING: Only {len(urls)} URLs passed - agent might be limiting URLs incorrectly!")
+            print(f"   First URL: {urls[0] if urls else 'None'}")
+    except Exception as e:
+        print(f"❌ ERROR in process_recipe_batch_tool parameter validation: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+    
     try:
         print(f"\n🔄 PROCESS BATCH TOOL CALLED:")
         print(f"   - URLs received: {len(urls) if urls else 'None'}")
@@ -189,7 +202,7 @@ async def process_recipe_batch_tool(ctx: RunContext[RecipeDeps], urls: List[Dict
             
             # Check if this URL is from a priority site
             for i, priority_site in enumerate(PRIORITY_SITES):
-                if f"//{priority_site}" in url or f".{priority_site}" in url:
+                if priority_site in url:
                     url_dict['_priority_index'] = i
                     priority_ranked_urls.append(url_dict)
                     found_priority = True
@@ -206,7 +219,8 @@ async def process_recipe_batch_tool(ctx: RunContext[RecipeDeps], urls: List[Dict
         
         print(f"   ✅ Ranked: {len(priority_ranked_urls)} priority sites, {len(non_priority_urls)} others")
         if priority_ranked_urls:
-            print(f"   📍 Top priority sites: {[u.get('url', '').split('/')[2] for u in priority_ranked_urls[:5]]}")
+            unique_sites = list(dict.fromkeys([u.get('url', '').split('/')[2] for u in priority_ranked_urls]))
+            print(f"   📍 Priority sites found: {unique_sites[:5]}")
         
         # We'll classify URLs batch by batch, not all at once
         print(f"📊 Ready to process {len(urls)} URLs in batches")
@@ -487,6 +501,16 @@ async def process_recipe_batch_tool(ctx: RunContext[RecipeDeps], urls: List[Dict
             "ingredients": [ing["ingredient"] for ing in recipe["ingredients"][:8]],
             "nutrition": recipe.get("nutrition", [])
         })
+    
+    # TODO: DELETE LATER - Development debugging to see final recipe selections
+    print("\n" + "="*60)
+    print("🍳 FINAL 5 RECIPES SELECTED:")
+    print("="*60)
+    for i, recipe in enumerate(formatted_recipes[:5], 1):
+        print(f"{i}. {recipe.get('title', 'Unknown Title')}")
+        print(f"   URL: {recipe.get('sourceUrl', 'No URL')}")
+    print("="*60 + "\n")
+    # END DELETE LATER
     
     return {
         "results": minimal_recipes,  # Minimal context for agent
