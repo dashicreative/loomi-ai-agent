@@ -203,6 +203,16 @@ async def universal_recipe_parser(url: str, openai_key: str) -> Dict:
         # Step 3: LLM extraction with iOS app requirements
         prompt = f"""You are extracting recipe data from a webpage for an iOS app. Extract the following information:
 
+SITE-SPECIFIC PARSING HINTS:
+- If URL contains "seriouseats.com": 
+  * Ingredients: Look for <li> elements with spans containing data attributes "data-ingredient-quantity", "data-ingredient-unit", "data-ingredient-name"
+  * Images: Look for images with "data-src" attribute, especially those with "recipe-hero" or "butter-basted" in the filename
+  * The ingredients section is usually marked with class "structured-ingredients__list"
+- If URL contains "thepioneerwoman.com": 
+  * Ingredients: Look for <li> elements with class "css-1uta69o e12sb1172" containing <strong> tags for quantities/units and <p> tags for ingredient names
+  * Images: Check both "data-src" and "src" attributes, look for lazy-loaded images
+  * Nutrition: Look for popup dialog with class "css-1x8cba8 e1aqnky27" or "ecif9ag8" containing <span> elements with nutrition values like "Calories1277", "Fat103 g", "Protein44 g", "Carbohydrates10 g" - extract the numeric values and units
+
 REQUIRED FIELDS (must find ALL or mark as failed):
 1. INGREDIENTS: Extract as STRUCTURED objects with shopping-aware parsing.
    
