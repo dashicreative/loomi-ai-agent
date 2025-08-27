@@ -124,6 +124,15 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     
     print(f"📊 Stage 2: Initial Ranking - Ranked {len(ranked_urls)} URLs - {stage2_time:.2f}s")
     
+    # Initialize timing accumulators for stages 3-6
+    total_stage3_time = 0
+    total_stage4_time = 0
+    total_stage5_time = 0
+    total_stage6_time = 0
+    
+    # Stage 3: URL Expansion and Batch Setup
+    stage3_start = time.time()
+    
     # Now begin the batch processing logic (formerly from process_recipe_batch_tool)
     batch_size = 10
     urls = ranked_urls  # Use ranked URLs directly
@@ -169,6 +178,10 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         
         # We'll classify URLs batch by batch, not all at once
         print(f"📊 Ready to process {len(urls)} URLs in batches")
+        
+        stage3_batch_setup_time = time.time() - stage3_start
+        total_stage3_time += stage3_batch_setup_time
+        print(f"📊 Stage 3A: Batch Setup - {stage3_batch_setup_time:.2f}s")
     except Exception as e:
         print(f"❌ ERROR in batch processing setup: {e}")
         import traceback
@@ -192,6 +205,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         
         # Classify just the URLs in THIS batch
         print(f"   🔍 Classifying {len(current_batch)} URLs in this batch...")
+        stage3_classify_start = time.time()
         try:
             batch_classifications = await classify_urls_batch(current_batch, ctx.deps.openai_key)
             batch_classification_map = {c.url: c for c in batch_classifications}
@@ -199,6 +213,10 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
             print(f"   ⚠️  Batch classification failed: {e}")
             print(f"   ⚠️  Treating all batch URLs as recipe URLs")
             batch_classification_map = {}
+        
+        stage3_classify_time = time.time() - stage3_classify_start
+        total_stage3_time += stage3_classify_time
+        print(f"   📊 Stage 3B: URL Classification - {stage3_classify_time:.2f}s")
         
         # Separate recipe URLs from list URLs in this batch
         batch_recipe_urls = []
@@ -219,11 +237,14 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         # Only process recipe URLs
         urls_to_process = batch_recipe_urls
         
-        # Stage 3: URL Expansion - SKIPPED (all list URLs deferred to backlog)
+        # Stage 3C: URL Expansion - SKIPPED (all list URLs deferred to backlog)
         # Since we defer all list URLs, we never need to expand in regular batches
+        stage3_expansion_start = time.time()
         expanded_results = urls_to_process
         fp1_failures = []
-        print(f"📊 Batch {batch_count} - Stage 3: Skipped (list URLs deferred to backlog)")
+        stage3_expansion_time = time.time() - stage3_expansion_start
+        total_stage3_time += stage3_expansion_time
+        print(f"📊 Batch {batch_count} - Stage 3C: URL Expansion - Skipped (list URLs deferred) - {stage3_expansion_time:.3f}s")
         
         if not expanded_results:
             print(f"⚠️  Batch {batch_count} - No URLs after expansion, skipping")
@@ -235,40 +256,48 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         successful_parses = []
         failed_parses = []
         
-        # Process URLs with 25-second timeout (temporarily increased for debugging), defer slow ones to backlog
+        # Create tasks for parallel processing
+        parsing_tasks = []
+        result_mapping = []  # Track which task corresponds to which result
+
         for result in expanded_results:
             url = result.get("url")
             if url:
-                try:
-                    # Apply 25-second timeout to recipe parsing (temporarily increased for debugging)
-                    data = await asyncio.wait_for(
-                        parse_recipe(url, ctx.deps.openai_key), 
-                        timeout=25.0
-                    )
-                    
-                    if isinstance(data, dict) and not data.get("error"):
-                        # Add search metadata
-                        data["search_title"] = result.get("title", "")
-                        data["search_snippet"] = result.get("snippet", "")
-                        successful_parses.append(data)
-                    else:
-                        # Track failed parse
-                        failed_parses.append({
-                            "result": result,
-                            "error": data.get("error", "Unknown error") if isinstance(data, dict) else str(data),
-                            "failure_point": "Recipe_Parsing_Failure_Point"
-                        })
-                        
-                except asyncio.TimeoutError:
+                task = asyncio.wait_for(parse_recipe(url, ctx.deps.openai_key), timeout=25.0)
+                parsing_tasks.append(task)
+                result_mapping.append(result)
+
+        # Execute all parsing in parallel
+        if parsing_tasks:
+            parsed_data = await asyncio.gather(*parsing_tasks, return_exceptions=True)
+            
+            # Process results
+            for i, data in enumerate(parsed_data):
+                result = result_mapping[i]
+                url = result.get("url")
+                
+                if isinstance(data, asyncio.TimeoutError):
                     # Defer slow URLs to backlog for later processing
                     print(f"   ⏰ Timeout (25s): Deferring slow URL to backlog: {url}")
                     url_backlog.append(result)
-                except Exception as e:
+                elif isinstance(data, Exception):
                     # Track other exceptions as failed parses
                     failed_parses.append({
                         "result": result,
-                        "error": str(e),
+                        "error": str(data),
                         "failure_point": "Recipe_Parsing_Exception"
+                    })
+                elif isinstance(data, dict) and not data.get("error"):
+                    # Add search metadata
+                    data["search_title"] = result.get("title", "")
+                    data["search_snippet"] = result.get("snippet", "")
+                    successful_parses.append(data)
+                else:
+                    # Track failed parse
+                    failed_parses.append({
+                        "result": result,
+                        "error": data.get("error", "Unknown error") if isinstance(data, dict) else str(data),
+                        "failure_point": "Recipe_Parsing_Failure_Point"
                     })
         
         # Parse nutrition data for successful recipes
@@ -281,6 +310,9 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         
         print(f"📊 Batch {batch_count} - Stage 4: Recipe Scraping - Successfully parsed {len(successful_parses)} recipes - {stage4_time:.2f}s")
         print(f"⏱️  Batch {batch_count} Total Time: {batch_total_time:.2f}s")
+        
+        # Accumulate stage timing
+        total_stage4_time += stage4_time
         
         if failed_parses:
             failed_urls = [fp.get("result", {}).get("url", "") for fp in failed_parses]
@@ -305,6 +337,9 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         
         print(f"📊 Stage 5: Final Ranking after batch {batch_count} - Ranking {len(all_recipes)} total recipes - {stage5_time:.2f}s")
         
+        # Accumulate stage timing
+        total_stage5_time += stage5_time
+        
         # Early exit: if we have enough FINAL recipes after ranking, stop processing batches
         if len(final_ranked_recipes) >= needed_count:
             print(f"✅ Found {len(final_ranked_recipes)} final recipes (needed {needed_count}), stopping batch processing")
@@ -317,6 +352,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         print(f"\n📋 PROCESSING URL BACKLOG: {len(url_backlog)} list URLs deferred")
         print(f"   Still need {needed_count - len(final_ranked_recipes)} more recipes")
         
+        stage3_backlog_start = time.time()
         # Process backlog URLs (these are primarily list URLs)
         for backlog_url_dict in url_backlog:
             if len(final_ranked_recipes) >= needed_count:
@@ -375,7 +411,10 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
                     "failure_point": "Backlog_List_Expansion_Failure"
                 })
         
+        stage3_backlog_time = time.time() - stage3_backlog_start
+        total_stage3_time += stage3_backlog_time
         print(f"📋 Backlog processing complete: {len(all_recipes)} total recipes")
+        print(f"   📊 Stage 3D: Backlog Processing - {stage3_backlog_time:.2f}s")
         
         # Stage 5: Final Ranking after backlog processing
         stage5_start = time.time()
@@ -390,6 +429,9 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         stage5_time = time.time() - stage5_start
         
         print(f"📊 Stage 5: Final Ranking after backlog - Ranking {len(all_recipes)} total recipes - {stage5_time:.2f}s")
+        
+        # Accumulate stage timing
+        total_stage5_time += stage5_time
     
     # Ensure final_ranked_recipes is defined (in case no batches or backlog processing occurred)
     if 'final_ranked_recipes' not in locals():
@@ -399,9 +441,11 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     stage6_start = time.time()
     formatted_recipes = []
     for recipe in final_ranked_recipes[:needed_count]:
-        # Parse ingredients into structured format
+        # Keep ingredients as raw strings for instant display
+        # Shopping conversion will happen in background after recipe save
         raw_ingredients = recipe.get("ingredients", [])
-        structured_ingredients = parse_ingredients_list(raw_ingredients)
+        # Convert to simple display format for iOS app
+        structured_ingredients = [{"ingredient": ing} for ing in raw_ingredients] if raw_ingredients else []
         
         # Parse nutrition into structured format
         raw_nutrition = recipe.get("nutrition", [])
@@ -438,13 +482,19 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     
     print(f"📊 Stage 6: Final Formatting - Structured {len(formatted_recipes)} recipes - {stage6_time:.2f}s")
     
+    # Accumulate stage timing
+    total_stage6_time += stage6_time
+    
     # Performance summary
     total_time = time.time() - total_pipeline_start
     print(f"\n⏱️  COMPLETE PIPELINE PERFORMANCE:")
     print(f"   Total Time: {total_time:.2f}s")
     print(f"   Stage 1 (Web Search): {stage1_time:.2f}s ({(stage1_time/total_time)*100:.1f}%)")
     print(f"   Stage 2 (Initial Ranking): {stage2_time:.2f}s ({(stage2_time/total_time)*100:.1f}%)")
-    # Note: Stage 3-6 timing is aggregated across batches
+    print(f"   Stage 3 (URL Expansion): {total_stage3_time:.2f}s ({(total_stage3_time/total_time)*100:.1f}%)")
+    print(f"   Stage 4 (Recipe Scraping): {total_stage4_time:.2f}s ({(total_stage4_time/total_time)*100:.1f}%)")
+    print(f"   Stage 5 (Final Ranking): {total_stage5_time:.2f}s ({(total_stage5_time/total_time)*100:.1f}%)")
+    print(f"   Stage 6 (Final Formatting): {total_stage6_time:.2f}s ({(total_stage6_time/total_time)*100:.1f}%)")
     
     # Create minimal context for agent
     minimal_recipes = []
@@ -993,8 +1043,8 @@ async def rerank_with_full_recipe_data(scraped_recipes: List[Dict], query: str, 
     for i, recipe in enumerate(filtered_recipes):
         # Build comprehensive recipe summary for LLM analysis
         ingredients_list = recipe.get("ingredients", [])[:10]  # First 10 ingredients
-        # Extract full ingredient amounts from structured format
-        ingredients_text = ", ".join([f"{ing.get('quantity', '')} {ing.get('unit', '')} {ing.get('ingredient', '')}" for ing in ingredients_list if ing.get('ingredient')])
+        # Use raw ingredient strings for ranking (LLM can understand "4 cloves garlic, minced")
+        ingredients_text = ", ".join(ingredients_list) if ingredients_list else ""
         instructions_preview = " ".join(recipe.get("instructions", [])[:2])[:1000]  # First 2 steps, expanded context
         
         # Build nutrition text from structured nutrition data
@@ -1267,9 +1317,11 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     stage6_start = time.time()
     formatted_recipes = []
     for recipe in final_ranked_recipes[:max_recipes]:  # Use final ranked results
-        # Parse raw ingredient strings into structured format
+        # Keep ingredients as raw strings for instant display
+        # Shopping conversion will happen in background after recipe save  
         raw_ingredients = recipe.get("ingredients", [])
-        structured_ingredients = parse_ingredients_list(raw_ingredients)
+        # Convert to simple display format for iOS app
+        structured_ingredients = [{"ingredient": ing} for ing in raw_ingredients] if raw_ingredients else []
         
         # Parse raw nutrition strings into structured format
         raw_nutrition = recipe.get("nutrition", [])
