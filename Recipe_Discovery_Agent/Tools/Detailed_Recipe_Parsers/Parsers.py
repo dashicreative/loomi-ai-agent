@@ -158,7 +158,7 @@ def validate_recipe_data(recipe_data: dict) -> tuple[bool, list]:
     """
     required_checks = {
         'ingredients': len(recipe_data.get('ingredients', [])) > 0,
-        'instructions': len(recipe_data.get('instructions', [])) > 0,
+        # 'instructions': len(recipe_data.get('instructions', [])) > 0,  # Temporarily disabled for performance testing
         'image_url': bool(recipe_data.get('image_url', '').strip()),
         'nutrition': len(recipe_data.get('nutrition', [])) >= 4  # Need all 4: calories, protein, carbs, fat
     }
@@ -253,8 +253,6 @@ REQUIRED FIELDS (must find ALL or mark as failed):
    - Protein: (e.g., "30g protein")
    - Carbs: (e.g., "15g carbohydrates" or "15g carbs")  
    - Fat: (e.g., "10g fat")
-   
-4. INSTRUCTIONS: Step-by-step cooking directions as separate items
 
 OPTIONAL FIELDS (include if found):
 - title: Recipe name
@@ -313,7 +311,6 @@ Return JSON format:
       "original": "2 tablespoons red wine vinegar"
     }}
   ],
-  "instructions": ["Step 1 text", "Step 2 text"],
   "nutrition": ["250 calories", "30g protein", "15g carbs", "10g fat"],
   "image_url": "https://example.com/image.jpg",
   "cook_time": "30 minutes",
@@ -494,8 +491,6 @@ REQUIRED FIELDS (must find ALL or mark as failed):
    - Protein: (e.g., "30g protein")
    - Carbs: (e.g., "15g carbohydrates" or "15g carbs")  
    - Fat: (e.g., "10g fat")
-   
-4. INSTRUCTIONS: Step-by-step cooking directions as separate items
 
 OPTIONAL FIELDS (include if found):
 - title: Recipe name
@@ -554,7 +549,6 @@ Return JSON format:
       "original": "1/4 cup white wine vinegar"
     }}
   ],
-  "instructions": ["Step 1 text", "Step 2 text"],
   "nutrition": ["250 calories", "30g protein", "15g carbs", "10g fat"],
   "image_url": "https://example.com/image.jpg",
   "cook_time": "30 minutes",
