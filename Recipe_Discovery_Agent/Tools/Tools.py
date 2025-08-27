@@ -230,20 +230,20 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
             all_fp1_failures.extend(fp1_failures)
             continue
         
-        # Stage 4: Recipe Scraping for this batch with 5-second timeout
+        # Stage 4: Recipe Scraping for this batch with 25-second timeout (temporarily increased for debugging)
         stage4_start = time.time()
         successful_parses = []
         failed_parses = []
         
-        # Process URLs with 5-second timeout, defer slow ones to backlog
+        # Process URLs with 25-second timeout (temporarily increased for debugging), defer slow ones to backlog
         for result in expanded_results:
             url = result.get("url")
             if url:
                 try:
-                    # Apply 5-second timeout to recipe parsing
+                    # Apply 25-second timeout to recipe parsing (temporarily increased for debugging)
                     data = await asyncio.wait_for(
                         parse_recipe(url, ctx.deps.openai_key), 
-                        timeout=5.0
+                        timeout=25.0
                     )
                     
                     if isinstance(data, dict) and not data.get("error"):
@@ -261,7 +261,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
                         
                 except asyncio.TimeoutError:
                     # Defer slow URLs to backlog for later processing
-                    print(f"   ⏰ Timeout: Deferring slow URL to backlog: {url}")
+                    print(f"   ⏰ Timeout (25s): Deferring slow URL to backlog: {url}")
                     url_backlog.append(result)
                 except Exception as e:
                     # Track other exceptions as failed parses
