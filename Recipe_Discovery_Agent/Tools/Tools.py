@@ -1038,6 +1038,7 @@ async def rerank_with_full_recipe_data(scraped_recipes: List[Dict], query: str, 
                 missing_fields.append(f"nutrition({','.join(missing_nutrition)})")
             
             print(f"   ❌ Filtered out recipe '{recipe.get('title', 'Untitled')}' - Missing: {', '.join(missing_fields)}")
+            print(f"      URL: {recipe.get('source_url', 'No URL')}")
     
     print(f"   ✅ Recipe filtering: {len(filtered_recipes)}/{len(scraped_recipes)} recipes passed validation")
     substage5a_time = time.time() - substage5a_start

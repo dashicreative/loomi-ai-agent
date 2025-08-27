@@ -312,134 +312,6 @@ def extract_from_structured_html(soup: BeautifulSoup, url: str) -> Dict:
     return None
 
 
-async def process_ingredients_with_llm(raw_ingredients: List[str], openai_key: str) -> List[Dict]:
-    """
-    Mini-LLM call to process ONLY ingredients using existing logic.
-    
-    Takes raw ingredient strings and converts them to structured format
-    using all the existing ingredient intelligence and edge cases.
-    """
-    if not raw_ingredients:
-        return []
-    
-    # Prepare ingredient list for LLM processing
-    ingredients_text = "\n".join([f"- {ing}" for ing in raw_ingredients])
-    
-    # Debug: Log what we're sending to LLM
-    print(f"      📋 Ingredients being sent to LLM:")
-    for i, ing in enumerate(raw_ingredients[:3], 1):  # Show first 3
-        print(f"         {i}. {ing}")
-    if len(raw_ingredients) > 3:
-        print(f"         ... and {len(raw_ingredients) - 3} more")
-    
-    total_ingredient_chars = sum(len(ing) for ing in raw_ingredients)
-    print(f"      📊 Total ingredient text: {total_ingredient_chars} chars, {len(raw_ingredients)} ingredients")
-    
-    # Use existing ingredient processing logic in a focused prompt
-    prompt = f"""Process these recipe ingredients into structured JSON format using shopping-aware parsing logic.
-
-INGREDIENTS TO PROCESS:
-{ingredients_text}
-
-Apply these EXACT conversion rules:
-
-STORE QUANTITY/UNIT CONVERSION RULES (HIGHEST PRIORITY):
-- Fresh herbs (parsley, cilantro, basil, etc.) → store_quantity: "1", store_unit: "count" (sold as bunches)
-- Bottled liquids (vinegar, oils, extracts, etc.) → store_quantity: "1", store_unit: "count" (sold as bottles)
-- "X cloves garlic" → store_quantity: "1", store_unit: "count", amount: "X cloves" (people buy heads not cloves)
-- "Juice from half a lime" → store_quantity: "1", store_unit: "count", amount: "0.5" (round up whole items)
-- Maintain weight units for common grocery items: "1 pound skirt steak" → store_quantity: "1", store_unit: "lb"
-- Use "count" only for vague quantities: "3-4 pieces flank steak" → store_quantity: "4", store_unit: "count"
-- Ranges "1.5 to 2 lb beef" → store_quantity: "1.75", store_unit: "lb" (average ranges)
-- Nested measurements "1 (14.5 oz) can tomatoes" → store_quantity: "1", store_unit: "count", amount: "14.5 oz"
-- Packaged items (flour, sugar) → store_quantity: "1", store_unit: "count" (sold in bags)
-- "salt and pepper to taste" → Split into 2 items, store_quantity: "1", store_unit: "count", pantry_staple: true, optional: true
-
-OTHER FIELD PARSING:
-- alternatives: Split "milk or almond milk" → alternatives: ["almond milk"]
-- additional_context: Prep state ("melted", "minced", "softened", "store-bought", "for garnish")
-- optional: true for "to taste"/garnish/serving items
-- disqualified: true for "see recipe"/homemade/cross-references
-- pantry_staple: true for salt/pepper/oil/flour/sugar/basic spices
-- original: Original text exactly as written
-
-Return JSON array:
-[
-  {{
-    "quantity": "recipe quantity",
-    "unit": "recipe unit", 
-    "ingredient": "clean ingredient name",
-    "store_quantity": "shopping quantity",
-    "store_unit": "shopping unit",
-    "amount": "recipe amount if different",
-    "size": "size descriptor",
-    "additional_context": "prep state",
-    "alternatives": ["alternative options"],
-    "pantry_staple": boolean,
-    "optional": boolean,
-    "disqualified": boolean,
-    "original": "original text"
-  }}
-]"""
-
-    # Debug: Show total prompt size
-    prompt_chars = len(prompt)
-    estimated_tokens = prompt_chars // 4  # Rough estimate: 4 chars per token
-    print(f"      📊 Full prompt: {prompt_chars:,} chars (~{estimated_tokens:,} tokens)")
-
-    try:
-        print(f"      🚀 Making LLM API call...")
-        api_start = time.time()
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": os.getenv('ANTHROPIC_API_KEY'),
-                    "Content-Type": "application/json",
-                    "anthropic-version": "2023-06-01"
-                },
-                json={
-                    "model": "claude-3-5-haiku-20241022",
-                    "max_tokens": 2000,
-                    "temperature": 0.1,
-                    "messages": [
-                        {"role": "user", "content": f"You are an ingredient parsing specialist. Return only valid JSON array.\n\n{prompt}"}
-                    ]
-                }
-            )
-        
-        api_time = time.time() - api_start
-        print(f"      ⏱️  LLM API call completed: {api_time:.2f}s")
-        
-        if response.status_code != 200:
-            # Fallback to basic structure if LLM fails
-            return [{"quantity": None, "unit": None, "ingredient": ing, "original": ing} for ing in raw_ingredients]
-        
-        data = response.json()
-        llm_response = data['content'][0]['text'].strip()
-        
-        # Parse JSON response
-        print(f"      🔄 Parsing LLM response...")
-        parse_start = time.time()
-        if '```json' in llm_response:
-            llm_response = llm_response.split('```json')[1].split('```')[0]
-        elif '```' in llm_response:
-            llm_response = llm_response.split('```')[1]
-        
-        structured_ingredients = json.loads(llm_response)
-        
-        # Validate with existing ingredient parser
-        validated_ingredients = parse_ingredients_list(structured_ingredients)
-        parse_time = time.time() - parse_start
-        print(f"      ⏱️  Response parsing completed: {parse_time:.2f}s")
-        
-        return validated_ingredients
-        
-    except Exception as e:
-        print(f"   ⚠️  LLM ingredient processing failed: {e}")
-        # Fallback to basic structure
-        return [{"quantity": None, "unit": None, "ingredient": ing, "original": ing} for ing in raw_ingredients]
-
 
 def extract_nutrition_from_html(soup) -> list:
     """
@@ -572,17 +444,14 @@ async def hybrid_recipe_parser(url: str, openai_key: str) -> Dict:
             print(f"   ❌ PARSE FAILED - Total time: {total_time:.2f}s")
             return {'error': 'No recipe data found in HTML', 'source_url': url}
         
-        # Step 3: Mini-LLM call ONLY for ingredient processing
+        # Step 3: Keep raw ingredients for instant recipe discovery
+        # Shopping conversion moved to background processing after recipe save
         raw_ingredients = recipe_data.get('ingredients', [])
-        if raw_ingredients and isinstance(raw_ingredients[0], str):
-            print(f"   🤖 Processing {len(raw_ingredients)} ingredients with LLM...")
-            llm_start = time.time()
-            structured_ingredients = await process_ingredients_with_llm(raw_ingredients, openai_key)
-            llm_time = time.time() - llm_start
-            print(f"   ⏱️  LLM ingredient processing: {llm_time:.2f}s")
-            recipe_data['ingredients'] = structured_ingredients
+        if raw_ingredients:
+            print(f"   ✅ Using raw JSON-LD ingredients ({len(raw_ingredients)} items) - instant processing")
+            # Ingredients remain as strings for ranking/display, shopping conversion happens later
         else:
-            print(f"   ⏭️  Skipping LLM (ingredients already structured or empty)")
+            print(f"   ⚠️  No ingredients found")
         
         recipe_data['source_url'] = url
         total_time = time.time() - parse_start
