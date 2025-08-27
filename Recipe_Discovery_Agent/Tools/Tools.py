@@ -134,7 +134,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         all_fp1_failures = []
         all_failed_parses = []
         batch_count = 0
-        deferred_list_urls = []  # List URLs moved to back of queue
+        url_backlog = []  # List URLs and slow URLs deferred for later processing
         
         # FIRST: Rank all URLs by priority sites before any processing
         print(f"📊 Initial Quality Ranking: Ordering {len(urls)} URLs by priority sites...")
@@ -211,141 +211,70 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
             else:
                 batch_recipe_urls.append(url_dict)
         
-        # Process only 1 list URL per batch, defer the rest
-        urls_to_process = batch_recipe_urls.copy()
+        # Defer ALL list URLs to backlog - don't process any now
         if batch_list_urls:
-            # Take only the first list URL for expansion
-            urls_to_process.append(batch_list_urls[0])
-            # Defer remaining list URLs to end of queue
-            if len(batch_list_urls) > 1:
-                deferred = batch_list_urls[1:]
-                deferred_list_urls.extend(deferred)
-                urls.extend(deferred)  # Add to end of main URL queue
-                print(f"   📊 Deferring {len(deferred)} list URLs to end of queue")
+            url_backlog.extend(batch_list_urls)
+            print(f"   📊 Deferring {len(batch_list_urls)} list URLs to backlog (will process only if needed)")
         
-        # Stage 3: URL Expansion (only for the 1 list URL if present)
-        stage3_start = time.time()
-        has_list_url = False
-        for u in urls_to_process:
-            url = u.get('url', '')
-            if url in batch_classification_map:
-                classification = batch_classification_map.get(url)
-                if classification and classification.type == 'list':
-                    has_list_url = True
-                    break
+        # Only process recipe URLs
+        urls_to_process = batch_recipe_urls
         
-        if has_list_url:
-            # We have a list URL to expand - get only 3 recipes from it
-            # Process recipe URLs normally, expand only the 1 list URL
-            expanded_results = []
-            fp1_failures = []
-            
-            for url_dict in urls_to_process:
-                url = url_dict.get('url', '')
-                classification = batch_classification_map.get(url)
-                
-                if classification and classification.type == 'list':
-                    # This is our 1 list URL - expand it to get 3 recipes
-                    try:
-                        async with httpx.AsyncClient(timeout=15.0) as client:
-                            response = await client.get(url, follow_redirects=True)
-                            response.raise_for_status()
-                            html_content = response.text
-                        
-                        # Use ListParser to extract just 3 recipe URLs
-                        intelligent_parser = ListParser(ctx.deps.openai_key)
-                        extracted_recipes = await intelligent_parser.extract_recipe_urls(url, html_content, max_urls=3)
-                        
-                        if extracted_recipes:
-                            expanded_results.extend(extracted_recipes)
-                            print(f"   ✅ Extracted {len(extracted_recipes)} recipes from list URL")
-                        else:
-                            print(f"   ⚠️ No recipes extracted from list URL")
-                    except Exception as e:
-                        print(f"   ❌ Failed to expand list URL: {e}")
-                        fp1_failures.append({
-                            "url": url,
-                            "title": url_dict.get('title', ''),
-                            "error": str(e),
-                            "failure_point": "List_Expansion_Failure"
-                        })
-                else:
-                    # Regular recipe URL - pass through unchanged
-                    expanded_results.append(url_dict)
-            stage3_time = time.time() - stage3_start
-            print(f"📊 Batch {batch_count} - Stage 3: URL Expansion - {len(urls_to_process)} → {len(expanded_results)} URLs - {stage3_time:.2f}s")
-            
-            # Stage 3.5: Re-rank expanded URLs by priority sites (only if we expanded)
-            # This ensures quality sites process first after expansion
-            priority_urls = []
-            non_priority_urls = []
-            
-            for result in expanded_results:
-                url = result.get('url', '').lower()
-                if any(f"//{priority_site}" in url or f".{priority_site}" in url for priority_site in PRIORITY_SITES):
-                    # Find which priority site and add index for sorting
-                    for i, priority_site in enumerate(PRIORITY_SITES):
-                        if f"//{priority_site}" in url or f".{priority_site}" in url:
-                            result['_priority_index'] = i
-                            priority_urls.append(result)
-                            break
-                else:
-                    non_priority_urls.append(result)
-            
-            # Sort priority URLs by their order in PRIORITY_SITES
-            priority_urls.sort(key=lambda x: x.get('_priority_index', 999))
-            
-            # Combine: priority sites first, then non-priority
-            expanded_results = priority_urls + non_priority_urls
-            
-            print(f"📊 Batch {batch_count} - Stage 3.5: Quality Ranking - {len(priority_urls)} priority sites, {len(non_priority_urls)} others")
-        else:
-            # No list URLs, skip both expansion AND re-ranking
-            expanded_results = urls_to_process
-            fp1_failures = []
-            stage3_time = 0
-            print(f"📊 Batch {batch_count} - Stage 3 & 3.5: Skipped (no list URLs) - 0.00s")
+        # Stage 3: URL Expansion - SKIPPED (all list URLs deferred to backlog)
+        # Since we defer all list URLs, we never need to expand in regular batches
+        expanded_results = urls_to_process
+        fp1_failures = []
+        print(f"📊 Batch {batch_count} - Stage 3: Skipped (list URLs deferred to backlog)")
         
         if not expanded_results:
             print(f"⚠️  Batch {batch_count} - No URLs after expansion, skipping")
             all_fp1_failures.extend(fp1_failures)
             continue
         
-        # Stage 4: Recipe Scraping for this batch
+        # Stage 4: Recipe Scraping for this batch with 5-second timeout
         stage4_start = time.time()
-        extraction_tasks = []
         successful_parses = []
         failed_parses = []
         
+        # Process URLs with 5-second timeout, defer slow ones to backlog
         for result in expanded_results:
             url = result.get("url")
             if url:
-                task = parse_recipe(url, ctx.deps.openai_key)
-                extraction_tasks.append(task)
-        
-        # Execute all extractions in parallel
-        if extraction_tasks:
-            extracted_data = await asyncio.gather(*extraction_tasks, return_exceptions=True)
-            
-            # Process extracted data
-            for i, data in enumerate(extracted_data):
-                if isinstance(data, dict) and not data.get("error"):
-                    # Add search metadata
-                    data["search_title"] = expanded_results[i].get("title", "")
-                    data["search_snippet"] = expanded_results[i].get("snippet", "")
-                    successful_parses.append(data)
-                else:
-                    # Track failed parse
+                try:
+                    # Apply 5-second timeout to recipe parsing
+                    data = await asyncio.wait_for(
+                        parse_recipe(url, ctx.deps.openai_key), 
+                        timeout=5.0
+                    )
+                    
+                    if isinstance(data, dict) and not data.get("error"):
+                        # Add search metadata
+                        data["search_title"] = result.get("title", "")
+                        data["search_snippet"] = result.get("snippet", "")
+                        successful_parses.append(data)
+                    else:
+                        # Track failed parse
+                        failed_parses.append({
+                            "result": result,
+                            "error": data.get("error", "Unknown error") if isinstance(data, dict) else str(data),
+                            "failure_point": "Recipe_Parsing_Failure_Point"
+                        })
+                        
+                except asyncio.TimeoutError:
+                    # Defer slow URLs to backlog for later processing
+                    print(f"   ⏰ Timeout: Deferring slow URL to backlog: {url}")
+                    url_backlog.append(result)
+                except Exception as e:
+                    # Track other exceptions as failed parses
                     failed_parses.append({
-                        "result": expanded_results[i],
-                        "error": str(data) if isinstance(data, Exception) else data.get("error", "Unknown error"),
-                        "failure_point": "Recipe_Parsing_Failure_Point"
+                        "result": result,
+                        "error": str(e),
+                        "failure_point": "Recipe_Parsing_Exception"
                     })
-            
-            # Parse nutrition data for successful recipes
-            for recipe in successful_parses:
-                raw_nutrition = recipe.get("nutrition", [])
-                recipe["structured_nutrition"] = parse_nutrition_list(raw_nutrition)
+        
+        # Parse nutrition data for successful recipes
+        for recipe in successful_parses:
+            raw_nutrition = recipe.get("nutrition", [])
+            recipe["structured_nutrition"] = parse_nutrition_list(raw_nutrition)
         
         stage4_time = time.time() - stage4_start
         batch_total_time = time.time() - batch_total_start
@@ -362,26 +291,109 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         all_fp1_failures.extend(fp1_failures)
         all_failed_parses.extend(failed_parses)
         
-        # Early exit: if we have enough recipes, stop processing batches
-        if len(all_recipes) >= needed_count:
-            print(f"✅ Found {len(all_recipes)} recipes (needed {needed_count}), stopping batch processing")
+        # Stage 5: Final Ranking after each batch
+        stage5_start = time.time()
+        if len(all_recipes) > 1:
+            final_ranked_recipes = await rerank_with_full_recipe_data(
+                all_recipes,
+                user_query,
+                ctx.deps.openai_key
+            )
+        else:
+            final_ranked_recipes = all_recipes
+        stage5_time = time.time() - stage5_start
+        
+        print(f"📊 Stage 5: Final Ranking after batch {batch_count} - Ranking {len(all_recipes)} total recipes - {stage5_time:.2f}s")
+        
+        # Early exit: if we have enough FINAL recipes after ranking, stop processing batches
+        if len(final_ranked_recipes) >= needed_count:
+            print(f"✅ Found {len(final_ranked_recipes)} final recipes (needed {needed_count}), stopping batch processing")
             break
         else:
-            print(f"📊 Progress: {len(all_recipes)}/{needed_count} recipes found, continuing...")
+            print(f"📊 Progress: {len(final_ranked_recipes)}/{needed_count} final recipes found, continuing...")
     
-    # Stage 5: Final Ranking across ALL batches
-    stage5_start = time.time()
-    if len(all_recipes) > 1:
-        final_ranked_recipes = await rerank_with_full_recipe_data(
-            all_recipes,
-            user_query,
-            ctx.deps.openai_key
-        )
-    else:
+    # Process url_backlog if we still need more recipes
+    if len(final_ranked_recipes) < needed_count and url_backlog:
+        print(f"\n📋 PROCESSING URL BACKLOG: {len(url_backlog)} list URLs deferred")
+        print(f"   Still need {needed_count - len(final_ranked_recipes)} more recipes")
+        
+        # Process backlog URLs (these are primarily list URLs)
+        for backlog_url_dict in url_backlog:
+            if len(final_ranked_recipes) >= needed_count:
+                print(f"   ✅ Found enough final recipes, stopping backlog processing")
+                break
+                
+            url = backlog_url_dict.get('url', '')
+            print(f"   🔄 Processing backlog URL: {url}")
+            
+            # Stage 3: Expand list URL
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    response = await client.get(url, follow_redirects=True)
+                    response.raise_for_status()
+                    html_content = response.text
+                
+                # Use ListParser to extract recipe URLs
+                intelligent_parser = ListParser(ctx.deps.openai_key)
+                extracted_recipes = await intelligent_parser.extract_recipe_urls(
+                    url, 
+                    html_content, 
+                    max_urls=needed_count - len(final_ranked_recipes)  # Only get what we need
+                )
+                
+                if extracted_recipes:
+                    print(f"      ✅ Extracted {len(extracted_recipes)} recipes from list URL")
+                    
+                    # Stage 4: Parse the extracted recipes
+                    extraction_tasks = []
+                    for recipe_url_dict in extracted_recipes:
+                        recipe_url = recipe_url_dict.get("url")
+                        if recipe_url:
+                            task = parse_recipe(recipe_url, ctx.deps.openai_key)
+                            extraction_tasks.append(task)
+                    
+                    if extraction_tasks:
+                        extracted_data = await asyncio.gather(*extraction_tasks, return_exceptions=True)
+                        
+                        for i, data in enumerate(extracted_data):
+                            if isinstance(data, dict) and not data.get("error"):
+                                data["search_title"] = extracted_recipes[i].get("title", "")
+                                data["search_snippet"] = extracted_recipes[i].get("snippet", "")
+                                all_recipes.append(data)
+                                print(f"      ✅ Successfully parsed recipe {len(all_recipes)}/{needed_count}")
+                            else:
+                                print(f"      ❌ Failed to parse: {extracted_recipes[i].get('url', '')}")
+                else:
+                    print(f"      ⚠️ No recipes extracted from list URL")
+                    
+            except Exception as e:
+                print(f"      ❌ Failed to process backlog URL: {e}")
+                all_fp1_failures.append({
+                    "url": url,
+                    "title": backlog_url_dict.get('title', ''),
+                    "error": str(e),
+                    "failure_point": "Backlog_List_Expansion_Failure"
+                })
+        
+        print(f"📋 Backlog processing complete: {len(all_recipes)} total recipes")
+        
+        # Stage 5: Final Ranking after backlog processing
+        stage5_start = time.time()
+        if len(all_recipes) > 1:
+            final_ranked_recipes = await rerank_with_full_recipe_data(
+                all_recipes,
+                user_query,
+                ctx.deps.openai_key
+            )
+        else:
+            final_ranked_recipes = all_recipes
+        stage5_time = time.time() - stage5_start
+        
+        print(f"📊 Stage 5: Final Ranking after backlog - Ranking {len(all_recipes)} total recipes - {stage5_time:.2f}s")
+    
+    # Ensure final_ranked_recipes is defined (in case no batches or backlog processing occurred)
+    if 'final_ranked_recipes' not in locals():
         final_ranked_recipes = all_recipes
-    stage5_time = time.time() - stage5_start
-    
-    print(f"\n📊 Stage 5: Final Ranking - Ranking {len(all_recipes)} total recipes - {stage5_time:.2f}s")
     
     # Stage 6: Final Formatting
     stage6_start = time.time()
@@ -467,402 +479,6 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
 
 # Removed process_recipe_batch_tool - functionality merged into search_and_process_recipes_tool
 
-async def REMOVED_process_recipe_batch_tool(ctx: RunContext[RecipeDeps], urls: List[Dict], user_query: str, needed_count: int = 5, batch_size: int = 10) -> Dict:
-    """
-    AGENT TOOL: Process URLs through full recipe extraction pipeline with internal batching.
-    
-    Handles Stage 3 (URL Expansion), Stage 4 (Recipe Scraping), Stage 5 (Final Ranking),
-    and Stage 6 (Final Formatting). Processes URLs in internal batches until needed_count recipes found.
-    
-    Args:
-        urls: List of URL dictionaries from web_search_tool
-        user_query: Original user search query for relevance ranking
-        needed_count: Number of recipes to return (default 5)
-        batch_size: Internal batch processing size (default 10)
-        
-    Returns:
-        Dict with structured recipe data ready for agent processing
-    """
-    try:
-        # DEBUG: Move inside try to catch parameter issues
-        print(f"DEBUG: process_recipe_batch_tool CALLED with urls type={type(urls)}, len={len(urls) if urls else 'None'}")
-        
-        # Extra debug for the duplicate call issue
-        if urls and len(urls) <= 5:
-            print(f"⚠️  WARNING: Only {len(urls)} URLs passed - agent might be limiting URLs incorrectly!")
-            print(f"   First URL: {urls[0] if urls else 'None'}")
-    except Exception as e:
-        print(f"❌ ERROR in process_recipe_batch_tool parameter validation: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
-    
-    try:
-        print(f"\n🔄 PROCESS BATCH TOOL CALLED:")
-        print(f"   - URLs received: {len(urls) if urls else 'None'}")
-        print(f"   - User query: '{user_query}'")
-        print(f"   - Needed count: {needed_count}")
-        print(f"   - Batch size: {batch_size}")
-        
-        if not urls:
-            print("❌ ERROR: No URLs provided to process_recipe_batch_tool")
-            return {
-                "results": [],
-                "full_recipes": [],
-                "totalResults": 0,
-                "searchQuery": user_query,
-                "error": "No URLs provided to process"
-            }
-        
-        print(f"🔄 PROCESS BATCH TOOL: Processing {len(urls)} URLs in batches of {batch_size}, need {needed_count} recipes")
-        total_start = time.time()
-    except Exception as e:
-        print(f"❌ ERROR in process_recipe_batch_tool initialization: {e}")
-        import traceback
-        traceback.print_exc()
-        return {
-            "results": [],
-            "full_recipes": [],
-            "totalResults": 0,
-            "searchQuery": user_query,
-            "error": f"Tool initialization failed: {str(e)}"
-        }
-    
-    try:
-        all_recipes = []
-        all_fp1_failures = []
-        all_failed_parses = []
-        batch_count = 0
-        deferred_list_urls = []  # List URLs moved to back of queue
-        
-        # FIRST: Rank all URLs by priority sites before any processing
-        print(f"📊 Initial Quality Ranking: Ordering {len(urls)} URLs by priority sites...")
-        priority_ranked_urls = []
-        non_priority_urls = []
-        
-        for url_dict in urls:
-            url = url_dict.get('url', '').lower()
-            found_priority = False
-            
-            # Check if this URL is from a priority site
-            for i, priority_site in enumerate(PRIORITY_SITES):
-                if priority_site in url:
-                    url_dict['_priority_index'] = i
-                    priority_ranked_urls.append(url_dict)
-                    found_priority = True
-                    break
-            
-            if not found_priority:
-                non_priority_urls.append(url_dict)
-        
-        # Sort priority URLs by their order in PRIORITY_SITES list
-        priority_ranked_urls.sort(key=lambda x: x.get('_priority_index', 999))
-        
-        # Combine: priority sites first (in order), then all others
-        urls = priority_ranked_urls + non_priority_urls
-        
-        print(f"   ✅ Ranked: {len(priority_ranked_urls)} priority sites, {len(non_priority_urls)} others")
-        if priority_ranked_urls:
-            unique_sites = list(dict.fromkeys([u.get('url', '').split('/')[2] for u in priority_ranked_urls]))
-            print(f"   📍 Priority sites found: {unique_sites[:5]}")
-        
-        # We'll classify URLs batch by batch, not all at once
-        print(f"📊 Ready to process {len(urls)} URLs in batches")
-    except Exception as e:
-        print(f"❌ ERROR in process_recipe_batch_tool setup: {e}")
-        import traceback
-        traceback.print_exc()
-        return {
-            "results": [],
-            "full_recipes": [],
-            "totalResults": 0,
-            "searchQuery": user_query,
-            "error": f"Tool setup failed: {str(e)}"
-        }
-    
-    # Process URLs in batches until we have enough recipes
-    for batch_start in range(0, len(urls), batch_size):
-        batch_count += 1
-        batch_end = min(batch_start + batch_size, len(urls))
-        current_batch = urls[batch_start:batch_end]
-        
-        print(f"\n🔄 Processing Batch {batch_count}: URLs {batch_start}-{batch_end-1} ({len(current_batch)} URLs)")
-        batch_total_start = time.time()
-        
-        # Classify just the URLs in THIS batch
-        print(f"   🔍 Classifying {len(current_batch)} URLs in this batch...")
-        try:
-            batch_classifications = await classify_urls_batch(current_batch, ctx.deps.openai_key)
-            batch_classification_map = {c.url: c for c in batch_classifications}
-        except Exception as e:
-            print(f"   ⚠️  Batch classification failed: {e}")
-            print(f"   ⚠️  Treating all batch URLs as recipe URLs")
-            batch_classification_map = {}
-        
-        # Separate recipe URLs from list URLs in this batch
-        batch_recipe_urls = []
-        batch_list_urls = []
-        for url_dict in current_batch:
-            url = url_dict.get('url', '')
-            classification = batch_classification_map.get(url)
-            if classification and classification.type == 'list':
-                batch_list_urls.append(url_dict)
-            else:
-                batch_recipe_urls.append(url_dict)
-        
-        # Process only 1 list URL per batch, defer the rest
-        urls_to_process = batch_recipe_urls.copy()
-        if batch_list_urls:
-            # Take only the first list URL for expansion
-            urls_to_process.append(batch_list_urls[0])
-            # Defer remaining list URLs to end of queue
-            if len(batch_list_urls) > 1:
-                deferred = batch_list_urls[1:]
-                deferred_list_urls.extend(deferred)
-                urls.extend(deferred)  # Add to end of main URL queue
-                print(f"   📊 Deferring {len(deferred)} list URLs to end of queue")
-        
-        # Stage 3: URL Expansion (only for the 1 list URL if present)
-        stage3_start = time.time()
-        has_list_url = False
-        for u in urls_to_process:
-            url = u.get('url', '')
-            if url in batch_classification_map:
-                classification = batch_classification_map.get(url)
-                if classification and classification.type == 'list':
-                    has_list_url = True
-                    break
-        
-        if has_list_url:
-            # We have a list URL to expand - get only 3 recipes from it
-            # Process recipe URLs normally, expand only the 1 list URL
-            expanded_results = []
-            fp1_failures = []
-            
-            for url_dict in urls_to_process:
-                url = url_dict.get('url', '')
-                classification = batch_classification_map.get(url)
-                
-                if classification and classification.type == 'list':
-                    # This is our 1 list URL - expand it to get 3 recipes
-                    try:
-                        async with httpx.AsyncClient(timeout=15.0) as client:
-                            response = await client.get(url, follow_redirects=True)
-                            response.raise_for_status()
-                            html_content = response.text
-                        
-                        # Use ListParser to extract just 3 recipe URLs
-                        intelligent_parser = ListParser(ctx.deps.openai_key)
-                        extracted_recipes = await intelligent_parser.extract_recipe_urls(url, html_content, max_urls=3)
-                        
-                        if extracted_recipes:
-                            expanded_results.extend(extracted_recipes)
-                            print(f"   ✅ Extracted {len(extracted_recipes)} recipes from list URL")
-                        else:
-                            print(f"   ⚠️ No recipes extracted from list URL")
-                    except Exception as e:
-                        print(f"   ❌ Failed to expand list URL: {e}")
-                        fp1_failures.append({
-                            "url": url,
-                            "title": url_dict.get('title', ''),
-                            "error": str(e),
-                            "failure_point": "List_Expansion_Failure"
-                        })
-                else:
-                    # Regular recipe URL - pass through unchanged
-                    expanded_results.append(url_dict)
-            stage3_time = time.time() - stage3_start
-            print(f"📊 Batch {batch_count} - Stage 3: URL Expansion - {len(urls_to_process)} → {len(expanded_results)} URLs - {stage3_time:.2f}s")
-            
-            # Stage 3.5: Re-rank expanded URLs by priority sites (only if we expanded)
-            # This ensures quality sites process first after expansion
-            priority_urls = []
-            non_priority_urls = []
-            
-            for result in expanded_results:
-                url = result.get('url', '').lower()
-                if any(f"//{priority_site}" in url or f".{priority_site}" in url for priority_site in PRIORITY_SITES):
-                    # Find which priority site and add index for sorting
-                    for i, priority_site in enumerate(PRIORITY_SITES):
-                        if f"//{priority_site}" in url or f".{priority_site}" in url:
-                            result['_priority_index'] = i
-                            priority_urls.append(result)
-                            break
-                else:
-                    non_priority_urls.append(result)
-            
-            # Sort priority URLs by their order in PRIORITY_SITES
-            priority_urls.sort(key=lambda x: x.get('_priority_index', 999))
-            
-            # Combine: priority sites first, then non-priority
-            expanded_results = priority_urls + non_priority_urls
-            
-            print(f"📊 Batch {batch_count} - Stage 3.5: Quality Ranking - {len(priority_urls)} priority sites, {len(non_priority_urls)} others")
-        else:
-            # No list URLs, skip both expansion AND re-ranking
-            expanded_results = urls_to_process
-            fp1_failures = []
-            stage3_time = 0
-            print(f"📊 Batch {batch_count} - Stage 3 & 3.5: Skipped (no list URLs) - 0.00s")
-        
-        if not expanded_results:
-            print(f"⚠️  Batch {batch_count} - No URLs after expansion, skipping")
-            all_fp1_failures.extend(fp1_failures)
-            continue
-        
-        # Stage 4: Recipe Scraping for this batch
-        stage4_start = time.time()
-        extraction_tasks = []
-        successful_parses = []
-        failed_parses = []
-        
-        for result in expanded_results:
-            url = result.get("url")
-            if url:
-                task = parse_recipe(url, ctx.deps.openai_key)
-                extraction_tasks.append(task)
-        
-        # Execute all extractions in parallel
-        if extraction_tasks:
-            extracted_data = await asyncio.gather(*extraction_tasks, return_exceptions=True)
-            
-            # Process extracted data
-            for i, data in enumerate(extracted_data):
-                if isinstance(data, dict) and not data.get("error"):
-                    # Add search metadata
-                    data["search_title"] = expanded_results[i].get("title", "")
-                    data["search_snippet"] = expanded_results[i].get("snippet", "")
-                    successful_parses.append(data)
-                else:
-                    # Track failed parse
-                    failed_parses.append({
-                        "result": expanded_results[i],
-                        "error": str(data) if isinstance(data, Exception) else data.get("error", "Unknown error"),
-                        "failure_point": "Recipe_Parsing_Failure_Point"
-                    })
-            
-            # Parse nutrition data for successful recipes
-            for recipe in successful_parses:
-                raw_nutrition = recipe.get("nutrition", [])
-                recipe["structured_nutrition"] = parse_nutrition_list(raw_nutrition)
-        
-        stage4_time = time.time() - stage4_start
-        batch_total_time = time.time() - batch_total_start
-        
-        print(f"📊 Batch {batch_count} - Stage 4: Recipe Scraping - Successfully parsed {len(successful_parses)} recipes - {stage4_time:.2f}s")
-        print(f"⏱️  Batch {batch_count} Total Time: {batch_total_time:.2f}s")
-        
-        if failed_parses:
-            failed_urls = [fp.get("result", {}).get("url", "") for fp in failed_parses]
-            print(f"❌ Batch {batch_count} failed to parse: {', '.join(failed_urls)}")
-        
-        # Add batch results to overall collections
-        all_recipes.extend(successful_parses)
-        all_fp1_failures.extend(fp1_failures)
-        all_failed_parses.extend(failed_parses)
-        
-        # Early exit: if we have enough recipes, stop processing batches
-        if len(all_recipes) >= needed_count:
-            print(f"✅ Found {len(all_recipes)} recipes (needed {needed_count}), stopping batch processing")
-            break
-        else:
-            print(f"📊 Progress: {len(all_recipes)}/{needed_count} recipes found, continuing...")
-    
-    # Stage 5: Final Ranking across ALL batches
-    stage5_start = time.time()
-    if len(all_recipes) > 1:
-        final_ranked_recipes = await rerank_with_full_recipe_data(
-            all_recipes,
-            user_query,
-            ctx.deps.openai_key
-        )
-    else:
-        final_ranked_recipes = all_recipes
-    stage5_time = time.time() - stage5_start
-    
-    print(f"\n📊 Stage 5: Final Ranking - Ranking {len(all_recipes)} total recipes - {stage5_time:.2f}s")
-    
-    # Stage 6: Final Formatting
-    stage6_start = time.time()
-    formatted_recipes = []
-    for recipe in final_ranked_recipes[:needed_count]:
-        # Parse ingredients into structured format
-        raw_ingredients = recipe.get("ingredients", [])
-        structured_ingredients = parse_ingredients_list(raw_ingredients)
-        
-        # Parse nutrition into structured format
-        raw_nutrition = recipe.get("nutrition", [])
-        structured_nutrition = parse_nutrition_list(raw_nutrition)
-        
-        formatted_recipes.append({
-            "id": len(formatted_recipes) + 1,
-            "title": recipe.get("title", recipe.get("search_title", "")),
-            "image": recipe.get("image_url", ""),
-            "sourceUrl": recipe.get("source_url", ""),
-            "servings": recipe.get("servings", ""),
-            "readyInMinutes": recipe.get("cook_time", ""),
-            "ingredients": structured_ingredients,
-            "nutrition": structured_nutrition,
-            "_instructions_for_analysis": recipe.get("instructions", [])
-        })
-    
-    # Track failures for reporting
-    all_failures = fp1_failures + failed_parses
-    failed_parse_report = {
-        "total_failed": len(all_failures),
-        "content_scraping_failures": len(fp1_failures),
-        "recipe_parsing_failures": len(failed_parses),
-        "failed_urls": [
-            {
-                "url": fp.get("url") or fp.get("result", {}).get("url", ""),
-                "failure_point": fp.get("failure_point", "Unknown"),
-                "error": fp.get("error", "Unknown error")
-            }
-            for fp in all_failures
-        ]
-    }
-    stage6_time = time.time() - stage6_start
-    
-    print(f"📊 Stage 6: Final Formatting - Structured {len(formatted_recipes)} recipes - {stage6_time:.2f}s")
-    
-    # Performance summary
-    total_time = time.time() - total_start
-    print(f"\n⏱️  BATCH PERFORMANCE:")
-    print(f"   Total Time: {total_time:.2f}s")
-    print(f"   Stage 3 (URL Expansion): {stage3_time:.2f}s ({(stage3_time/total_time)*100:.1f}%)")
-    print(f"   Stage 4 (Recipe Scraping): {stage4_time:.2f}s ({(stage4_time/total_time)*100:.1f}%)")
-    print(f"   Stage 5 (Final Ranking): {stage5_time:.2f}s ({(stage5_time/total_time)*100:.1f}%)")
-    print(f"   Stage 6 (Final Formatting): {stage6_time:.2f}s ({(stage6_time/total_time)*100:.1f}%)")
-    
-    # Create minimal context for agent
-    minimal_recipes = []
-    for recipe in formatted_recipes:
-        minimal_recipes.append({
-            "id": recipe["id"],
-            "title": recipe["title"],
-            "servings": recipe["servings"],
-            "readyInMinutes": recipe["readyInMinutes"],
-            "ingredients": [ing["ingredient"] for ing in recipe["ingredients"][:8]],
-            "nutrition": recipe.get("nutrition", [])
-        })
-    
-    # TODO: DELETE LATER - Development debugging to see final recipe selections
-    print("\n" + "="*60)
-    print("🍳 FINAL 5 RECIPES SELECTED:")
-    print("="*60)
-    for i, recipe in enumerate(formatted_recipes[:5], 1):
-        print(f"{i}. {recipe.get('title', 'Unknown Title')}")
-        print(f"   URL: {recipe.get('sourceUrl', 'No URL')}")
-    print("="*60 + "\n")
-    # END DELETE LATER
-    
-    return {
-        "results": minimal_recipes,  # Minimal context for agent
-        "full_recipes": formatted_recipes,  # Full data for iOS
-        "totalResults": len(formatted_recipes),
-        "searchQuery": user_query,
-        "_failed_parse_report": failed_parse_report
-    }
 
 async def extract_recipe_urls_from_list(url: str, content: str, max_urls: int = 5) -> List[Dict]:
     """
@@ -1320,10 +936,61 @@ async def rerank_with_full_recipe_data(scraped_recipes: List[Dict], query: str, 
     if not scraped_recipes:
         return []
     
-    # STAGE 5A: Data Preparation
+    # STAGE 5A: Recipe Filtering - Remove insufficient recipes
     substage5a_start = time.time()
+    filtered_recipes = []
+    
+    for recipe in scraped_recipes:
+        # Check required fields
+        has_title = bool(recipe.get("title", "").strip())
+        has_image = bool(recipe.get("image_url", "").strip())
+        has_ingredients = bool(recipe.get("ingredients", []))
+        has_nutrition = bool(recipe.get("nutrition", []))
+        
+        # Check required nutrition fields (calories, protein, fat, carbs)
+        nutrition_data = recipe.get("nutrition", [])
+        required_nutrition = {"calories", "protein", "fat", "carbs"}
+        found_nutrition = set()
+        
+        for nutrition_item in nutrition_data:
+            if isinstance(nutrition_item, str):
+                # Handle string format like "250 calories"
+                nutrition_lower = nutrition_item.lower()
+                for req_nutrient in required_nutrition:
+                    if req_nutrient in nutrition_lower:
+                        found_nutrition.add(req_nutrient)
+            elif isinstance(nutrition_item, dict):
+                # Handle structured format
+                nutrient_name = nutrition_item.get("name", "").lower()
+                if nutrient_name in required_nutrition:
+                    found_nutrition.add(nutrient_name)
+        
+        has_required_nutrition = len(found_nutrition) >= 4
+        
+        # Only keep recipes that meet ALL criteria
+        if has_title and has_image and has_ingredients and has_required_nutrition:
+            filtered_recipes.append(recipe)
+        else:
+            missing_fields = []
+            if not has_title: missing_fields.append("title")
+            if not has_image: missing_fields.append("image")
+            if not has_ingredients: missing_fields.append("ingredients")
+            if not has_required_nutrition: 
+                missing_nutrition = required_nutrition - found_nutrition
+                missing_fields.append(f"nutrition({','.join(missing_nutrition)})")
+            
+            print(f"   ❌ Filtered out recipe '{recipe.get('title', 'Untitled')}' - Missing: {', '.join(missing_fields)}")
+    
+    print(f"   ✅ Recipe filtering: {len(filtered_recipes)}/{len(scraped_recipes)} recipes passed validation")
+    substage5a_time = time.time() - substage5a_start
+    
+    if not filtered_recipes:
+        return []
+    
+    # STAGE 5B: Data Preparation
+    substage5b_start = time.time()
     detailed_recipes = []
-    for i, recipe in enumerate(scraped_recipes):
+    for i, recipe in enumerate(filtered_recipes):
         # Build comprehensive recipe summary for LLM analysis
         ingredients_list = recipe.get("ingredients", [])[:10]  # First 10 ingredients
         # Extract full ingredient amounts from structured format
@@ -1342,10 +1009,10 @@ Servings: {recipe.get('servings', 'Not specified')}
 Instructions Preview: {instructions_preview}..."""
         
         detailed_recipes.append(recipe_summary)
-    substage5a_time = time.time() - substage5a_start
+    substage5b_time = time.time() - substage5b_start
     
-    # STAGE 5B: Prompt Construction  
-    substage5b_start = time.time()
+    # STAGE 5C: Prompt Construction  
+    substage5c_start = time.time()
     recipes_text = "\n\n".join(detailed_recipes)
     
     prompt = f"""User is searching for: "{query}"
@@ -1376,10 +1043,10 @@ Instructions Preview: {instructions_preview}..."""
 
     Return ONLY a comma-separated list of numbers in order of relevance (e.g., "3,1,5,2,4...")
     Best match first based on the COMPLETE recipe content."""
-    substage5b_time = time.time() - substage5b_start
+    substage5c_time = time.time() - substage5c_start
 
-    # STAGE 5C: LLM API Call
-    substage5c_start = time.time()
+    # STAGE 5D: LLM API Call
+    substage5d_start = time.time()
     async with httpx.AsyncClient() as client:
         response = await client.post(
             "https://api.openai.com/v1/chat/completions",
@@ -1399,15 +1066,15 @@ Instructions Preview: {instructions_preview}..."""
         )
         
         if response.status_code != 200:
-            # If LLM fails, return original order
-            return scraped_recipes
+            # If LLM fails, return filtered recipes in original order
+            return filtered_recipes
         
         data = response.json()
         ranking_text = data['choices'][0]['message']['content'].strip()
-    substage5c_time = time.time() - substage5c_start
+    substage5d_time = time.time() - substage5d_start
         
-    # STAGE 5D: Response Processing
-    substage5d_start = time.time()
+    # STAGE 5E: Response Processing
+    substage5e_start = time.time()
     # Parse the ranking
     try:
         rankings = [int(x.strip()) - 1 for x in ranking_text.split(',')]
@@ -1415,27 +1082,28 @@ Instructions Preview: {instructions_preview}..."""
         
         # Add recipes in the ranked order
         for idx in rankings:
-            if 0 <= idx < len(scraped_recipes) and scraped_recipes[idx] not in reranked:
-                reranked.append(scraped_recipes[idx])
+            if 0 <= idx < len(filtered_recipes) and filtered_recipes[idx] not in reranked:
+                reranked.append(filtered_recipes[idx])
         
         # Add any missing recipes
-        for recipe in scraped_recipes:
+        for recipe in filtered_recipes:
             if recipe not in reranked:
                 reranked.append(recipe)
         
         return reranked
         
     except (ValueError, IndexError):
-        # If parsing fails, return original order
-        return scraped_recipes
+        # If parsing fails, return filtered recipes in original order
+        return filtered_recipes
     finally:
-        substage5d_time = time.time() - substage5d_start
+        substage5e_time = time.time() - substage5e_start
         
         # Print Stage 5 sub-timings
-        print(f"   🔍 Stage 5A (Data Prep): {substage5a_time:.3f}s")
-        print(f"   🔍 Stage 5B (Prompt Build): {substage5b_time:.3f}s") 
-        print(f"   🔍 Stage 5C (LLM API Call): {substage5c_time:.3f}s")
-        print(f"   🔍 Stage 5D (Response Parse): {substage5d_time:.3f}s")
+        print(f"   🔍 Stage 5A (Recipe Filtering): {substage5a_time:.3f}s")
+        print(f"   🔍 Stage 5B (Data Prep): {substage5b_time:.3f}s")
+        print(f"   🔍 Stage 5C (Prompt Build): {substage5c_time:.3f}s") 
+        print(f"   🔍 Stage 5D (LLM API Call): {substage5d_time:.3f}s")
+        print(f"   🔍 Stage 5E (Response Parse): {substage5e_time:.3f}s")
 
 
 

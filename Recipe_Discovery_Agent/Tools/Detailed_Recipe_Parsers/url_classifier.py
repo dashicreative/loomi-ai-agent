@@ -73,6 +73,14 @@ class BatchURLClassifier:
                 async with httpx.AsyncClient(timeout=5.0) as client:
                     # Stream partial content
                     async with client.stream('GET', url, follow_redirects=True) as response:
+                        # Add debug logging
+                        print(f"🔍 Debug: {url} returned status {response.status_code}")
+                        
+                        if response.status_code == 403:
+                            print(f"⚠️  403 Forbidden for {url} - content will be empty")
+                        elif response.status_code != 200:
+                            print(f"⚠️  HTTP {response.status_code} for {url}")
+                        
                         content = b""
                         async for chunk in response.aiter_bytes(chunk_size=1024):
                             content += chunk
@@ -119,20 +127,29 @@ class BatchURLClassifier:
                 'content_preview': sample['content'][:2000]  # Limit per-URL content
             })
         
-        prompt = f"""Classify these URLs based on their content and structure.
+        prompt = f"""Classify these URLs based on their content and structure using these flexible guidelines.
 
 URL TYPES:
-- recipe: Individual recipe page with ingredients and instructions
+- recipe: Individual recipe page with ingredients and instructions  
 - list: Collection of multiple recipes (roundups, category pages, search results)
 - blog: Blog post that may discuss recipes but isn't a recipe itself
 - social: Social media platform (reddit, youtube, pinterest, etc.)
 - other: Doesn't fit above categories
 
-CLASSIFICATION SIGNALS TO LOOK FOR:
-- recipe: JSON-LD Recipe schema, ingredient lists, cooking instructions, nutrition facts
-- list: Multiple recipe cards, pagination, "X recipes" in title, category structure
-- blog: Article structure, author byline, blog post metadata, narrative content
-- social: User profiles, comments sections, sharing features, platform signatures
+CLASSIFICATION GUIDELINES (use as flexible guides, not strict rules):
+
+PRIMARY LIST SIGNALS (strong indicators, use judgment):
+- Page titles suggesting collections (like "recipes", "best", "top", "ideas" - often plural)
+- URL patterns suggesting categories (like /recipes/category/, /collections/, /roundups/ - but variations exist)  
+- Multiple recipe cards or links (typically 10+ different recipe titles)
+- Missing both ingredients AND nutrition sections (suggests overview page)
+
+PRIMARY RECIPE SIGNALS (strong indicators, use judgment):
+- Contains ingredients section with quantities and measurements
+- Contains step-by-step cooking instructions
+- Single recipe focus with one main dish
+
+Use your judgment to weigh these signals - they're guidelines, not absolute rules.
 
 Analyze each URL and return classifications in this exact JSON format:
 {{
