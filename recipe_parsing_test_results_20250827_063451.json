@@ -1,0 +1,60 @@
+{
+  "total_tests": 4,
+  "successful_parses": 0,
+  "failed_parses": 4,
+  "partial_parses": 0,
+  "timing_data": [
+    4.568001985549927,
+    15.861944198608398,
+    4.3498358726501465,
+    11.048185110092163
+  ],
+  "failures_by_site": {
+    "www.delish.com": 2,
+    "www.seriouseats.com": 1,
+    "www.thepioneerwoman.com": 1
+  },
+  "success_by_site": {},
+  "detailed_results": [
+    {
+      "url": "https://www.delish.com/cooking/recipe-ideas/a21566115/how-to-cook-steak-in-the-oven/",
+      "category": "Currently Failing URLs",
+      "success": false,
+      "partial_success": false,
+      "parse_time": 4.568001985549927,
+      "error": "Validation failed: missing ['instructions']",
+      "data_completeness": {},
+      "parsed_data": null
+    },
+    {
+      "url": "https://www.delish.com/cooking/recipe-ideas/a25658914/pepper-steak-recipe/",
+      "category": "Currently Failing URLs",
+      "success": false,
+      "partial_success": false,
+      "parse_time": 15.861944198608398,
+      "error": "Validation failed: missing ['instructions']",
+      "data_completeness": {},
+      "parsed_data": null
+    },
+    {
+      "url": "https://www.seriouseats.com/butter-basted-pan-seared-steaks-recipe",
+      "category": "Currently Failing URLs",
+      "success": false,
+      "partial_success": false,
+      "parse_time": 4.3498358726501465,
+      "error": "Validation failed: missing ['instructions']",
+      "data_completeness": {},
+      "parsed_data": null
+    },
+    {
+      "url": "https://www.thepioneerwoman.com/food-cooking/recipes/a61827998/steak-diane-recipe/",
+      "category": "Currently Failing URLs",
+      "success": false,
+      "partial_success": false,
+      "parse_time": 11.048185110092163,
+      "error": "Validation failed: missing ['instructions']",
+      "data_completeness": {},
+      "parsed_data": null
+    }
+  ]
+}

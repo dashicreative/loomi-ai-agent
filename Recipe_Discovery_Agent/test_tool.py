@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Test script to debug process_recipe_batch_tool"""
+"""Test script to debug search_and_process_recipes_tool"""
 
 import asyncio
 import os
 from dotenv import load_dotenv
 from Dependencies import RecipeDeps
 from pydantic_ai import RunContext
-from Tools import process_recipe_batch_tool
+from Tools import search_and_process_recipes_tool
 
 # Load environment variables
 load_dotenv()
@@ -26,17 +26,11 @@ async def test():
     
     ctx = MockContext()
     
-    # Test URLs
-    test_urls = [
-        {"url": "https://www.allrecipes.com/recipe/steak", "title": "Test Steak Recipe"}
-    ]
-    
-    print("Testing process_recipe_batch_tool...")
+    print("Testing search_and_process_recipes_tool...")
     try:
-        result = await process_recipe_batch_tool(
+        result = await search_and_process_recipes_tool(
             ctx,
-            urls=test_urls,
-            user_query="steak recipe",
+            query="steak recipe",
             needed_count=5
         )
         print(f"Result: {result}")

@@ -1,3 +1,3 @@
-from .Tools import web_search_tool, process_recipe_batch_tool
+from .Tools import search_and_process_recipes_tool
 
-__all__ = ['web_search_tool', 'process_recipe_batch_tool'] 
+__all__ = ['search_and_process_recipes_tool'] 

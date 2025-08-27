@@ -2,7 +2,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models import KnownModelName
 from pathlib import Path
 from Structured_Output import AgentOutput
-from Tools import web_search_tool, process_recipe_batch_tool
+from Tools import search_and_process_recipes_tool
 from Dependencies import RecipeDeps
 import os
 import time
@@ -39,7 +39,7 @@ recipe_discovery_agent = Agent(
     model,
     system_prompt=load_system_prompt("System_Prompt.txt"),
     # Removed output_type=AgentOutput for performance - agent only returns response text
-    tools=[web_search_tool, process_recipe_batch_tool],
+    tools=[search_and_process_recipes_tool],
     deps_type=RecipeDeps
 )
 
