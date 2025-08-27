@@ -233,6 +233,14 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         if batch_list_urls:
             url_backlog.extend(batch_list_urls)
             print(f"   📊 Deferring {len(batch_list_urls)} list URLs to backlog (will process only if needed)")
+            print(f"   🔍 List URLs identified:")
+            for list_url_dict in batch_list_urls:
+                list_url = list_url_dict.get('url', '')
+                list_title = list_url_dict.get('title', 'No title')
+                classification = batch_classification_map.get(list_url)
+                confidence = classification.confidence if classification else 0.0
+                print(f"     - {list_title[:60]}... → {list_url}")
+                print(f"       Confidence: {confidence:.2f}")
         
         # Only process recipe URLs
         urls_to_process = batch_recipe_urls
