@@ -95,22 +95,47 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     print(f"🔍 COMPLETE RECIPE SEARCH: Processing '{query}'")
     total_pipeline_start = time.time()
     
-    # Stage 1: Web Search
+    # Stage 1: Web Search with Google Custom Search fallback
     stage1_start = time.time()
     search_results = await search_recipes_serpapi(ctx, query, number=40)
-    stage1_time = time.time() - stage1_start
     
     raw_results = search_results.get("results", [])
+    
+    # FALLBACK: Use Google Custom Search if SerpAPI returns < 20 results
+    search_method = "SerpAPI only"
+    if len(raw_results) < 20:
+        print(f"⚠️  SerpAPI returned only {len(raw_results)} results, using Google Custom Search fallback...")
+        
+        try:
+            google_results = await search_recipes_google_custom(ctx, query, number=40)
+            google_urls = google_results.get("results", [])
+            
+            # Combine SerpAPI and Google results, avoiding duplicates
+            existing_urls = {result.get("url") for result in raw_results}
+            for google_result in google_urls:
+                if google_result.get("url") not in existing_urls:
+                    raw_results.append(google_result)
+            
+            print(f"🔄 Combined results: {len(raw_results)} URLs total (SerpAPI + Google Custom Search)")
+            search_method = "SerpAPI + Google Custom Search"
+            
+        except Exception as e:
+            print(f"⚠️  Google Custom Search fallback failed: {e}")
+            print(f"📊 Continuing with {len(raw_results)} URLs from SerpAPI only")
+    
+    stage1_time = time.time() - stage1_start
+    
     if not raw_results:
         return {
             "results": [],
             "full_recipes": [],
             "totalResults": 0,
             "searchQuery": query,
-            "error": "No search results found"
+            "error": "No search results found from either search API"
         }
     
     print(f"📊 Stage 1: Web Search - Found {len(raw_results)} URLs - {stage1_time:.2f}s")
+    print(f"🔍 Search method used: {search_method}")
     
     # Stage 2: Initial Ranking
     stage2_start = time.time()
@@ -518,7 +543,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     
     # TODO: DELETE LATER - Development debugging to see final recipe selections
     print("\n" + "="*60)
-    print("🍳 FINAL 5 RECIPES SELECTED:")
+    print(f"🍳 FINAL {len(formatted_recipes)} RECIPES SELECTED:")
     print("="*60)
     for i, recipe in enumerate(formatted_recipes[:5], 1):
         print(f"{i}. {recipe.get('title', 'Unknown Title')}")
@@ -880,6 +905,84 @@ async def search_recipes_serpapi(ctx: RunContext[RecipeDeps], query: str, number
             "query": query
         }
 
+
+async def search_recipes_google_custom(ctx: RunContext[RecipeDeps], query: str, number: int = 40) -> Dict:
+    """
+    FALLBACK FUNCTION: Search for recipes using Google Custom Search API.
+    Used when SerpAPI returns insufficient results (<20 URLs).
+    
+    Args:
+        query: The search query for recipes
+        number: Number of results to return (default 40)
+    
+    Returns:
+        Dictionary containing search results with URLs and snippets
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Add "recipe" to query if not already present
+        if "recipe" not in query.lower():
+            query = f"{query} recipe"
+        
+        # Google Custom Search API parameters
+        params = {
+            "key": ctx.deps.google_search_key,
+            "cx": ctx.deps.google_search_engine_id,  # You'll need to add this to your .env
+            "q": query,
+            "num": min(number, 10),  # Google Custom Search max is 10 per request
+            "hl": "en",
+            "gl": "us",
+            "safe": "off"
+        }
+        
+        try:
+            # Make multiple requests if we need more than 10 results
+            all_results = []
+            for start in range(1, number + 1, 10):  # Start at 1, increment by 10
+                if len(all_results) >= number:
+                    break
+                    
+                params["start"] = start
+                response = await client.get("https://www.googleapis.com/customsearch/v1", params=params)
+                response.raise_for_status()
+                data = response.json()
+                
+                items = data.get("items", [])
+                if not items:
+                    break  # No more results available
+                
+                # Format results to match SerpAPI format
+                for item in items:
+                    url = item.get("link", "")
+                    
+                    # Skip blocked sites entirely
+                    is_blocked = any(blocked_site in url.lower() for blocked_site in BLOCKED_SITES)
+                    if is_blocked:
+                        continue
+                    
+                    all_results.append({
+                        "title": item.get("title", ""),
+                        "url": url,
+                        "snippet": item.get("snippet", ""),
+                        "source": "google_custom_search",
+                        "google_position": len(all_results) + 1
+                    })
+            
+            return {
+                "results": all_results[:number],
+                "total": len(all_results[:number]),
+                "query": query
+            }
+            
+        except Exception as e:
+            print(f"⚠️  Google Custom Search fallback failed: {e}")
+            return {
+                "results": [],
+                "total": 0,
+                "query": query,
+                "error": f"Google Custom Search failed: {str(e)}"
+            }
+
+
 async def rerank_results_with_llm(results: List[Dict], query: str, openai_key: str, top_k: int = 10) -> List[Dict]:
     """
     SUPPLEMENTAL FUNCTION: Use GPT-3.5-turbo to rerank search results based on relevance to user query.
@@ -1025,17 +1128,15 @@ async def rerank_with_full_recipe_data(scraped_recipes: List[Dict], query: str, 
         
         has_required_nutrition = len(found_nutrition) >= 4
         
-        # Only keep recipes that meet ALL criteria
-        if has_title and has_image and has_ingredients and has_required_nutrition:
+        # Only keep recipes that meet ALL criteria (nutrition is optional)
+        if has_title and has_image and has_ingredients:
             filtered_recipes.append(recipe)
         else:
             missing_fields = []
             if not has_title: missing_fields.append("title")
             if not has_image: missing_fields.append("image")
             if not has_ingredients: missing_fields.append("ingredients")
-            if not has_required_nutrition: 
-                missing_nutrition = required_nutrition - found_nutrition
-                missing_fields.append(f"nutrition({','.join(missing_nutrition)})")
+            # Nutrition is now optional - not included in filtering criteria
             
             print(f"   ❌ Filtered out recipe '{recipe.get('title', 'Untitled')}' - Missing: {', '.join(missing_fields)}")
             print(f"      URL: {recipe.get('source_url', 'No URL')}")

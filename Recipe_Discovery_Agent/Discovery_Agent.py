@@ -29,7 +29,9 @@ model: KnownModelName = 'openai:gpt-4o'  # Using type-safe model name
 deps = RecipeDeps(
     serpapi_key=os.getenv("SERPAPI_KEY"),
     firecrawl_key=os.getenv("FIRECRAWL_API_KEY"),
-    openai_key=os.getenv("OPENAI_API_KEY")
+    openai_key=os.getenv("OPENAI_API_KEY"),
+    google_search_key=os.getenv("GOOGLE_SEARCH_KEY"),
+    google_search_engine_id=os.getenv("GOOGLE_SEARCH_ENGINE_ID")
 )
 
 
