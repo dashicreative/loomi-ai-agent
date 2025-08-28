@@ -19,8 +19,48 @@ from .Detailed_Recipe_Parsers.ingredient_parser import parse_ingredients_list
 from .Detailed_Recipe_Parsers.nutrition_parser import parse_nutrition_list
 from .Detailed_Recipe_Parsers.list_parser import ListParser
 from .Detailed_Recipe_Parsers.url_classifier import classify_urls_batch
-from .query_analyzer import analyze_query
 from bs4 import BeautifulSoup
+import json
+
+
+def normalize_nutrition_data(recipe):
+    """
+    Convert all nutrition formats to simple string array for consistency.
+    This ensures all recipes have nutrition data in the same format regardless of parsing source.
+    """
+    unified = []
+    
+    # Priority 1: From structured format (JSON-LD parsed)
+    if recipe.get('structured_nutrition'):
+        for item in recipe['structured_nutrition']:
+            if isinstance(item, dict) and item.get('amount') and item.get('name'):
+                amount = str(item['amount']).strip()
+                unit = str(item.get('unit', '')).strip()
+                name = str(item['name']).strip().lower()
+                
+                # Normalize common nutrition names
+                if name in ['protein', 'fat', 'carbs', 'carbohydrates']:
+                    unified.append(f"{amount}{unit} {name}")
+                elif name in ['calories', 'kcal']:
+                    unified.append(f"{amount} calories")
+                elif name == 'sodium':
+                    unified.append(f"{amount}{unit} sodium")
+                elif name == 'fiber':
+                    unified.append(f"{amount}{unit} fiber")
+    
+    # Priority 2: From raw format (HTML parsed)
+    elif recipe.get('nutrition') and isinstance(recipe['nutrition'], list):
+        for item in recipe['nutrition']:
+            if isinstance(item, str) and item.strip():
+                # Clean up the string format
+                cleaned = item.strip()
+                # Normalize "kcal" to "calories"
+                cleaned = cleaned.replace('kcal calories', 'calories').replace('kcal', 'calories')
+                unified.append(cleaned)
+    
+    # Store the unified format
+    recipe['unified_nutrition'] = unified
+    return recipe
 
 """Complete Data Flow:
 
@@ -79,7 +119,7 @@ BLOCKED_SITES = [
 list_parser = None
 
 
-async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: str, needed_count: int = 5) -> Dict:
+async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: str, needed_count: int = 5, requirements: Dict = None) -> Dict:
     """
     AGENT TOOL: Complete recipe search pipeline - search, rank, expand, scrape, and format.
     
@@ -168,6 +208,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         all_recipes = []
         all_fp1_failures = []
         all_failed_parses = []
+        qualified_recipes = []  # Track verified recipes globally
         batch_count = 0
         url_backlog = []  # List URLs and slow URLs deferred for later processing
         
@@ -325,6 +366,8 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
                     # Add search metadata
                     data["search_title"] = result.get("title", "")
                     data["search_snippet"] = result.get("snippet", "")
+                    # Normalize nutrition data to unified format
+                    data = normalize_nutrition_data(data)
                     successful_parses.append(data)
                 else:
                     # Track failed parse
@@ -360,16 +403,15 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         # Stage 5: Final Ranking after each batch
         stage5_start = time.time()
         if len(all_recipes) > 1:
-            final_ranked_recipes = await rerank_with_full_recipe_data(
-                all_recipes,
-                user_query,
-                ctx.deps.openai_key
-            )
+            # Phase 1: Verify recipes meet requirements
+            qualified_recipes = await verify_recipes_meet_requirements(all_recipes, requirements, ctx.deps.openai_key, user_query)
+            # Phase 2: Rank qualified recipes by relevance  
+            final_ranked_recipes = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
         else:
             final_ranked_recipes = all_recipes
         stage5_time = time.time() - stage5_start
         
-        print(f"📊 Stage 5: Final Ranking after batch {batch_count} - Ranking {len(all_recipes)} total recipes - {stage5_time:.2f}s")
+        print(f"📊 Stage 5: Final Ranking after batch {batch_count} - Ranking {len(final_ranked_recipes)} qualified recipes - {stage5_time:.2f}s")
         
         # Accumulate stage timing
         total_stage5_time += stage5_time
@@ -388,13 +430,18 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         
         stage3_backlog_start = time.time()
         # Process backlog URLs (these are primarily list URLs)
-        for backlog_url_dict in url_backlog:
+        # Process from a copy and remove items as we process them
+        backlog_copy = url_backlog.copy()
+        for backlog_url_dict in backlog_copy:
             if len(final_ranked_recipes) >= needed_count:
                 print(f"   ✅ Found enough final recipes, stopping backlog processing")
                 break
                 
             url = backlog_url_dict.get('url', '')
             print(f"   🔄 Processing backlog URL: {url}")
+            
+            # IMMEDIATELY remove from original backlog so it can't be considered again
+            url_backlog.remove(backlog_url_dict)
             
             # Stage 3: Expand list URL
             try:
@@ -441,10 +488,29 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
                             if isinstance(data, dict) and not data.get("error"):
                                 data["search_title"] = extracted_recipes[i].get("title", "")
                                 data["search_snippet"] = extracted_recipes[i].get("snippet", "")
+                                # Normalize nutrition data to unified format
+                                data = normalize_nutrition_data(data)
                                 all_recipes.append(data)
                                 print(f"      ✅ Successfully parsed recipe {len(all_recipes)}/{needed_count}")
                             else:
                                 print(f"      ❌ Failed to parse: {extracted_recipes[i].get('url', '')}")
+                        
+                        # Run verification on ONLY the newly parsed recipes from this backlog URL
+                        if requirements and extracted_data:
+                            new_recipes = []
+                            for i, data in enumerate(extracted_data):
+                                if isinstance(data, dict) and not data.get("error"):
+                                    new_recipes.append(data)
+                            
+                            if new_recipes:
+                                # Phase 1: Verify ONLY the new recipes (not all recipes)
+                                newly_qualified = await verify_recipes_meet_requirements(new_recipes, requirements, ctx.deps.openai_key, user_query)
+                                qualified_recipes.extend(newly_qualified)  # Add to global qualified list
+                                
+                                # Check if we have enough qualified recipes to stop
+                                if len(qualified_recipes) >= needed_count:
+                                    print(f"      ✅ Found {len(qualified_recipes)} qualified recipes (needed {needed_count}), stopping backlog processing")
+                                    break
                 else:
                     print(f"      ⚠️ No recipes extracted from list URL")
                     
@@ -464,17 +530,18 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         
         # Stage 5: Final Ranking after backlog processing
         stage5_start = time.time()
-        if len(all_recipes) > 1:
-            final_ranked_recipes = await rerank_with_full_recipe_data(
-                all_recipes,
-                user_query,
-                ctx.deps.openai_key
-            )
+        if len(qualified_recipes) > 0:
+            # Phase 2: Rank qualified recipes by relevance (verification already done)
+            final_ranked_recipes = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
+        elif len(all_recipes) > 1:
+            # Fallback: verify all recipes if no qualified recipes found yet
+            qualified_recipes = await verify_recipes_meet_requirements(all_recipes, requirements, ctx.deps.openai_key, user_query)
+            final_ranked_recipes = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
         else:
             final_ranked_recipes = all_recipes
         stage5_time = time.time() - stage5_start
         
-        print(f"📊 Stage 5: Final Ranking after backlog - Ranking {len(all_recipes)} total recipes - {stage5_time:.2f}s")
+        print(f"📊 Stage 5: Final Ranking after backlog - Ranking {len(final_ranked_recipes)} qualified recipes - {stage5_time:.2f}s")
         
         # Accumulate stage timing
         total_stage5_time += stage5_time
@@ -683,7 +750,6 @@ Content to analyze:
             elif '```' in llm_response:
                 llm_response = llm_response.split('```')[1]
             
-            import json
             recipe_data = json.loads(llm_response)
             recipes = recipe_data.get('recipes', [])
             
@@ -1092,199 +1158,209 @@ async def rerank_results_with_llm(results: List[Dict], query: str, openai_key: s
             return results[:top_k]
 
 
-async def rerank_with_full_recipe_data(scraped_recipes: List[Dict], query: str, openai_key: str) -> List[Dict]:
+async def verify_recipes_meet_requirements(scraped_recipes: List[Dict], requirements: Dict, openai_key: str, user_query: str = "") -> List[Dict]:
     """
-    ENHANCED: Two-stage ranking system with query analysis and hard requirement enforcement.
-    
-    Stage 1: Extract hard requirements from query (nutrition, allergies, time, etc.)
-    Stage 2: Enhanced LLM ranking with explicit requirement enforcement
-    
-    Uses complete recipe information (ingredients, instructions, timing) for intelligent ranking.
-    Much more accurate than title/snippet ranking for complex queries.
+    Phase 1: Strict verification LLM - Binary PASS/FAIL verification only.
+    Fast and focused on requirement checking.
     
     Args:
         scraped_recipes: List of recipes with full parsed data
+        requirements: Strict requirements that must be met
+        openai_key: OpenAI API key
+        
+    Returns:
+        List of recipes that pass ALL requirements
+    """
+    if not scraped_recipes or not requirements:
+        return scraped_recipes
+    
+    # Build verification prompt from requirements
+    verification_rules = []
+    
+    # Add nutrition requirements
+    if "nutrition" in requirements:
+        nutrition_reqs = requirements["nutrition"]
+        for nutrient, constraints in nutrition_reqs.items():
+            if "min" in constraints:
+                verification_rules.append(f"- {nutrient.upper()} must be ≥ {constraints['min']}g (check nutrition data)")
+            if "max" in constraints:
+                verification_rules.append(f"- {nutrient.upper()} must be ≤ {constraints['max']}g (check nutrition data)")
+    
+    # Add ingredient exclusions
+    if "exclude_ingredients" in requirements:
+        ingredients = requirements["exclude_ingredients"]
+        verification_rules.append(f"- Must NOT contain: {', '.join(ingredients)} (check ingredients list)")
+    
+    # Add time constraints
+    if "cooking_constraints" in requirements and "cook_time" in requirements["cooking_constraints"]:
+        time_constraint = requirements["cooking_constraints"]["cook_time"]
+        if "max" in time_constraint:
+            verification_rules.append(f"- Cooking time must be ≤ {time_constraint['max']} minutes")
+    
+    if not verification_rules:
+        return scraped_recipes  # No requirements to verify
+    
+    # Prepare recipe data for verification
+    recipe_data = []
+    for i, recipe in enumerate(scraped_recipes):
+        # Get nutrition data from unified format (normalized during parsing)
+        unified_nutrition = recipe.get('unified_nutrition', [])
+        if unified_nutrition:
+            nutrition_text = ", ".join(unified_nutrition)
+        else:
+            nutrition_text = "NO NUTRITION DATA AVAILABLE"
+        
+        recipe_data.append({
+            "index": i,
+            "title": recipe.get("title", "No title"),
+            "nutrition": nutrition_text,
+            "ingredients": recipe.get("ingredients", [])[:10],  # First 10 ingredients
+            "cook_time": recipe.get("cook_time", "Not specified")
+        })
+        
+        # DEBUG: Print what data is being sent to verification LLM
+        print(f"   🔍 DEBUG Recipe {i+1}: {recipe.get('title', 'No title')}")
+        print(f"      URL: {recipe.get('source_url', 'No URL')}")
+        print(f"      Unified Nutrition: {nutrition_text}")
+        print(f"      Original Raw Field: {recipe.get('nutrition', 'MISSING')}")
+        print(f"      Original Structured Field: {recipe.get('structured_nutrition', 'MISSING')}")
+        print(f"      Normalized Unified Field: {recipe.get('unified_nutrition', 'MISSING')}")
+    
+    verification_rules_text = "\n".join(verification_rules)
+    
+    prompt = f"""User's Original Query: "{user_query}"
+
+You are verifying if recipes meet the user's EXACT requirements extracted from their query.
+The user specifically asked for recipes that meet these NON-NEGOTIABLE requirements:
+
+REQUIREMENTS TO VERIFY:
+{verification_rules_text}
+
+CRITICAL INSTRUCTIONS - FOLLOW EXACTLY:
+- If a recipe shows "NO NUTRITION DATA AVAILABLE" → AUTOMATIC FAIL
+- For nutrition requirements: Look for EXACT numbers (e.g., "30g protein", "25 protein")
+- If nutrition shows vague text without numbers → AUTOMATIC FAIL  
+- If ANY requirement is not met → AUTOMATIC FAIL
+- If ingredients contain excluded items → AUTOMATIC FAIL
+- ONLY return indices of recipes that have COMPLETE nutrition data AND meet ALL requirements
+- When in doubt → FAIL the recipe
+
+Recipes to verify:
+{json.dumps(recipe_data, indent=2)}
+
+Return in this exact JSON format:
+{{
+  "qualifying_indices": [0, 2, 4]
+}}"""
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {openai_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [
+                    {"role": "system", "content": "You are a strict recipe requirement verifier. Return only valid JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.1,
+                "max_tokens": 500
+            }
+        )
+        
+        if response.status_code != 200:
+            # If verification fails, return all recipes (fail-safe)
+            return scraped_recipes
+        
+        try:
+            data = response.json()
+            llm_response = data['choices'][0]['message']['content'].strip()
+            
+            # Parse JSON response
+            if '```json' in llm_response:
+                llm_response = llm_response.split('```json')[1].split('```')[0]
+            elif '```' in llm_response:
+                llm_response = llm_response.split('```')[1]
+            
+            result = json.loads(llm_response.strip())
+            qualifying_indices = result.get('qualifying_indices', [])
+            
+            # Return only qualifying recipes
+            qualifying_recipes = []
+            for idx in qualifying_indices:
+                if 0 <= idx < len(scraped_recipes):
+                    qualifying_recipes.append(scraped_recipes[idx])
+            
+            print(f"   ✅ Phase 1 Verification: {len(qualifying_recipes)}/{len(scraped_recipes)} recipes passed requirements")
+            
+            # DEBUG: Show which recipes passed/failed
+            passed_indices = set(qualifying_indices)
+            for i, recipe in enumerate(scraped_recipes):
+                status = "✅ PASSED" if i in passed_indices else "❌ FAILED"
+                print(f"      {status}: {recipe.get('title', 'No title')}")
+            
+            return qualifying_recipes
+            
+        except (json.JSONDecodeError, KeyError) as e:
+            print(f"   ⚠️  Phase 1 verification failed: {e}")
+            # If parsing fails, return all recipes (fail-safe)
+            return scraped_recipes
+
+
+async def rank_qualified_recipes_by_relevance(qualified_recipes: List[Dict], query: str, openai_key: str) -> List[Dict]:
+    """
+    Phase 2: Relevance Ranking LLM - Ranks pre-qualified recipes by relevance only.
+    Focused on quality and relevance ranking after requirements verification.
+    
+    Args:
+        qualified_recipes: List of recipes that already passed requirement verification
         query: Original user query
         openai_key: OpenAI API key
         
     Returns:
-        Recipes reranked by deep content relevance with requirement enforcement
+        Recipes ranked by relevance to user query
     """
-    if not scraped_recipes:
+    if not qualified_recipes:
         return []
     
-    # STAGE 1: Query Analysis - Extract hard requirements
-    print(f"   🧠 Stage 1: Analyzing query for hard requirements...")
-    stage1_start = time.time()
+    if len(qualified_recipes) == 1:
+        return qualified_recipes  # No need to rank single recipe
     
-    try:
-        extracted_requirements = analyze_query(query)
-        stage1_success = extracted_requirements.get("success", False)
-        requirements_summary = extracted_requirements.get("summary", "No requirements detected")
-        print(f"   📋 Requirements extracted: {requirements_summary}")
-    except Exception as e:
-        print(f"   ⚠️  Query analysis failed: {e}")
-        extracted_requirements = {"success": False, "error": str(e)}
-        stage1_success = False
-        requirements_summary = "Analysis failed - LLM will analyze query directly"
-    
-    stage1_time = time.time() - stage1_start
-    print(f"   ⏱️  Stage 1: Query Analysis - {stage1_time:.3f}s")
-    
-    # STAGE 5A: Recipe Filtering - Remove insufficient recipes  
-    substage5a_start = time.time()
-    filtered_recipes = []
-    
-    for recipe in scraped_recipes:
-        # Check required fields
-        has_title = bool(recipe.get("title", "").strip())
-        has_image = bool(recipe.get("image_url", "").strip())
-        has_ingredients = bool(recipe.get("ingredients", []))
-        has_nutrition = bool(recipe.get("nutrition", []))
-        
-        # Check required nutrition fields (calories, protein, fat, carbs)
-        nutrition_data = recipe.get("nutrition", [])
-        required_nutrition = {"calories", "protein", "fat", "carbs"}
-        found_nutrition = set()
-        
-        for nutrition_item in nutrition_data:
-            if isinstance(nutrition_item, str):
-                # Handle string format like "250 calories"
-                nutrition_lower = nutrition_item.lower()
-                for req_nutrient in required_nutrition:
-                    if req_nutrient in nutrition_lower:
-                        found_nutrition.add(req_nutrient)
-            elif isinstance(nutrition_item, dict):
-                # Handle structured format
-                nutrient_name = nutrition_item.get("name", "").lower()
-                if nutrient_name in required_nutrition:
-                    found_nutrition.add(nutrient_name)
-        
-        has_required_nutrition = len(found_nutrition) >= 4
-        
-        # Only keep recipes that meet ALL criteria (nutrition is optional)
-        if has_title and has_image and has_ingredients:
-            filtered_recipes.append(recipe)
-        else:
-            missing_fields = []
-            if not has_title: missing_fields.append("title")
-            if not has_image: missing_fields.append("image")
-            if not has_ingredients: missing_fields.append("ingredients")
-            # Nutrition is now optional - not included in filtering criteria
-            
-            print(f"   ❌ Filtered out recipe '{recipe.get('title', 'Untitled')}' - Missing: {', '.join(missing_fields)}")
-            print(f"      URL: {recipe.get('source_url', 'No URL')}")
-    
-    print(f"   ✅ Recipe filtering: {len(filtered_recipes)}/{len(scraped_recipes)} recipes passed validation")
-    substage5a_time = time.time() - substage5a_start
-    
-    if not filtered_recipes:
-        return []
-    
-    # STAGE 5B: Data Preparation
-    substage5b_start = time.time()
+    # Build recipe summaries for relevance ranking
     detailed_recipes = []
-    for i, recipe in enumerate(filtered_recipes):
-        # Build comprehensive recipe summary for LLM analysis
-        ingredients_list = recipe.get("ingredients", [])[:10]  # First 10 ingredients
-        # Use raw ingredient strings for ranking (LLM can understand "4 cloves garlic, minced")
+    for i, recipe in enumerate(qualified_recipes):
+        ingredients_list = recipe.get("ingredients", [])[:8]  # First 8 ingredients
         ingredients_text = ", ".join(ingredients_list) if ingredients_list else ""
-        instructions_preview = " ".join(recipe.get("instructions", [])[:2])[:1000]  # First 2 steps, expanded context
-        
-        # Build nutrition text from structured nutrition data
-        structured_nutrition = recipe.get("structured_nutrition", [])
-        nutrition_text = ", ".join([f"{n.get('amount', '')} {n.get('unit', '')} {n.get('name', '')}" for n in structured_nutrition if n.get('name')])
         
         recipe_summary = f"""{i+1}. {recipe.get('title', 'Untitled Recipe')}
 Ingredients: {ingredients_text}
-Nutrition: {nutrition_text}
 Cook Time: {recipe.get('cook_time', 'Not specified')}
-Servings: {recipe.get('servings', 'Not specified')}
-Instructions Preview: {instructions_preview}..."""
+Servings: {recipe.get('servings', 'Not specified')}"""
         
         detailed_recipes.append(recipe_summary)
-    substage5b_time = time.time() - substage5b_start
     
-    # STAGE 5C: Enhanced Prompt Construction with Stage 1 Requirements
-    substage5c_start = time.time()
     recipes_text = "\n\n".join(detailed_recipes)
-    
-    # Build requirements section based on Stage 1 analysis
-    if stage1_success and extracted_requirements.get("extracted_patterns"):
-        requirements_section = f"""EXTRACTED REQUIREMENTS FROM QUERY ANALYSIS:
-{requirements_summary}
-
-DETAILED REQUIREMENTS TO ENFORCE:"""
-        
-        # Add nutrition requirements
-        if "nutrition" in extracted_requirements:
-            nutrition_reqs = extracted_requirements["nutrition"]
-            requirements_section += "\n\n🥗 NUTRITION REQUIREMENTS (STRICTLY ENFORCE):"
-            for nutrient, constraints in nutrition_reqs.items():
-                if "min" in constraints:
-                    requirements_section += f"\n- {nutrient.upper()}: MINIMUM {constraints['min']}g (DISQUALIFY recipes with less)"
-                if "max" in constraints:
-                    requirements_section += f"\n- {nutrient.upper()}: MAXIMUM {constraints['max']}g (DISQUALIFY recipes with more)"
-        
-        # Add ingredient exclusions
-        if "exclude_ingredients" in extracted_requirements:
-            ingredients = extracted_requirements["exclude_ingredients"]
-            requirements_section += f"\n\n🚫 INGREDIENT EXCLUSIONS (STRICTLY ENFORCE):\n- DISQUALIFY any recipe containing: {', '.join(ingredients[:10])}"
-            if len(ingredients) > 10:
-                requirements_section += f" and {len(ingredients)-10} more"
-        
-        # Add time constraints
-        if "cooking_constraints" in extracted_requirements and "cook_time" in extracted_requirements["cooking_constraints"]:
-            time_constraint = extracted_requirements["cooking_constraints"]["cook_time"]
-            if "max" in time_constraint:
-                requirements_section += f"\n\n⏱️ TIME CONSTRAINT (STRICTLY ENFORCE):\n- DISQUALIFY recipes taking more than {time_constraint['max']} minutes"
-        
-        # Add meal type
-        if "meal_type" in extracted_requirements:
-            meal_type = extracted_requirements["meal_type"]
-            requirements_section += f"\n\n🍽️ MEAL TYPE REQUIREMENT:\n- Prioritize {meal_type} recipes"
-            
-    else:
-        requirements_section = f"""EXTRACTED REQUIREMENTS: {requirements_summary}
-
-⚠️ STAGE 1 ANALYSIS FAILED - You must analyze the query yourself to extract requirements.
-Look for nutrition thresholds (e.g., "30g protein"), dietary restrictions (e.g., "gluten-free"), 
-time constraints (e.g., "under 30 minutes"), and ingredient exclusions."""
     
     prompt = f"""User is searching for: "{query}"
 
-{requirements_section}
+These recipes have already PASSED all requirement verification. Your job is to rank them by RELEVANCE to the user's query only.
 
-🎯 RANKING INSTRUCTIONS:
+🎯 RANKING FACTORS:
+- How well the recipe matches the user's intent
+- Quality and appeal of the recipe
+- Cooking complexity appropriate to query
+- Ingredient freshness and accessibility
 
-1. DISQUALIFICATION RULES (CRITICALLY IMPORTANT):
-   - If a recipe does NOT meet a hard requirement above, DO NOT include it in your ranking
-   - Only rank recipes that meet ALL specified requirements
-   - If no recipes qualify, return empty ranking: ""
-   
-2. ADDITIONAL RANKING FACTORS:
-   - REQUIRED INCLUSIONS: Specific ingredients mentioned in query MUST appear
-   - EXCLUSIONS: Items with "without", "no", or "-" must NOT appear in ingredients
-   - EQUIPMENT: Match equipment requirements (slow cooker, air fryer, etc.)
-   - COOKING METHOD: Match preparation methods (grilled, baked, no-bake, etc.)
-   - RECIPE TYPE: Exclude marinades/sauces unless specifically requested
-
-3. NUTRITION ANALYSIS RULES:
-   - ONLY use the provided nutrition values - DO NOT estimate from ingredients
-   - Be strict about numeric thresholds (30g protein means 30g or more)
-   - Check structured nutrition data carefully
-
-🍳 RECIPES TO ANALYZE:
+🍳 PRE-QUALIFIED RECIPES TO RANK:
 {recipes_text}
 
 📋 RETURN FORMAT:
-Return ONLY a comma-separated list of numbers for qualifying recipes in order of relevance.
-Example: "3,1,5" (if only recipes 3, 1, and 5 meet all requirements)
-If no recipes qualify: return """""
-    substage5c_time = time.time() - substage5c_start
+Return ONLY a comma-separated list of numbers in order of relevance (best first).
+Example: "3,1,2" (if recipe 3 is most relevant, then 1, then 2)"""
 
-    # STAGE 5D: LLM API Call
-    substage5d_start = time.time()
     async with httpx.AsyncClient() as client:
         response = await client.post(
             "https://api.openai.com/v1/chat/completions",
@@ -1295,56 +1371,37 @@ If no recipes qualify: return """""
             json={
                 "model": "gpt-3.5-turbo",
                 "messages": [
-                    {"role": "system", "content": "You are an expert recipe analyst. Rank recipes by deep content relevance to user queries. Return only comma-separated numbers."},
+                    {"role": "system", "content": "You are a recipe relevance ranker. Return only comma-separated numbers."},
                     {"role": "user", "content": prompt}
                 ],
-                "temperature": 0.1,  # Lower temperature for more consistent requirement enforcement
-                "max_tokens": 150   # Increased for more thorough analysis
+                "temperature": 0.3,
+                "max_tokens": 100
             }
         )
         
         if response.status_code != 200:
-            # If LLM fails, return filtered recipes in original order
-            return filtered_recipes
+            return qualified_recipes
         
-        data = response.json()
-        ranking_text = data['choices'][0]['message']['content'].strip()
-    substage5d_time = time.time() - substage5d_start
-        
-    # STAGE 5E: Response Processing
-    substage5e_start = time.time()
-    # Parse the ranking
-    try:
-        rankings = [int(x.strip()) - 1 for x in ranking_text.split(',')]
-        reranked = []
-        
-        # Add recipes in the ranked order
-        for idx in rankings:
-            if 0 <= idx < len(filtered_recipes) and filtered_recipes[idx] not in reranked:
-                reranked.append(filtered_recipes[idx])
-        
-        # Add any missing recipes
-        for recipe in filtered_recipes:
-            if recipe not in reranked:
-                reranked.append(recipe)
-        
-        return reranked
-        
-    except (ValueError, IndexError):
-        # If parsing fails, return filtered recipes in original order
-        return filtered_recipes
-    finally:
-        substage5e_time = time.time() - substage5e_start
-        
-        # Print enhanced Stage 5 sub-timings
-        print(f"   🔍 Stage 1 (Query Analysis): {stage1_time:.3f}s")
-        print(f"   🔍 Stage 5A (Recipe Filtering): {substage5a_time:.3f}s")
-        print(f"   🔍 Stage 5B (Data Prep): {substage5b_time:.3f}s")
-        print(f"   🔍 Stage 5C (Enhanced Prompt): {substage5c_time:.3f}s") 
-        print(f"   🔍 Stage 5D (Enhanced LLM Call): {substage5d_time:.3f}s")
-        print(f"   🔍 Stage 5E (Response Parse): {substage5e_time:.3f}s")
-
-
+        try:
+            data = response.json()
+            ranking_text = data['choices'][0]['message']['content'].strip()
+            rankings = [int(x.strip()) - 1 for x in ranking_text.split(',')]
+            
+            reranked = []
+            for idx in rankings:
+                if 0 <= idx < len(qualified_recipes):
+                    reranked.append(qualified_recipes[idx])
+            
+            # Add any missing recipes
+            for recipe in qualified_recipes:
+                if recipe not in reranked:
+                    reranked.append(recipe)
+            
+            print(f"   ✅ Phase 2 Ranking: Ranked {len(qualified_recipes)} qualified recipes by relevance")
+            return reranked
+            
+        except (ValueError, IndexError):
+            return qualified_recipes
 
 # =============================================================================
 # MAIN AGENT TOOL: This is the ONLY function the agent can invoke
@@ -1462,6 +1519,8 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
                 # Add search metadata to extracted recipe
                 data["search_title"] = candidates_to_parse[i].get("title", "")
                 data["search_snippet"] = candidates_to_parse[i].get("snippet", "")
+                # Normalize nutrition data to unified format
+                data = normalize_nutrition_data(data)
                 successful_parses.append(data)
             else:
                 # Track failed parse for potential quality checking
@@ -1491,11 +1550,10 @@ async def search_and_extract_recipes(ctx: RunContext[RecipeDeps], query: str, ma
     # STAGE 5: Deep content ranking using full recipe data
     stage5_start = time.time()
     if len(extracted_recipes) > 1:  # Only re-rank if we have multiple recipes
-        final_ranked_recipes = await rerank_with_full_recipe_data(
-            extracted_recipes,
-            query,
-            ctx.deps.openai_key
-        )
+        # Phase 1: Verify recipes meet requirements
+        qualified_recipes = await verify_recipes_meet_requirements(extracted_recipes, requirements, ctx.deps.openai_key, query)
+        # Phase 2: Rank qualified recipes by relevance
+        final_ranked_recipes = await rank_qualified_recipes_by_relevance(qualified_recipes, query, ctx.deps.openai_key)
     else:
         final_ranked_recipes = extracted_recipes
     stage5_time = time.time() - stage5_start
