@@ -19,6 +19,7 @@ from .Detailed_Recipe_Parsers.ingredient_parser import parse_ingredients_list
 from .Detailed_Recipe_Parsers.nutrition_parser import parse_nutrition_list
 from .Detailed_Recipe_Parsers.list_parser import ListParser
 from .Detailed_Recipe_Parsers.url_classifier import classify_urls_batch
+from .query_analyzer import analyze_query
 from bs4 import BeautifulSoup
 
 """Complete Data Flow:
@@ -403,15 +404,27 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
                     html_content = response.text
                 
                 # Use ListParser to extract recipe URLs
+                print(f"      🔍 Using ListParser on: {url}")
+                print(f"      📄 HTML content size: {len(html_content)} chars")
                 intelligent_parser = ListParser(ctx.deps.openai_key)
                 extracted_recipes = await intelligent_parser.extract_recipe_urls(
                     url, 
                     html_content, 
-                    max_urls=needed_count - len(final_ranked_recipes)  # Only get what we need
+                    max_urls=4  # Extract 4 recipe URLs per list URL
                 )
+                print(f"      📊 ListParser returned {len(extracted_recipes) if extracted_recipes else 0} URLs")
                 
                 if extracted_recipes:
                     print(f"      ✅ Extracted {len(extracted_recipes)} recipes from list URL")
+                    print(f"      📋 DEBUG: Extracted URLs from {url}:")
+                    for i, recipe_dict in enumerate(extracted_recipes):
+                        extracted_url = recipe_dict.get("url", "")
+                        extracted_title = recipe_dict.get("title", "No title")
+                        print(f"        {i+1}. {extracted_title}")
+                        print(f"           URL: {extracted_url}")
+                        # Check if extracted URL looks like a list URL
+                        if any(indicator in extracted_url.lower() for indicator in ['collection', 'category', 'recipes/', '/recipes', 'roundup', 'list']):
+                            print(f"           ⚠️  WARNING: This looks like a LIST URL, not a recipe URL!")
                     
                     # Stage 4: Parse the extracted recipes
                     extraction_tasks = []
@@ -1081,7 +1094,10 @@ async def rerank_results_with_llm(results: List[Dict], query: str, openai_key: s
 
 async def rerank_with_full_recipe_data(scraped_recipes: List[Dict], query: str, openai_key: str) -> List[Dict]:
     """
-    SUPPLEMENTAL FUNCTION: Second-stage LLM ranking using full recipe data.
+    ENHANCED: Two-stage ranking system with query analysis and hard requirement enforcement.
+    
+    Stage 1: Extract hard requirements from query (nutrition, allergies, time, etc.)
+    Stage 2: Enhanced LLM ranking with explicit requirement enforcement
     
     Uses complete recipe information (ingredients, instructions, timing) for intelligent ranking.
     Much more accurate than title/snippet ranking for complex queries.
@@ -1092,12 +1108,30 @@ async def rerank_with_full_recipe_data(scraped_recipes: List[Dict], query: str, 
         openai_key: OpenAI API key
         
     Returns:
-        Recipes reranked by deep content relevance
+        Recipes reranked by deep content relevance with requirement enforcement
     """
     if not scraped_recipes:
         return []
     
-    # STAGE 5A: Recipe Filtering - Remove insufficient recipes
+    # STAGE 1: Query Analysis - Extract hard requirements
+    print(f"   🧠 Stage 1: Analyzing query for hard requirements...")
+    stage1_start = time.time()
+    
+    try:
+        extracted_requirements = analyze_query(query)
+        stage1_success = extracted_requirements.get("success", False)
+        requirements_summary = extracted_requirements.get("summary", "No requirements detected")
+        print(f"   📋 Requirements extracted: {requirements_summary}")
+    except Exception as e:
+        print(f"   ⚠️  Query analysis failed: {e}")
+        extracted_requirements = {"success": False, "error": str(e)}
+        stage1_success = False
+        requirements_summary = "Analysis failed - LLM will analyze query directly"
+    
+    stage1_time = time.time() - stage1_start
+    print(f"   ⏱️  Stage 1: Query Analysis - {stage1_time:.3f}s")
+    
+    # STAGE 5A: Recipe Filtering - Remove insufficient recipes  
     substage5a_start = time.time()
     filtered_recipes = []
     
@@ -1171,38 +1205,82 @@ Instructions Preview: {instructions_preview}..."""
         detailed_recipes.append(recipe_summary)
     substage5b_time = time.time() - substage5b_start
     
-    # STAGE 5C: Prompt Construction  
+    # STAGE 5C: Enhanced Prompt Construction with Stage 1 Requirements
     substage5c_start = time.time()
     recipes_text = "\n\n".join(detailed_recipes)
     
+    # Build requirements section based on Stage 1 analysis
+    if stage1_success and extracted_requirements.get("extracted_patterns"):
+        requirements_section = f"""EXTRACTED REQUIREMENTS FROM QUERY ANALYSIS:
+{requirements_summary}
+
+DETAILED REQUIREMENTS TO ENFORCE:"""
+        
+        # Add nutrition requirements
+        if "nutrition" in extracted_requirements:
+            nutrition_reqs = extracted_requirements["nutrition"]
+            requirements_section += "\n\n🥗 NUTRITION REQUIREMENTS (STRICTLY ENFORCE):"
+            for nutrient, constraints in nutrition_reqs.items():
+                if "min" in constraints:
+                    requirements_section += f"\n- {nutrient.upper()}: MINIMUM {constraints['min']}g (DISQUALIFY recipes with less)"
+                if "max" in constraints:
+                    requirements_section += f"\n- {nutrient.upper()}: MAXIMUM {constraints['max']}g (DISQUALIFY recipes with more)"
+        
+        # Add ingredient exclusions
+        if "exclude_ingredients" in extracted_requirements:
+            ingredients = extracted_requirements["exclude_ingredients"]
+            requirements_section += f"\n\n🚫 INGREDIENT EXCLUSIONS (STRICTLY ENFORCE):\n- DISQUALIFY any recipe containing: {', '.join(ingredients[:10])}"
+            if len(ingredients) > 10:
+                requirements_section += f" and {len(ingredients)-10} more"
+        
+        # Add time constraints
+        if "cooking_constraints" in extracted_requirements and "cook_time" in extracted_requirements["cooking_constraints"]:
+            time_constraint = extracted_requirements["cooking_constraints"]["cook_time"]
+            if "max" in time_constraint:
+                requirements_section += f"\n\n⏱️ TIME CONSTRAINT (STRICTLY ENFORCE):\n- DISQUALIFY recipes taking more than {time_constraint['max']} minutes"
+        
+        # Add meal type
+        if "meal_type" in extracted_requirements:
+            meal_type = extracted_requirements["meal_type"]
+            requirements_section += f"\n\n🍽️ MEAL TYPE REQUIREMENT:\n- Prioritize {meal_type} recipes"
+            
+    else:
+        requirements_section = f"""EXTRACTED REQUIREMENTS: {requirements_summary}
+
+⚠️ STAGE 1 ANALYSIS FAILED - You must analyze the query yourself to extract requirements.
+Look for nutrition thresholds (e.g., "30g protein"), dietary restrictions (e.g., "gluten-free"), 
+time constraints (e.g., "under 30 minutes"), and ingredient exclusions."""
+    
     prompt = f"""User is searching for: "{query}"
 
-    Rank these recipes by relevance using their FULL CONTENT (best match first).
-    Analyze ingredients AND instructions for complete relevance matching.
+{requirements_section}
 
-    CRITICAL RANKING REQUIREMENTS:
-    1. REQUIRED INCLUSIONS: If query mentions specific ingredients (e.g., "blueberry cheesecake"), those ingredients MUST appear in the recipe
-    2. EXCLUSIONS: If query uses "without", "no", or "-" (e.g., "cheesecake without cane sugar"), ensure excluded items are NOT in ingredients
-    3. EQUIPMENT REQUIREMENTS: Check instructions for equipment mentions (e.g., "no-bake", "slow cooker", "air fryer")
-    4. COOKING METHOD: Match preparation methods from instructions (e.g., "grilled", "baked", "fried")
-    5. SPECIFIC COOKING DIRECTIONS: Match any specific cooking techniques or directions the user requests that can be found in the recipe instructions
-    6. RECIPE TYPE MATCHING - EXCLUSION RULE: 
-       - If query asks for "[food] recipe" (e.g., "steak recipe"), EXCLUDE from consideration any recipes that are primarily marinades, sauces, or dressings
-       - These recipes CANNOT appear in the final ranking unless user specifically asks for them (e.g., "steak marinade recipe")
-       - Examples: "steak recipe" → EXCLUDE any steak marinades, "chicken recipe" → EXCLUDE chicken marinades/sauces
-       - Only rank actual cooking recipes that prepare the main food item
+🎯 RANKING INSTRUCTIONS:
 
-    Additional factors:
-    - NUTRITION REQUIREMENTS: ONLY use the provided nutrition values (calories, protein, carbs, fat) - DO NOT estimate or guess nutrition from ingredients
-    - Dietary requirements (high protein, low carb, etc.) - use exact nutrition numbers provided
-    - Time constraints (quick, under 30 minutes, etc.)
-    - Meal type appropriateness
+1. DISQUALIFICATION RULES (CRITICALLY IMPORTANT):
+   - If a recipe does NOT meet a hard requirement above, DO NOT include it in your ranking
+   - Only rank recipes that meet ALL specified requirements
+   - If no recipes qualify, return empty ranking: ""
+   
+2. ADDITIONAL RANKING FACTORS:
+   - REQUIRED INCLUSIONS: Specific ingredients mentioned in query MUST appear
+   - EXCLUSIONS: Items with "without", "no", or "-" must NOT appear in ingredients
+   - EQUIPMENT: Match equipment requirements (slow cooker, air fryer, etc.)
+   - COOKING METHOD: Match preparation methods (grilled, baked, no-bake, etc.)
+   - RECIPE TYPE: Exclude marinades/sauces unless specifically requested
 
-    Recipes with full details:
-    {recipes_text}
+3. NUTRITION ANALYSIS RULES:
+   - ONLY use the provided nutrition values - DO NOT estimate from ingredients
+   - Be strict about numeric thresholds (30g protein means 30g or more)
+   - Check structured nutrition data carefully
 
-    Return ONLY a comma-separated list of numbers in order of relevance (e.g., "3,1,5,2,4...")
-    Best match first based on the COMPLETE recipe content."""
+🍳 RECIPES TO ANALYZE:
+{recipes_text}
+
+📋 RETURN FORMAT:
+Return ONLY a comma-separated list of numbers for qualifying recipes in order of relevance.
+Example: "3,1,5" (if only recipes 3, 1, and 5 meet all requirements)
+If no recipes qualify: return """""
     substage5c_time = time.time() - substage5c_start
 
     # STAGE 5D: LLM API Call
@@ -1220,8 +1298,8 @@ Instructions Preview: {instructions_preview}..."""
                     {"role": "system", "content": "You are an expert recipe analyst. Rank recipes by deep content relevance to user queries. Return only comma-separated numbers."},
                     {"role": "user", "content": prompt}
                 ],
-                "temperature": 0.3,
-                "max_tokens": 100
+                "temperature": 0.1,  # Lower temperature for more consistent requirement enforcement
+                "max_tokens": 150   # Increased for more thorough analysis
             }
         )
         
@@ -1258,11 +1336,12 @@ Instructions Preview: {instructions_preview}..."""
     finally:
         substage5e_time = time.time() - substage5e_start
         
-        # Print Stage 5 sub-timings
+        # Print enhanced Stage 5 sub-timings
+        print(f"   🔍 Stage 1 (Query Analysis): {stage1_time:.3f}s")
         print(f"   🔍 Stage 5A (Recipe Filtering): {substage5a_time:.3f}s")
         print(f"   🔍 Stage 5B (Data Prep): {substage5b_time:.3f}s")
-        print(f"   🔍 Stage 5C (Prompt Build): {substage5c_time:.3f}s") 
-        print(f"   🔍 Stage 5D (LLM API Call): {substage5d_time:.3f}s")
+        print(f"   🔍 Stage 5C (Enhanced Prompt): {substage5c_time:.3f}s") 
+        print(f"   🔍 Stage 5D (Enhanced LLM Call): {substage5d_time:.3f}s")
         print(f"   🔍 Stage 5E (Response Parse): {substage5e_time:.3f}s")
 
 

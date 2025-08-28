@@ -282,13 +282,41 @@ class ListParser:
         """Check if URL matches recipe patterns."""
         url_lower = url.lower()
         
-        # Exclude non-recipe patterns first
+        # ENHANCED: First exclude collection/list URLs that look like recipes
+        collection_patterns = [
+            r'/recipes/collection/',
+            r'/recipes/category/',
+            r'/recipes/tag/',
+            r'/collection/',
+            r'/category/',
+            r'roundup',
+            r'best-.*-recipes',
+            r'top-.*-recipes',
+            r'-recipes/?$',  # URLs ending in '-recipes' are usually lists
+            r'guide/',
+            r'howto/'
+        ]
+        
+        for collection_pattern in collection_patterns:
+            if re.search(collection_pattern, url_lower):
+                return False  # This is a collection/list URL, not individual recipe
+        
+        # Exclude non-recipe patterns
         for pattern in self.exclude_patterns:
             if re.search(pattern, url_lower):
                 return False
         
-        # Check for recipe patterns
-        for pattern in self.recipe_link_patterns:
+        # Check for individual recipe patterns (more specific now)
+        individual_recipe_patterns = [
+            r'/recipe/[^/]+/?$',  # /recipe/specific-recipe-name
+            r'/recipes/[^/]+/?$',  # /recipes/specific-recipe-name (not followed by collection/category)
+            r'-recipe/?$',
+            r'-recipe\.',
+            r'recipe\?',
+            r'/\d{4}/\d{2}/.+',  # Date-based URLs common in food blogs
+        ]
+        
+        for pattern in individual_recipe_patterns:
             if re.search(pattern, url_lower):
                 return True
         
