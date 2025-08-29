@@ -29,29 +29,56 @@ def clean_nutrition_for_verification(unified_nutrition: List[str]) -> Dict[str, 
     # Join all nutrition strings and clean them
     full_text = " ".join(unified_nutrition).lower()
     
-    # Define patterns for the 4 required nutrition fields
+    # More specific patterns to avoid mixing up values
+    # Look for explicit nutrition labels with values
     nutrition_patterns = {
-        "protein": r'protein[:\s]*(\d+(?:\.\d+)?)\s*([a-z]*)',
-        "calories": r'(?:calories|kcal|cal)[:\s]*(\d+(?:\.\d+)?)',
-        "carbs": r'(?:carbs|carbohydrates?)[:\s]*(\d+(?:\.\d+)?)\s*([a-z]*)',
-        "fat": r'fat[:\s]*(\d+(?:\.\d+)?)\s*([a-z]*)'
+        "calories": [
+            r'calories[:\s]*(\d+(?:\.\d+)?)',
+            r'(\d+(?:\.\d+)?)\s*calories',
+            r'kcal[:\s]*(\d+(?:\.\d+)?)',
+            r'(\d+(?:\.\d+)?)\s*kcal'
+        ],
+        "protein": [
+            r'protein[:\s]*(\d+(?:\.\d+)?)\s*([a-z]*)',
+            r'(\d+(?:\.\d+)?)\s*([a-z]*)\s+protein'
+        ],
+        "carbs": [
+            r'carbohydrates?[:\s]*(\d+(?:\.\d+)?)\s*([a-z]*)',
+            r'carbs[:\s]*(\d+(?:\.\d+)?)\s*([a-z]*)',
+            r'(\d+(?:\.\d+)?)\s*([a-z]*)\s+carbs',
+            r'(\d+(?:\.\d+)?)\s*([a-z]*)\s+carbohydrates?'
+        ],
+        "fat": [
+            r'(?:total\s+)?fat[:\s]*(\d+(?:\.\d+)?)\s*([a-z]*)',
+            r'(\d+(?:\.\d+)?)\s*([a-z]*)\s+fat'
+        ]
     }
     
-    for nutrient, pattern in nutrition_patterns.items():
-        match = re.search(pattern, full_text)
-        if match:
-            amount = match.group(1)
-            unit = match.group(2) if len(match.groups()) > 1 else ""
-            
-            # Handle missing units - assume grams for protein/carbs/fat, no unit for calories
-            if not unit or unit == "":
-                if nutrient == "calories":
-                    nutrition_clean[nutrient] = f"{amount}"
-                else:
-                    nutrition_clean[nutrient] = f"{amount}g"  # Default to grams
-            else:
-                nutrition_clean[nutrient] = f"{amount}{unit}"
+    # Debug: Show what we're parsing
+    print(f"      🔍 Parsing nutrition from: {full_text[:300]}...")
     
+    for nutrient, patterns in nutrition_patterns.items():
+        found = False
+        for pattern in patterns:
+            match = re.search(pattern, full_text)
+            if match and not found:  # Take first match to avoid duplicates
+                amount = match.group(1)
+                unit = match.group(2) if len(match.groups()) > 1 else ""
+                
+                # Handle missing units - assume grams for protein/carbs/fat, no unit for calories
+                if not unit or unit == "":
+                    if nutrient == "calories":
+                        nutrition_clean[nutrient] = f"{amount}"
+                    else:
+                        nutrition_clean[nutrient] = f"{amount}g"  # Default to grams
+                else:
+                    nutrition_clean[nutrient] = f"{amount}{unit}"
+                
+                print(f"         Found {nutrient}: {nutrition_clean[nutrient]} (pattern: {pattern})")
+                found = True
+                break
+    
+    print(f"      ✅ Clean nutrition result: {nutrition_clean}")
     return nutrition_clean
 
 
@@ -101,6 +128,26 @@ async def verify_recipes_meet_requirements(scraped_recipes: List[Dict], requirem
         })
         
     
+    # Check if we have nutrition requirements
+    has_nutrition_requirements = bool(requirements.get('nutrition'))
+    
+    # Auto-disqualify recipes with no nutrition data if nutrition requirements exist
+    pre_qualified_indices = []
+    for i, recipe in enumerate(recipe_data):
+        if has_nutrition_requirements and recipe['nutrition'] == "NO NUTRITION DATA AVAILABLE":
+            print(f"      ❌ Auto-FAIL Recipe {i} ({recipe['title']}): No nutrition data but nutrition requirements exist")
+            continue  # Skip this recipe - don't send to LLM
+        pre_qualified_indices.append(i)
+    
+    if not pre_qualified_indices:
+        print(f"   ❌ All recipes auto-failed due to missing nutrition data")
+        return []
+    
+    # Filter recipe_data to only include pre-qualified recipes
+    qualified_recipe_data = [recipe_data[i] for i in pre_qualified_indices]
+    
+    print(f"   📊 Sending {len(qualified_recipe_data)}/{len(recipe_data)} recipes to LLM (others auto-failed)")
+
     prompt = f"""User's Original Query: "{user_query}"
 
 You are verifying if recipes meet the user's requirements using your reasoning abilities.
@@ -116,7 +163,7 @@ VERIFICATION LOGIC:
 - If meal_type specified: Verify the recipe is appropriate for that meal type
 - If dietary restrictions: Check ingredients don't contain excluded items
 - If time constraints: Verify cooking time fits requirements
-- If recipe has "NO NUTRITION DATA AVAILABLE" and nutrition requirements exist: AUTOMATIC FAIL
+- STRICT NUMERICAL COMPARISON: For protein >= 30g, recipe must have 30g or more to pass
 - When in doubt about meeting requirements: FAIL the recipe
 
 EXAMPLE PROTEIN VERIFICATION:
@@ -126,9 +173,9 @@ EXAMPLE PROTEIN VERIFICATION:
 - Recipe has "protein: 35g" → PASS (35 > 30)
 
 RECIPES TO VERIFY (with clean nutrition data):
-{json.dumps(recipe_data, indent=2)}
+{json.dumps(qualified_recipe_data, indent=2)}
 
-IMPORTANT: Use the "nutrition" field which contains clean, parsed nutrition data in the format "calories: X, protein: Xg, carbs: Xg, fat: Xg".
+IMPORTANT: Use the "nutrition" field which contains clean, parsed nutrition data. All recipes below have valid nutrition data.
 
 Use your reasoning to evaluate each recipe against the user's requirements and return qualifying indices:
 {{
@@ -190,12 +237,18 @@ Use your reasoning to evaluate each recipe against the user's requirements and r
                 llm_response = llm_response.split('```')[1]
             
             result = json.loads(llm_response.strip())
-            qualifying_indices = result.get('qualifying_indices', [])
+            llm_qualifying_indices = result.get('qualifying_indices', [])
             
+            # Map LLM indices back to original recipe indices
+            final_qualifying_indices = []
+            for llm_idx in llm_qualifying_indices:
+                if 0 <= llm_idx < len(pre_qualified_indices):
+                    original_idx = pre_qualified_indices[llm_idx]
+                    final_qualifying_indices.append(original_idx)
             
             # Return only qualifying recipes
             qualifying_recipes = []
-            for idx in qualifying_indices:
+            for idx in final_qualifying_indices:
                 if 0 <= idx < len(scraped_recipes):
                     qualifying_recipes.append(scraped_recipes[idx])
             
@@ -203,9 +256,15 @@ Use your reasoning to evaluate each recipe against the user's requirements and r
             
             # DEBUG: Show which recipes passed/failed
             print(f"\n📊 VERIFICATION RESULTS:")
-            passed_indices = set(qualifying_indices)
+            passed_indices = set(final_qualifying_indices)
             for i, recipe in enumerate(scraped_recipes):
-                status = "✅ PASSED" if i in passed_indices else "❌ FAILED"
+                if has_nutrition_requirements and recipe_data[i]['nutrition'] == "NO NUTRITION DATA AVAILABLE":
+                    status = "❌ AUTO-FAILED (No nutrition data)"
+                elif i in passed_indices:
+                    status = "✅ PASSED"
+                else:
+                    status = "❌ FAILED"
+                    
                 print(f"   {status}: {recipe.get('title', 'No title')}")
                 print(f"      URL: {recipe.get('source_url', 'No URL')}")
                 print(f"      Nutrition: {recipe_data[i]['nutrition']}")
