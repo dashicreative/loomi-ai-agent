@@ -8,388 +8,658 @@ This module verifies that recipes meet user-specified requirements.
 import httpx
 import json
 import re
-from typing import Dict, List
+from typing import Dict, List, Tuple, Optional, Set
 
 
-def nutrition_verification_tool(recipes_data: List[Dict], nutrition_requirements: Dict) -> Dict:
+# Dietary restriction ingredient mappings for deterministic checking
+GLUTEN_INGREDIENTS = {
+    'wheat', 'flour', 'bread', 'pasta', 'noodles', 'couscous', 'bulgur', 
+    'semolina', 'spelt', 'barley', 'rye', 'malt', 'breaded', 'breadcrumbs',
+    'crackers', 'croutons', 'tortilla', 'wrap', 'pita', 'nan', 'naan',
+    'soy sauce', 'teriyaki', 'hoisin'
+}
+
+DAIRY_INGREDIENTS = {
+    'milk', 'cheese', 'butter', 'cream', 'yogurt', 'yoghurt', 'whey',
+    'casein', 'lactose', 'mozzarella', 'cheddar', 'parmesan', 'ricotta',
+    'cottage cheese', 'sour cream', 'half and half', 'ice cream', 'ghee',
+    'mascarpone', 'feta', 'gouda', 'brie', 'camembert'
+}
+
+MEAT_INGREDIENTS = {
+    'chicken', 'beef', 'pork', 'lamb', 'turkey', 'duck', 'veal',
+    'bacon', 'sausage', 'ham', 'prosciutto', 'salami', 'pepperoni',
+    'ground beef', 'ground turkey', 'steak', 'ribs', 'brisket',
+    'chorizo', 'pancetta', 'bresaola', 'mortadella'
+}
+
+DIETARY_MAPPINGS = {
+    'gluten_free': GLUTEN_INGREDIENTS,
+    'dairy_free': DAIRY_INGREDIENTS,
+    'vegetarian': MEAT_INGREDIENTS,
+    'vegan': MEAT_INGREDIENTS | DAIRY_INGREDIENTS | {'egg', 'eggs', 'honey', 'gelatin', 'mayo', 'mayonnaise'}
+}
+
+
+def normalize_ingredient(ingredient: str) -> Set[str]:
     """
-    Deterministic nutrition verification tool for LLM to use.
-    Performs precise numerical comparisons on nutrition requirements.
-    
-    Args:
-        recipes_data: List of recipe data dicts with clean_nutrition field
-        nutrition_requirements: {"protein": {"min": 30}, "calories": {"max": 400}}
-        
-    Returns:
-        {
-            "passing_recipe_indices": [0, 2, 4],
-            "verification_details": [
-                {"index": 0, "passes": True, "protein": "35g >= 30g ✅"},
-                {"index": 1, "passes": False, "protein": "12g < 30g ❌"}
-            ]
-        }
+    Normalize an ingredient string to a set of key terms for matching.
     """
-    passing_indices = []
-    verification_details = []
+    ingredient_lower = ingredient.lower()
     
-    for i, recipe_data in enumerate(recipes_data):
-        clean_nutrition = recipe_data.get('clean_nutrition', {})
-        passes_all = True
-        details = {"index": i, "title": recipe_data.get('title', 'Unknown')}
-        
-        # Check each nutrition requirement
-        for nutrient, constraints in nutrition_requirements.items():
-            if nutrient not in clean_nutrition:
-                details[nutrient] = f"No {nutrient} data - FAIL"
-                passes_all = False
-                continue
-                
-            # Extract numeric value from clean nutrition (e.g., "30g" -> 30)
-            nutrition_str = clean_nutrition[nutrient]
-            try:
-                # Extract number from strings like "30g", "400", "25.5g"
-                import re
-                match = re.search(r'(\d+(?:\.\d+)?)', nutrition_str)
-                if not match:
-                    details[nutrient] = f"Could not parse '{nutrition_str}' - FAIL"
-                    passes_all = False
-                    continue
-                    
-                actual_value = float(match.group(1))
-                
-                # Check min constraint
-                if 'min' in constraints:
-                    required_min = constraints['min']
-                    if actual_value >= required_min:
-                        details[nutrient] = f"{nutrition_str} >= {required_min} ✅"
-                    else:
-                        details[nutrient] = f"{nutrition_str} < {required_min} ❌"
-                        passes_all = False
-                        
-                # Check max constraint  
-                if 'max' in constraints:
-                    required_max = constraints['max']
-                    if actual_value <= required_max:
-                        details[nutrient] = f"{nutrition_str} <= {required_max} ✅"
-                    else:
-                        details[nutrient] = f"{nutrition_str} > {required_max} ❌"
-                        passes_all = False
-                        
-            except (ValueError, AttributeError) as e:
-                details[nutrient] = f"Parse error for '{nutrition_str}': {e} - FAIL"
-                passes_all = False
-        
-        details["passes"] = passes_all
-        verification_details.append(details)
-        
-        if passes_all:
-            passing_indices.append(i)
+    # Remove measurements and quantities
+    measurements = r'\b\d+(?:/\d+)?\s*(?:cups?|tbsp|tablespoons?|tsp|teaspoons?|oz|ounces?|lbs?|pounds?|g|grams?|kg|ml|liters?)\b'
+    ingredient_lower = re.sub(measurements, '', ingredient_lower)
+    ingredient_lower = re.sub(r'\d+(?:\.\d+)?', '', ingredient_lower)
     
-    return {
-        "passing_recipe_indices": passing_indices,
-        "verification_details": verification_details
+    # Remove preparation descriptors
+    descriptors = r'\b(?:fresh|dried|chopped|minced|sliced|diced|whole|ground|fine|coarse|large|small|medium|shredded|grated)\b'
+    ingredient_lower = re.sub(descriptors, '', ingredient_lower)
+    
+    # Extract meaningful words
+    words = re.findall(r'\b[a-z]+\b', ingredient_lower)
+    stop_words = {'and', 'or', 'the', 'a', 'an', 'of', 'to', 'for', 'in', 'as', 'with'}
+    
+    return set(word for word in words if word not in stop_words and len(word) > 2)
+
+
+def extract_requirement_types(requirements: Dict, user_query: str) -> Dict:
+    """
+    Categorize requirements into numerical, ingredient, and subjective types.
+    """
+    categorized = {
+        "numerical": {
+            "nutrition": {},
+            "time": {}
+        },
+        "ingredients": {
+            "exclude": [],
+            "include": [],
+            "dietary_tags": []
+        },
+        "subjective": {}
     }
+    
+    # Extract nutrition requirements
+    if 'nutrition' in requirements:
+        categorized["numerical"]["nutrition"] = requirements['nutrition']
+    
+    # Extract time requirements
+    if 'time_constraints' in requirements:
+        time_str = requirements['time_constraints']
+        match = re.search(r'under\s+(\d+)\s*min', time_str, re.I)
+        if match:
+            categorized["numerical"]["time"]["cook_time"] = {"max": int(match.group(1))}
+    
+    # Extract ingredient requirements
+    if 'allergies' in requirements:
+        categorized["ingredients"]["exclude"].extend(requirements['allergies'])
+    
+    if 'exclude_ingredients' in requirements:
+        categorized["ingredients"]["exclude"].extend(requirements['exclude_ingredients'])
+    
+    if 'include_ingredients' in requirements:
+        categorized["ingredients"]["include"].extend(requirements['include_ingredients'])
+    
+    # Extract dietary restrictions
+    if 'dietary_restrictions' in requirements:
+        dietary = requirements['dietary_restrictions']
+        if isinstance(dietary, str):
+            dietary = [dietary]
+        for restriction in dietary:
+            restriction_normalized = restriction.lower().replace('-', '_').replace(' ', '_')
+            if restriction_normalized in DIETARY_MAPPINGS:
+                categorized["ingredients"]["dietary_tags"].append(restriction_normalized)
+            else:
+                # Unknown dietary restriction - needs LLM
+                categorized["subjective"]["dietary_restriction"] = restriction
+    
+    # Extract subjective requirements
+    subjective_keys = {'meal_type', 'cuisine_type', 'cooking_method'}
+    for key in subjective_keys:
+        if key in requirements:
+            categorized["subjective"][key] = requirements[key]
+    
+    return categorized
 
 
-def clean_nutrition_for_verification(unified_nutrition: List[str]) -> Dict[str, str]:
+def layer1_nutrition_check(recipe: Dict, nutrition_reqs: Dict) -> Tuple[bool, Dict]:
     """
-    Clean and extract the 4 required nutrition values from messy unified_nutrition data.
+    Layer 1a: Deterministic nutrition verification.
+    Returns (passes, details) tuple.
+    """
+    if not nutrition_reqs:
+        return True, {"status": "No nutrition requirements"}
+    
+    # First extract and clean nutrition data
+    unified_nutrition = recipe.get('unified_nutrition', [])
+    clean_nutrition = clean_nutrition_for_verification(unified_nutrition)
+    
+    # If nutrition requirements exist but no nutrition data, auto-fail
+    if not clean_nutrition:
+        return False, {"status": "❌ FAIL - No nutrition data available"}
+    
+    verification_details = {}
+    passes_all = True
+    
+    for nutrient, constraints in nutrition_reqs.items():
+        if nutrient not in clean_nutrition:
+            verification_details[nutrient] = f"Missing {nutrient} data ❌"
+            passes_all = False
+            continue
+        
+        actual_value = clean_nutrition[nutrient]
+        
+        # Check constraints
+        if 'min' in constraints:
+            required_min = constraints['min']
+            if actual_value >= required_min:
+                verification_details[nutrient] = f"{actual_value} >= {required_min} ✅"
+            else:
+                verification_details[nutrient] = f"{actual_value} < {required_min} ❌"
+                passes_all = False
+        
+        if 'max' in constraints:
+            required_max = constraints['max']
+            if actual_value <= required_max:
+                verification_details[nutrient] = f"{actual_value} <= {required_max} ✅"
+            else:
+                verification_details[nutrient] = f"{actual_value} > {required_max} ❌"
+                passes_all = False
+    
+    return passes_all, verification_details
+
+
+def layer1_time_check(recipe: Dict, time_reqs: Dict) -> Tuple[bool, Dict]:
+    """
+    Layer 1b: Deterministic time verification.
+    """
+    if not time_reqs or 'cook_time' not in time_reqs:
+        return True, {"status": "No time requirements"}
+    
+    cook_time_str = recipe.get('cook_time', '')
+    if not cook_time_str or cook_time_str == "Not specified":
+        return True, {"status": "No time data - assuming OK"}
+    
+    # Parse various time formats
+    total_minutes = 0
+    
+    # Handle ISO duration format (PT30M, PT1H30M)
+    if cook_time_str.startswith('PT'):
+        hours_match = re.search(r'(\d+)H', cook_time_str)
+        minutes_match = re.search(r'(\d+)M', cook_time_str)
+        
+        if hours_match:
+            total_minutes += int(hours_match.group(1)) * 60
+        if minutes_match:
+            total_minutes += int(minutes_match.group(1))
+    else:
+        # Handle "30 minutes", "1 hour", etc.
+        hours_match = re.search(r'(\d+)\s*(?:hours?|hrs?)', cook_time_str, re.I)
+        minutes_match = re.search(r'(\d+)\s*(?:minutes?|mins?)', cook_time_str, re.I)
+        
+        if hours_match:
+            total_minutes += int(hours_match.group(1)) * 60
+        if minutes_match:
+            total_minutes += int(minutes_match.group(1))
+    
+    if total_minutes == 0:
+        return True, {"status": f"Could not parse time '{cook_time_str}'"}
+    
+    max_minutes = time_reqs['cook_time'].get('max', float('inf'))
+    
+    if total_minutes <= max_minutes:
+        return True, {"cook_time": f"{total_minutes} min <= {max_minutes} min ✅"}
+    else:
+        return False, {"cook_time": f"{total_minutes} min > {max_minutes} min ❌"}
+
+
+def layer2_ingredient_exclusion_check(recipe: Dict, exclude_list: List[str]) -> Tuple[bool, Dict]:
+    """
+    Layer 2a: Deterministic ingredient exclusion (allergies).
+    """
+    if not exclude_list:
+        return True, {"status": "No exclusions"}
+    
+    ingredients = recipe.get('ingredients', [])
+    if not ingredients:
+        return True, {"status": "No ingredients data"}
+    
+    found_excluded = []
+    
+    for ingredient in ingredients:
+        ingredient_words = normalize_ingredient(ingredient)
+        
+        for excluded in exclude_list:
+            excluded_lower = excluded.lower()
+            # Check both exact word match and substring
+            if excluded_lower in ingredient_words or any(excluded_lower in word for word in ingredient_words):
+                found_excluded.append(f"{excluded} in '{ingredient[:50]}...'")
+                break  # One violation per ingredient is enough
+    
+    if found_excluded:
+        return False, {"excluded_found": found_excluded[:3]}  # Limit output
+    
+    return True, {"status": f"None of {exclude_list} found ✅"}
+
+
+def layer2_ingredient_inclusion_check(recipe: Dict, include_list: List[str]) -> Tuple[bool, Dict]:
+    """
+    Layer 2b: Deterministic ingredient inclusion.
+    """
+    if not include_list:
+        return True, {"status": "No required ingredients"}
+    
+    ingredients = recipe.get('ingredients', [])
+    if not ingredients:
+        return False, {"status": "No ingredients data"}
+    
+    # Combine all ingredients for searching
+    all_ingredient_words = set()
+    for ing in ingredients:
+        all_ingredient_words.update(normalize_ingredient(ing))
+    
+    found = []
+    missing = []
+    
+    for required in include_list:
+        required_lower = required.lower()
+        if required_lower in all_ingredient_words or any(required_lower in word for word in all_ingredient_words):
+            found.append(required)
+        else:
+            missing.append(required)
+    
+    if missing:
+        return False, {"missing": missing, "found": found}
+    
+    return True, {"found_all": found}
+
+
+def layer2_dietary_check(recipe: Dict, dietary_tags: List[str]) -> Tuple[bool, Dict]:
+    """
+    Layer 2c: Deterministic dietary restriction check using ingredient mappings.
+    """
+    if not dietary_tags:
+        return True, {"status": "No dietary restrictions"}
+    
+    ingredients = recipe.get('ingredients', [])
+    if not ingredients:
+        return True, {"status": "No ingredients to check"}
+    
+    violations = []
+    
+    for dietary_tag in dietary_tags:
+        if dietary_tag not in DIETARY_MAPPINGS:
+            continue
+        
+        excluded_ingredients = DIETARY_MAPPINGS[dietary_tag]
+        tag_violations = []
+        
+        for ingredient in ingredients:
+            ingredient_words = normalize_ingredient(ingredient)
+            
+            for excluded in excluded_ingredients:
+                if excluded in ingredient_words or any(excluded in word for word in ingredient_words):
+                    tag_violations.append(f"{excluded} in '{ingredient[:30]}...'")
+                    break
+        
+        if tag_violations:
+            violations.append({
+                "dietary_tag": dietary_tag,
+                "violations": tag_violations[:2]  # Limit output
+            })
+    
+    if violations:
+        return False, {"dietary_violations": violations}
+    
+    return True, {"dietary_tags_passed": dietary_tags}
+
+
+def layer3_metadata_check(recipe: Dict, requirements: Dict) -> Tuple[float, Dict]:
+    """
+    Layer 3: Metadata analysis for meal type and dietary indicators.
+    Returns (confidence, details).
+    """
+    findings = {}
+    confidence_scores = []
+    
+    # Gather metadata
+    title = recipe.get('title', '').lower()
+    description = recipe.get('description', '').lower()
+    categories = ' '.join(recipe.get('categories', [])).lower() if recipe.get('categories') else ''
+    metadata_text = f"{title} {description} {categories}"
+    
+    # Check meal type if required
+    if 'meal_type' in requirements:
+        meal_type = requirements['meal_type'].lower()
+        
+        meal_indicators = {
+            'breakfast': ['breakfast', 'morning', 'brunch', 'oatmeal', 'pancake', 'waffle', 
+                         'cereal', 'granola', 'smoothie', 'egg', 'toast', 'muffin', 'bagel'],
+            'lunch': ['lunch', 'sandwich', 'salad', 'soup', 'wrap', 'midday'],
+            'dinner': ['dinner', 'supper', 'evening', 'entree', 'main course', 'roast'],
+            'dessert': ['dessert', 'sweet', 'cake', 'cookie', 'pie', 'ice cream', 'candy'],
+            'snack': ['snack', 'bite', 'appetizer', 'starter']
+        }
+        
+        if meal_type in meal_indicators:
+            if any(indicator in metadata_text for indicator in meal_indicators[meal_type]):
+                findings['meal_type'] = f"Detected as {meal_type} ✅"
+                confidence_scores.append(0.9)
+            else:
+                findings['meal_type'] = f"Not clearly {meal_type}"
+                confidence_scores.append(0.3)
+    
+    # Check dietary indicators in metadata
+    if 'dietary_tags' in requirements:
+        for tag in requirements['dietary_tags']:
+            tag_variations = [tag.replace('_', ' '), tag.replace('_', '-'), tag]
+            
+            if any(variation in metadata_text for variation in tag_variations):
+                findings[tag] = "Explicitly mentioned ✅"
+                confidence_scores.append(0.95)
+            else:
+                findings[tag] = "Not mentioned in metadata"
+                confidence_scores.append(0.4)
+    
+    avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0.5
+    
+    return avg_confidence, findings
+
+
+async def layer4_llm_verification(
+    recipe: Dict,
+    subjective_reqs: Dict,
+    layer3_confidence: float,
+    openai_key: str
+) -> Tuple[bool, float, Dict]:
+    """
+    Layer 4: LLM verification for subjective requirements only.
+    Used when previous layers are inconclusive or for subjective criteria.
+    """
+    if not subjective_reqs and layer3_confidence > 0.7:
+        return True, layer3_confidence, {"status": "No LLM verification needed"}
+    
+    # Prepare minimal context
+    context = {
+        "title": recipe.get("title", "Unknown"),
+        "ingredients": recipe.get("ingredients", []),  # Send ALL ingredients
+        "description": recipe.get("description", "")[:300]
+    }
+    
+    prompt = f"""Evaluate if this recipe meets these subjective requirements:
+
+REQUIREMENTS: {json.dumps(subjective_reqs, indent=2)}
+
+RECIPE:
+Title: {context['title']}
+Description: {context['description']}
+Ingredients: {json.dumps(context['ingredients'], indent=2)}
+
+Evaluate ONLY subjective aspects like meal type suitability, cuisine matching, or complex dietary compliance.
+DO NOT evaluate numerical requirements (those are handled separately).
+
+Return JSON:
+{{
+  "passes": true/false,
+  "confidence": 0.0-1.0,
+  "reasoning": "brief explanation"
+}}"""
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {openai_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "gpt-3.5-turbo",
+                    "messages": [
+                        {"role": "system", "content": "You evaluate subjective recipe requirements. Be strict and accurate."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 200
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                llm_response = data['choices'][0]['message']['content'].strip()
+                
+                if '```json' in llm_response:
+                    llm_response = llm_response.split('```json')[1].split('```')[0]
+                
+                result = json.loads(llm_response)
+                return (
+                    result.get('passes', True),
+                    result.get('confidence', 0.5),
+                    {"reasoning": result.get('reasoning', '')}
+                )
+    except Exception as e:
+        print(f"      ⚠️ LLM evaluation error: {e}")
+        return False, 0.3, {"error": str(e)}
+    
+    return False, 0.5, {"status": "LLM check failed"}
+
+
+def clean_nutrition_for_verification(unified_nutrition: List[str]) -> Dict[str, float]:
+    """
+    Enhanced nutrition cleaning that handles messy data and returns clean numeric values.
     
     Args:
         unified_nutrition: Raw nutrition strings from recipe parsing
         
     Returns:
-        Dict with clean nutrition values: {"protein": "30g", "calories": "402", "carbs": "50g", "fat": "13g"}
+        Dict with clean numeric values: {"protein": 30.0, "calories": 402.0, "carbs": 50.0, "fat": 13.0}
     """
     nutrition_clean = {}
     
     if not unified_nutrition:
         return nutrition_clean
     
-    # Join all nutrition strings and clean them
+    # Step 1: Combine and preprocess all nutrition text
     full_text = " ".join(unified_nutrition).lower()
     
-    # More specific patterns to avoid mixing up values
-    # Look for explicit nutrition labels with values
+    # Step 2: Split mashed-together strings using common delimiters
+    # Handle cases like "Calories300Protein25gFat10g" or "calories: 300 protein: 25g fat: 10g"
+    delimited_text = re.sub(r'([a-z])(\d)', r'\1 \2', full_text)  # Add space before numbers
+    delimited_text = re.sub(r'(\d)([a-z])', r'\1 \2', delimited_text)  # Add space after numbers
+    delimited_text = re.sub(r'(calories|protein|carbs|carbohydrates|fat)', r' \1', delimited_text)
+    
+    # Step 3: Remove interfering text
+    clean_text = delimited_text.replace('per serving', '').replace('per portion', '')
+    clean_text = clean_text.replace('amount per serving', '').replace('nutrition facts', '')
+    
+    # Step 4: Enhanced patterns with validation
     nutrition_patterns = {
         "calories": [
-            r'\b(\d{2,4})\s*calories\b',  # 2-4 digits followed by calories
-            r'\bcalories[:\s]*(\d{2,4})\b',  # calories: followed by 2-4 digits
-            r'\b(\d{2,4})\s*kcal\b',
-            r'\bkcal[:\s]*(\d{2,4})\b'
+            r'calories[:\s]*(\d{2,4})\b',           # "Calories: 400"
+            r'(\d{2,4})\s*calories\b',              # "400 calories"
+            r'(\d{2,4})\s*kcal\b',                  # "400 kcal"
+            r'energy[:\s]*(\d{2,4})\b',             # "Energy: 400"
         ],
         "protein": [
-            r'\bprotein[:\s]*(\d+(?:\.\d+)?)\s*([a-z]*)\b',
-            r'\b(\d+(?:\.\d+)?)\s*([a-z]*)\s+protein\b'
+            r'protein[:\s]*(\d+(?:\.\d+)?)\s*g?\b',     # "Protein: 30g" or "Protein: 30"
+            r'(\d+(?:\.\d+)?)\s*g?\s*protein\b',        # "30g protein" or "30 protein"
+            r'(\d+(?:\.\d+)?)\s*grams?\s+protein\b',    # "30 grams protein"
         ],
         "carbs": [
-            r'\bcarbohydrates?[:\s]*(\d+(?:\.\d+)?)\s*([a-z]*)\b',
-            r'\bcarbs[:\s]*(\d+(?:\.\d+)?)\s*([a-z]*)\b',
-            r'\b(\d+(?:\.\d+)?)\s*([a-z]*)\s+carbs\b',
-            r'\b(\d+(?:\.\d+)?)\s*([a-z]*)\s+carbohydrates?\b'
+            r'carbohydrates?[:\s]*(\d+(?:\.\d+)?)\s*g?\b',
+            r'carbs[:\s]*(\d+(?:\.\d+)?)\s*g?\b',
+            r'(\d+(?:\.\d+)?)\s*g?\s*carbs?\b',
+            r'(\d+(?:\.\d+)?)\s*g?\s*carbohydrates?\b',
+            r'total\s+carbohydrates?[:\s]*(\d+(?:\.\d+)?)\b',
         ],
         "fat": [
-            r'\b(?:total\s+)?fat[:\s]*(\d+(?:\.\d+)?)\s*([a-z]*)\b',
-            r'\b(\d+(?:\.\d+)?)\s*([a-z]*)\s+fat\b'
+            r'(?:total\s+)?fat[:\s]*(\d+(?:\.\d+)?)\s*g?\b',
+            r'(\d+(?:\.\d+)?)\s*g?\s*(?:total\s+)?fat\b',
         ]
     }
     
     # Debug: Show what we're parsing
-    print(f"      🔍 Parsing nutrition from: {full_text[:500]}...")
+    print(f"      🔍 Parsing nutrition from: {clean_text[:500]}...")
     
+    # Step 5: Extract and validate values
     for nutrient, patterns in nutrition_patterns.items():
-        found = False
+        found_value = None
         for pattern in patterns:
-            match = re.search(pattern, full_text)
-            if match and not found:  # Take first match to avoid duplicates
-                amount = match.group(1)
-                unit = match.group(2) if len(match.groups()) > 1 else ""
-                
-                # Handle missing units - assume grams for protein/carbs/fat, no unit for calories
-                if not unit or unit == "":
-                    if nutrient == "calories":
-                        nutrition_clean[nutrient] = f"{amount}"
-                    else:
-                        nutrition_clean[nutrient] = f"{amount}g"  # Default to grams
-                else:
-                    nutrition_clean[nutrient] = f"{amount}{unit}"
-                
-                print(f"         Found {nutrient}: {nutrition_clean[nutrient]} (pattern: {pattern})")
-                found = True
-                break
+            match = re.search(pattern, clean_text)
+            if match and found_value is None:  # Take first valid match
+                try:
+                    value = float(match.group(1))
+                    
+                    # Validation: reject obviously wrong values
+                    if nutrient == "calories" and (value < 10 or value > 5000):
+                        continue  # Skip invalid calorie values
+                    elif nutrient in ["protein", "carbs", "fat"] and (value < 0 or value > 200):
+                        continue  # Skip invalid macro values
+                    
+                    found_value = value
+                    print(f"         Found {nutrient}: {value} (pattern: {pattern})")
+                    break
+                except ValueError:
+                    continue
+        
+        if found_value is not None:
+            nutrition_clean[nutrient] = found_value
     
     print(f"      ✅ Clean nutrition result: {nutrition_clean}")
     return nutrition_clean
 
 
-async def verify_recipes_meet_requirements(scraped_recipes: List[Dict], requirements: Dict, openai_key: str, user_query: str = "") -> List[Dict]:
+async def verify_recipes_meet_requirements(
+    scraped_recipes: List[Dict], 
+    requirements: Dict, 
+    openai_key: str, 
+    user_query: str = ""
+) -> List[Dict]:
     """
-    Phase 1: Strict verification LLM - Binary PASS/FAIL verification only.
-    Fast and focused on requirement checking.
+    Layered verification system with deterministic filters and minimal LLM usage.
     
-    Args:
-        scraped_recipes: List of recipes with full parsed data
-        requirements: Strict requirements that must be met
-        openai_key: OpenAI API key
-        
-    Returns:
-        List of recipes that pass ALL requirements
+    Processing order:
+    1. Layer 1: Deterministic numerical checks (nutrition, time) - 100% reliable
+    2. Layer 2: Deterministic ingredient checks (allergies, dietary) - 100% reliable
+    3. Layer 3: Metadata analysis (meal type, dietary tags) - confidence scored
+    4. Layer 4: LLM verification (only for subjective/uncertain cases)
+    
+    Returns only recipes that pass ALL requirements.
     """
     if not scraped_recipes or not requirements:
         return scraped_recipes
     
-    if not requirements:
-        return scraped_recipes  # No requirements to verify
+    # Categorize requirements
+    categorized_reqs = extract_requirement_types(requirements, user_query)
     
-    # Prepare recipe data for verification
-    recipe_data = []
+    print(f"\n🔄 LAYERED VERIFICATION SYSTEM")
+    print(f"   Total recipes: {len(scraped_recipes)}")
+    print(f"   Numerical requirements: {categorized_reqs['numerical']}")
+    print(f"   Ingredient requirements: {categorized_reqs['ingredients']}")
+    print(f"   Subjective requirements: {categorized_reqs['subjective']}")
+    
+    qualifying_recipes = []
+    
     for i, recipe in enumerate(scraped_recipes):
-        # Clean nutrition data from unified format
-        unified_nutrition = recipe.get('unified_nutrition', [])
-        clean_nutrition = clean_nutrition_for_verification(unified_nutrition)
+        print(f"\n📋 Recipe {i}: {recipe.get('title', 'Unknown')}")
+        print(f"   URL: {recipe.get('source_url', 'No URL')}")
         
-        if clean_nutrition:
-            # Format clean nutrition as readable string
-            nutrition_parts = []
-            for nutrient in ["calories", "protein", "carbs", "fat"]:
-                if nutrient in clean_nutrition:
-                    nutrition_parts.append(f"{nutrient}: {clean_nutrition[nutrient]}")
-            nutrition_text = ", ".join(nutrition_parts)
-        else:
-            nutrition_text = "NO NUTRITION DATA AVAILABLE"
+        # LAYER 1a: Nutrition Check (Deterministic)
+        if categorized_reqs['numerical']['nutrition']:
+            passes, details = layer1_nutrition_check(
+                recipe, 
+                categorized_reqs['numerical']['nutrition']
+            )
+            print(f"   Layer 1a (Nutrition): {'✅ PASS' if passes else '❌ FAIL'}")
+            for nutrient, result in details.items():
+                print(f"      {nutrient}: {result}")
+            
+            if not passes:
+                continue  # Skip to next recipe
         
-        recipe_data.append({
-            "index": i,
-            "title": recipe.get("title", "No title"),
-            "nutrition": nutrition_text,
-            "clean_nutrition": clean_nutrition,  # Also include structured format for LLM
-            "ingredients": recipe.get("ingredients", [])[:10],  # First 10 ingredients
-            "cook_time": recipe.get("cook_time", "Not specified")
-        })
+        # LAYER 1b: Time Check (Deterministic)
+        if categorized_reqs['numerical']['time']:
+            passes, details = layer1_time_check(
+                recipe,
+                categorized_reqs['numerical']['time']
+            )
+            print(f"   Layer 1b (Time): {'✅ PASS' if passes else '❌ FAIL'}")
+            for key, result in details.items():
+                print(f"      {result}")
+            
+            if not passes:
+                continue
         
+        # LAYER 2a: Ingredient Exclusion (Deterministic)
+        if categorized_reqs['ingredients']['exclude']:
+            passes, details = layer2_ingredient_exclusion_check(
+                recipe,
+                categorized_reqs['ingredients']['exclude']
+            )
+            print(f"   Layer 2a (Exclusions): {'✅ PASS' if passes else '❌ FAIL'}")
+            if not passes:
+                print(f"      Found: {details.get('excluded_found', [])}")
+                continue
+        
+        # LAYER 2b: Ingredient Inclusion (Deterministic)
+        if categorized_reqs['ingredients']['include']:
+            passes, details = layer2_ingredient_inclusion_check(
+                recipe,
+                categorized_reqs['ingredients']['include']
+            )
+            print(f"   Layer 2b (Required): {'✅ PASS' if passes else '❌ FAIL'}")
+            if not passes:
+                print(f"      Missing: {details.get('missing', [])}")
+                continue
+        
+        # LAYER 2c: Dietary Restrictions (Deterministic)
+        if categorized_reqs['ingredients']['dietary_tags']:
+            passes, details = layer2_dietary_check(
+                recipe,
+                categorized_reqs['ingredients']['dietary_tags']
+            )
+            print(f"   Layer 2c (Dietary): {'✅ PASS' if passes else '❌ FAIL'}")
+            if not passes:
+                for violation in details.get('dietary_violations', []):
+                    print(f"      {violation['dietary_tag']}: {violation['violations']}")
+                continue
+        
+        # LAYER 3: Metadata Analysis
+        layer3_confidence = 1.0
+        if categorized_reqs['subjective']:
+            layer3_confidence, findings = layer3_metadata_check(recipe, categorized_reqs['subjective'])
+            print(f"   Layer 3 (Metadata): Confidence {layer3_confidence:.2f}")
+            for key, finding in findings.items():
+                print(f"      {key}: {finding}")
+        
+        # LAYER 4: LLM Verification (only if needed)
+        if categorized_reqs['subjective'] and layer3_confidence < 0.7:
+            passes, confidence, details = await layer4_llm_verification(
+                recipe,
+                categorized_reqs['subjective'],
+                layer3_confidence,
+                openai_key
+            )
+            print(f"   Layer 4 (LLM): {'✅ PASS' if passes else '❌ FAIL'} (confidence: {confidence:.2f})")
+            if 'reasoning' in details:
+                print(f"      {details['reasoning']}")
+            
+            if not passes or confidence < 0.6:
+                continue
+        
+        # Recipe passed all layers!
+        print(f"   🎉 QUALIFIED")
+        qualifying_recipes.append(recipe)
     
-    # Check if we have nutrition requirements
-    has_nutrition_requirements = bool(requirements.get('nutrition'))
+    print(f"\n✅ Final Results: {len(qualifying_recipes)}/{len(scraped_recipes)} recipes qualified")
     
-    # Auto-disqualify recipes with no nutrition data if nutrition requirements exist
-    pre_qualified_indices = []
-    for i, recipe in enumerate(recipe_data):
-        if has_nutrition_requirements and recipe['nutrition'] == "NO NUTRITION DATA AVAILABLE":
-            print(f"      ❌ Auto-FAIL Recipe {i} ({recipe['title']}): No nutrition data but nutrition requirements exist")
-            continue  # Skip this recipe - don't send to LLM
-        pre_qualified_indices.append(i)
+    # Final summary
+    if not qualifying_recipes and scraped_recipes:
+        print("\n⚠️  No recipes met all requirements. Common failures:")
+        if categorized_reqs['numerical']['nutrition']:
+            print("   - Nutrition requirements not met or data missing")
+        if categorized_reqs['ingredients']['exclude']:
+            print("   - Contained excluded ingredients/allergens")
     
-    if not pre_qualified_indices:
-        print(f"   ❌ All recipes auto-failed due to missing nutrition data")
-        return []
-    
-    # Filter recipe_data to only include pre-qualified recipes
-    qualified_recipe_data = [recipe_data[i] for i in pre_qualified_indices]
-    
-    print(f"   📊 Sending {len(qualified_recipe_data)}/{len(recipe_data)} recipes to LLM (others auto-failed)")
-
-    # Check if we have nutrition requirements to use the deterministic tool
-    has_nutrition_requirements = bool(requirements.get('nutrition'))
-    
-    if has_nutrition_requirements:
-        # Use deterministic nutrition verification tool first
-        print(f"   🔧 Using deterministic nutrition verification tool...")
-        nutrition_results = nutrition_verification_tool(qualified_recipe_data, requirements['nutrition'])
-        
-        # Show results from deterministic tool
-        print(f"\n📊 DETERMINISTIC NUTRITION VERIFICATION:")
-        for detail in nutrition_results['verification_details']:
-            status = "✅ PASS" if detail['passes'] else "❌ FAIL"
-            print(f"   {status}: {detail['title']}")
-            for nutrient in ['protein', 'calories', 'carbs', 'fat']:
-                if nutrient in detail:
-                    print(f"      {nutrient}: {detail[nutrient]}")
-        
-        nutrition_passing_indices = nutrition_results['passing_recipe_indices']
-        print(f"   🎯 Nutrition tool result: {len(nutrition_passing_indices)}/{len(qualified_recipe_data)} recipes passed nutrition requirements")
-        
-        # Filter recipes that passed nutrition check for LLM to handle other requirements
-        nutrition_qualified_recipes = [qualified_recipe_data[i] for i in nutrition_passing_indices]
-        
-        if not nutrition_qualified_recipes:
-            print(f"   ❌ No recipes passed nutrition verification")
-            return []
-        
-        llm_recipes_data = nutrition_qualified_recipes
-        llm_instruction = f"""You have been given {len(nutrition_qualified_recipes)} recipes that have ALREADY PASSED nutrition verification using a deterministic tool.
-
-Your job is to verify the remaining non-nutrition requirements."""
-    else:
-        # No nutrition requirements, send all recipes to LLM
-        llm_recipes_data = qualified_recipe_data  
-        nutrition_passing_indices = list(range(len(qualified_recipe_data)))
-        llm_instruction = "You need to verify all requirements for these recipes."
-
-    prompt = f"""You are a recipe requirements checker. {llm_instruction}
-
-USER QUERY: "{user_query}"
-EXTRACTED REQUIREMENTS: {json.dumps(requirements, indent=2)}
-
-VERIFICATION RULES:
-1. For meal_type requirements: Check if recipe fits the meal category (breakfast, lunch, dinner, dessert, snack)
-2. For dietary restrictions: Check ingredients for excluded items (gluten-free, vegan, keto, etc.)
-3. For time constraints: Check if cook time meets limits (under 30 minutes, etc.)
-4. For cooking method restrictions: Check preparation methods (no-bake, slow cooker, etc.)
-
-{f"NOTE: Nutrition requirements have been handled by a deterministic tool. These {len(llm_recipes_data)} recipes already passed nutrition verification." if has_nutrition_requirements else ""}
-
-RECIPES TO VERIFY:
-{json.dumps(llm_recipes_data, indent=2)}
-
-Verify each recipe against the remaining requirements and return the indices of qualifying recipes.
-
-Return ONLY valid JSON:
-{{
-  "qualifying_indices": [list_of_passing_recipe_indices]
-}}"""
-
-    # DEBUG: Show exactly what data is being sent to verification LLM
-    print(f"\n🔍 REQUIREMENTS VERIFICATION DEBUG:")
-    print(f"   User Query: '{user_query}'")
-    print(f"   Requirements: {json.dumps(requirements, indent=4)}")
-    print(f"   Number of recipes to verify: {len(recipe_data)}")
-    
-    print(f"\n📋 RECIPE DATA SENT TO LLM:")
-    for i, recipe in enumerate(recipe_data):
-        print(f"   Recipe {i}: {recipe['title']}")
-        print(f"      Clean Nutrition: {recipe['nutrition']}")
-        print(f"      Raw Unified Nutrition: {', '.join(scraped_recipes[i].get('unified_nutrition', []))[:200]}...")
-        print(f"      Cook Time: {recipe['cook_time']}")
-        print(f"      Source URL: {scraped_recipes[i].get('source_url', 'No URL')}")
-        print(f"      Ingredients (first 5): {recipe['ingredients'][:5]}")
-        print()
-
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {openai_key}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "gpt-3.5-turbo",
-                "messages": [
-                    {"role": "system", "content": "You are a strict recipe requirement verifier. Return only valid JSON."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.1,
-                "max_tokens": 500
-            }
-        )
-        
-        if response.status_code != 200:
-            # If verification fails, return all recipes (fail-safe)
-            return scraped_recipes
-        
-        try:
-            data = response.json()
-            llm_response = data['choices'][0]['message']['content'].strip()
-            
-            # DEBUG: Show the raw LLM response
-            print(f"\n🤖 RAW LLM RESPONSE:")
-            print(f"{llm_response}")
-            print()
-            
-            # Parse JSON response
-            if '```json' in llm_response:
-                llm_response = llm_response.split('```json')[1].split('```')[0]
-            elif '```' in llm_response:
-                llm_response = llm_response.split('```')[1]
-            
-            result = json.loads(llm_response.strip())
-            llm_qualifying_indices = result.get('qualifying_indices', [])
-            
-            # Map LLM indices back through the nutrition filtering to original indices
-            final_qualifying_indices = []
-            if has_nutrition_requirements:
-                # LLM worked on nutrition-qualified recipes, map back through both filters
-                for llm_idx in llm_qualifying_indices:
-                    if 0 <= llm_idx < len(nutrition_passing_indices):
-                        nutrition_idx = nutrition_passing_indices[llm_idx]  # Map to nutrition-qualified index
-                        original_idx = pre_qualified_indices[nutrition_idx]  # Map to original index
-                        final_qualifying_indices.append(original_idx)
-            else:
-                # No nutrition filtering, map directly through pre-qualified
-                for llm_idx in llm_qualifying_indices:
-                    if 0 <= llm_idx < len(pre_qualified_indices):
-                        original_idx = pre_qualified_indices[llm_idx]
-                        final_qualifying_indices.append(original_idx)
-            
-            # Return only qualifying recipes
-            qualifying_recipes = []
-            for idx in final_qualifying_indices:
-                if 0 <= idx < len(scraped_recipes):
-                    qualifying_recipes.append(scraped_recipes[idx])
-            
-            print(f"   ✅ Final Verification: {len(qualifying_recipes)}/{len(scraped_recipes)} recipes passed ALL requirements")
-            
-            # DEBUG: Show which recipes passed/failed with detailed reasoning
-            print(f"\n📊 FINAL VERIFICATION RESULTS:")
-            passed_indices = set(final_qualifying_indices)
-            for i, recipe in enumerate(scraped_recipes):
-                if has_nutrition_requirements and recipe_data[i]['nutrition'] == "NO NUTRITION DATA AVAILABLE":
-                    status = "❌ AUTO-FAILED (No nutrition data)"
-                elif has_nutrition_requirements and i not in [pre_qualified_indices[ni] for ni in nutrition_passing_indices]:
-                    status = "❌ FAILED (Nutrition requirements)"
-                elif i in passed_indices:
-                    status = "✅ PASSED (All requirements)"
-                else:
-                    status = "❌ FAILED (Other requirements)"
-                    
-                print(f"   {status}: {recipe.get('title', 'No title')}")
-                print(f"      URL: {recipe.get('source_url', 'No URL')}")
-                print(f"      Nutrition: {recipe_data[i]['nutrition']}")
-                print()
-            
-            return qualifying_recipes
-            
-        except (json.JSONDecodeError, KeyError) as e:
-            pass
-            # If parsing fails, return all recipes (fail-safe)
-            return scraped_recipes
+    return qualifying_recipes
