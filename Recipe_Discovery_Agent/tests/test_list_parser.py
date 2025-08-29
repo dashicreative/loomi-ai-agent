@@ -26,7 +26,6 @@ async def test_firecrawl_extraction():
     """Test the new FireCrawl-based list extraction on the problematic URL."""
     
     print("🧪 TESTING FIRECRAWL LIST EXTRACTION")
-    print(f"📍 Test URL: {TEST_URL}")
     print("=" * 80)
     
     # Get FireCrawl API key from environment
@@ -88,7 +87,6 @@ async def test_firecrawl_extraction():
                 
                 # Check if it incorrectly found category pages
                 if '/recipes/' in url and url.endswith('/recipes/'):
-                    print(f"   ⚠️  WARNING: This looks like a category page, not individual recipe")
         
         print(f"\n" + "=" * 80)
         print("🎯 COST & FEASIBILITY ANALYSIS")

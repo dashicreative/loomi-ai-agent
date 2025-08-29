@@ -169,7 +169,6 @@ async def search_recipes_google_custom(ctx: RunContext[RecipeDeps], query: str, 
             }
             
         except Exception as e:
-            print(f"⚠️  Google Custom Search fallback failed: {e}")
             return {
                 "results": [],
                 "total": 0,

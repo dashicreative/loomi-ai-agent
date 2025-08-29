@@ -397,7 +397,6 @@ async def hybrid_recipe_parser(url: str, openai_key: str) -> Dict:
         return {'error': 'OpenAI API key required', 'source_url': url}
     
     parse_start = time.time()
-    print(f"   🔍 Starting hybrid parse: {url}")
     
     try:
         # Step 1: Fast HTML scraping
@@ -438,7 +437,6 @@ async def hybrid_recipe_parser(url: str, openai_key: str) -> Dict:
         
         if not recipe_data:
             total_time = time.time() - parse_start
-            print(f"   ❌ PARSE FAILED - Total time: {total_time:.2f}s")
             return {'error': 'No recipe data found in HTML', 'source_url': url}
         
         # Step 3: Keep raw ingredients for instant recipe discovery
@@ -448,7 +446,6 @@ async def hybrid_recipe_parser(url: str, openai_key: str) -> Dict:
             print(f"   ✅ Using raw JSON-LD ingredients ({len(raw_ingredients)} items) - instant processing")
             # Ingredients remain as strings for ranking/display, shopping conversion happens later
         else:
-            print(f"   ⚠️  No ingredients found")
         
         recipe_data['source_url'] = url
         total_time = time.time() - parse_start

@@ -48,14 +48,6 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     Returns:
         Dict with structured recipe data ready for agent/iOS consumption
     """
-    # DEBUG: Show exactly what agent passed to this tool
-    print(f"\n🔍 DEBUG TOOL INPUT FROM AGENT:")
-    print(f"   Raw Query Parameter: '{query}'")
-    print(f"   Query Length: {len(query)} characters")
-    print(f"   Requirements Parameter: {requirements}")
-    print(f"   Needed Count: {needed_count}")
-    
-    print(f"🔍 COMPLETE RECIPE SEARCH: Processing '{query}'")
     total_pipeline_start = time.time()
     
     # Stage 1: Web Search with Google Custom Search fallback
@@ -65,10 +57,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     raw_results = search_results.get("results", [])
     
     # FALLBACK: Use Google Custom Search if SerpAPI returns < 20 results
-    search_method = "SerpAPI only"
     if len(raw_results) < 20:
-        print(f"⚠️  SerpAPI returned only {len(raw_results)} results, using Google Custom Search fallback...")
-        
         try:
             google_results = await search_recipes_google_custom(ctx, query, number=40)
             google_urls = google_results.get("results", [])
@@ -79,12 +68,8 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
                 if google_result.get("url") not in existing_urls:
                     raw_results.append(google_result)
             
-            print(f"🔄 Combined results: {len(raw_results)} URLs total (SerpAPI + Google Custom Search)")
-            search_method = "SerpAPI + Google Custom Search"
-            
         except Exception as e:
-            print(f"⚠️  Google Custom Search fallback failed: {e}")
-            print(f"📊 Continuing with {len(raw_results)} URLs from SerpAPI only")
+            pass
     
     stage1_time = time.time() - stage1_start
     
@@ -98,7 +83,6 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         }
     
     print(f"📊 Stage 1: Web Search - Found {len(raw_results)} URLs - {stage1_time:.2f}s")
-    print(f"🔍 Search method used: {search_method}")
     
     # Stage 2: Initial Ranking
     stage2_start = time.time()
@@ -135,7 +119,6 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         url_backlog = []
         
         # FIRST: Rank all URLs by priority sites before any processing
-        print(f"📊 Initial Quality Ranking: Ordering {len(urls)} URLs by priority sites...")
         priority_ranked_urls = []
         non_priority_urls = []
         
@@ -160,19 +143,11 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         # Combine: priority sites first (in order), then all others
         urls = priority_ranked_urls + non_priority_urls
         
-        print(f"   ✅ Ranked: {len(priority_ranked_urls)} priority sites, {len(non_priority_urls)} others")
-        if priority_ranked_urls:
-            unique_sites = list(dict.fromkeys([u.get('url', '').split('/')[2] for u in priority_ranked_urls]))
-            print(f"   📍 Priority sites found: {unique_sites[:5]}")
-        
-        print(f"📊 Ready to process {len(urls)} URLs in batches")
-        
         stage3_batch_setup_time = time.time() - stage3_start
         total_stage3_time += stage3_batch_setup_time
         print(f"📊 Stage 3A: Batch Setup - {stage3_batch_setup_time:.2f}s")
         
     except Exception as e:
-        print(f"❌ ERROR in batch processing setup: {e}")
         import traceback
         traceback.print_exc()
         return {
@@ -189,23 +164,19 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         batch_end = min(batch_start + batch_size, len(urls))
         current_batch = urls[batch_start:batch_end]
         
-        print(f"\n🔄 Processing Batch {batch_count}: URLs {batch_start}-{batch_end-1} ({len(current_batch)} URLs)")
         batch_total_start = time.time()
         
         # Classify just the URLs in THIS batch
-        print(f"   🔍 Classifying {len(current_batch)} URLs in this batch...")
         stage3_classify_start = time.time()
         try:
             batch_classifications = await classify_urls_batch(current_batch, ctx.deps.openai_key)
             batch_classification_map = {c.url: c for c in batch_classifications}
         except Exception as e:
-            print(f"   ⚠️  Batch classification failed: {e}")
-            print(f"   ⚠️  Treating all batch URLs as recipe URLs")
             batch_classification_map = {}
         
         stage3_classify_time = time.time() - stage3_classify_start
         total_stage3_time += stage3_classify_time
-        print(f"   📊 Stage 3B: URL Classification - {stage3_classify_time:.2f}s")
+        print(f"📊 Stage 3B: URL Classification - {stage3_classify_time:.2f}s")
         
         # Separate recipe URLs from list URLs in this batch
         batch_recipe_urls = []
@@ -221,15 +192,6 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         # Defer ALL list URLs to backlog - don't process any now
         if batch_list_urls:
             url_backlog.extend(batch_list_urls)
-            print(f"   📊 Deferring {len(batch_list_urls)} list URLs to backlog (will process only if needed)")
-            print(f"   🔍 List URLs identified:")
-            for list_url_dict in batch_list_urls:
-                list_url = list_url_dict.get('url', '')
-                list_title = list_url_dict.get('title', 'No title')
-                classification = batch_classification_map.get(list_url)
-                confidence = classification.confidence if classification else 0.0
-                print(f"     - {list_title[:60]}... → {list_url}")
-                print(f"       Confidence: {confidence:.2f}")
         
         # Only process recipe URLs
         urls_to_process = batch_recipe_urls
@@ -240,10 +202,9 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         fp1_failures = []
         stage3_expansion_time = time.time() - stage3_expansion_start
         total_stage3_time += stage3_expansion_time
-        print(f"📊 Batch {batch_count} - Stage 3C: URL Expansion - Skipped (list URLs deferred) - {stage3_expansion_time:.3f}s")
+        print(f"📊 Stage 3C: URL Expansion - Skipped (list URLs deferred) - {stage3_expansion_time:.3f}s")
         
         if not expanded_results:
-            print(f"⚠️  Batch {batch_count} - No URLs after expansion, skipping")
             all_fp1_failures.extend(fp1_failures)
             continue
         
@@ -274,7 +235,6 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
                 
                 if isinstance(data, asyncio.TimeoutError):
                     # Defer slow URLs to backlog for later processing
-                    print(f"   ⏰ Timeout (25s): Deferring slow URL to backlog: {url}")
                     url_backlog.append(result)
                 elif isinstance(data, Exception):
                     # Track other exceptions as failed parses
@@ -306,15 +266,10 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         stage4_time = time.time() - stage4_start
         batch_total_time = time.time() - batch_total_start
         
-        print(f"📊 Batch {batch_count} - Stage 4: Recipe Scraping - Successfully parsed {len(successful_parses)} recipes - {stage4_time:.2f}s")
-        print(f"⏱️  Batch {batch_count} Total Time: {batch_total_time:.2f}s")
+        print(f"📊 Stage 4: Recipe Scraping - Successfully parsed {len(successful_parses)} recipes - {stage4_time:.2f}s")
         
         # Accumulate stage timing
         total_stage4_time += stage4_time
-        
-        if failed_parses:
-            failed_urls = [fp.get("result", {}).get("url", "") for fp in failed_parses]
-            print(f"❌ Batch {batch_count} failed to parse: {', '.join(failed_urls)}")
         
         # Add batch results to overall collections
         all_recipes.extend(successful_parses)
@@ -324,21 +279,9 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         # Stage 5: Final Ranking after each batch
         stage5_start = time.time()
         
-        # DEBUG: Show what recipes we're about to verify
-        print(f"\n🔍 DEBUG PRE-VERIFICATION:")
-        print(f"   Total recipes to verify: {len(all_recipes)}")
-        for i, recipe in enumerate(all_recipes):
-            print(f"   {i}: {recipe.get('title', 'No title')} - {recipe.get('source_url', 'No URL')}")
-        
         if len(all_recipes) > 1:
             # Phase 1: Verify recipes meet requirements
             qualified_recipes = await verify_recipes_meet_requirements(all_recipes, requirements, ctx.deps.openai_key, user_query)
-            
-            # DEBUG: Show what recipes passed verification
-            print(f"\n🔍 DEBUG POST-VERIFICATION:")
-            print(f"   Qualified recipes: {len(qualified_recipes)}")
-            for i, recipe in enumerate(qualified_recipes):
-                print(f"   {i}: {recipe.get('title', 'No title')} - {recipe.get('source_url', 'No URL')}")
             
             # Phase 2: Rank qualified recipes by relevance  
             final_ranked_recipes = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
@@ -346,33 +289,25 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
             final_ranked_recipes = all_recipes
         stage5_time = time.time() - stage5_start
         
-        print(f"📊 Stage 5: Final Ranking after batch {batch_count} - Ranking {len(final_ranked_recipes)} qualified recipes - {stage5_time:.2f}s")
+        print(f"📊 Stage 5: Final Ranking - Ranking {len(final_ranked_recipes)} qualified recipes - {stage5_time:.2f}s")
         
         # Accumulate stage timing
         total_stage5_time += stage5_time
         
         # Early exit: if we have enough FINAL recipes after ranking, stop processing batches
         if len(final_ranked_recipes) >= needed_count:
-            print(f"✅ Found {len(final_ranked_recipes)} final recipes (needed {needed_count}), stopping batch processing")
             break
-        else:
-            print(f"📊 Progress: {len(final_ranked_recipes)}/{needed_count} final recipes found, continuing...")
     
     # Process url_backlog if we still need more recipes
     if len(final_ranked_recipes) < needed_count and url_backlog:
-        print(f"\n📋 PROCESSING URL BACKLOG: {len(url_backlog)} list URLs deferred")
-        print(f"   Still need {needed_count - len(final_ranked_recipes)} more recipes")
-        
         stage3_backlog_start = time.time()
         # Process backlog URLs (these are primarily list URLs)
         backlog_copy = url_backlog.copy()
         for backlog_url_dict in backlog_copy:
             if len(qualified_recipes) >= needed_count:
-                print(f"   ✅ Found enough qualified recipes ({len(qualified_recipes)}/{needed_count}), stopping backlog processing")
                 break
                 
             url = backlog_url_dict.get('url', '')
-            print(f"   🔄 Processing backlog URL: {url}")
             
             # IMMEDIATELY remove from original backlog so it can't be considered again
             url_backlog.remove(backlog_url_dict)
@@ -386,27 +321,14 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
                     html_content = response.text
                 
                 # Use ListParser to extract recipe URLs
-                print(f"      🔍 Using ListParser on: {url}")
-                print(f"      📄 HTML content size: {len(html_content)} chars")
                 intelligent_parser = ListParser(ctx.deps.openai_key)
                 extracted_recipes = await intelligent_parser.extract_recipe_urls(
                     url, 
                     html_content, 
                     max_urls=4
                 )
-                print(f"      📊 ListParser returned {len(extracted_recipes) if extracted_recipes else 0} URLs")
                 
                 if extracted_recipes:
-                    print(f"      ✅ Extracted {len(extracted_recipes)} recipes from list URL")
-                    print(f"      📋 DEBUG: Extracted URLs from {url}:")
-                    for i, recipe_dict in enumerate(extracted_recipes):
-                        extracted_url = recipe_dict.get("url", "")
-                        extracted_title = recipe_dict.get("title", "No title")
-                        print(f"        {i+1}. {extracted_title}")
-                        print(f"           URL: {extracted_url}")
-                        if any(indicator in extracted_url.lower() for indicator in ['collection', 'category', 'recipes/', '/recipes', 'roundup', 'list']):
-                            print(f"           ⚠️  WARNING: This looks like a LIST URL, not a recipe URL!")
-                    
                     # Stage 4: Parse the extracted recipes
                     extraction_tasks = []
                     for recipe_url_dict in extracted_recipes:
@@ -425,9 +347,6 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
                                 # Normalize nutrition data to unified format
                                 data = normalize_nutrition_data(data)
                                 all_recipes.append(data)
-                                print(f"      ✅ Successfully parsed recipe {len(all_recipes)}/{needed_count}")
-                            else:
-                                print(f"      ❌ Failed to parse: {extracted_recipes[i].get('url', '')}")
                         
                         # Run verification on ONLY the newly parsed recipes from this backlog URL
                         if requirements and extracted_data:
@@ -443,13 +362,9 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
                                 
                                 # Check if we have enough qualified recipes to stop
                                 if len(qualified_recipes) >= needed_count:
-                                    print(f"      ✅ Found {len(qualified_recipes)} qualified recipes (needed {needed_count}), stopping backlog processing")
                                     break
-                else:
-                    print(f"      ⚠️ No recipes extracted from list URL")
                     
             except Exception as e:
-                print(f"      ❌ Failed to process backlog URL: {e}")
                 all_fp1_failures.append({
                     "url": url,
                     "title": backlog_url_dict.get('title', ''),
@@ -459,8 +374,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         
         stage3_backlog_time = time.time() - stage3_backlog_start
         total_stage3_time += stage3_backlog_time
-        print(f"📋 Backlog processing complete: {len(all_recipes)} total recipes")
-        print(f"   📊 Stage 3D: Backlog Processing - {stage3_backlog_time:.2f}s")
+        print(f"📊 Stage 3D: Backlog Processing - {stage3_backlog_time:.2f}s")
         
         # Stage 5: Final Ranking after backlog processing
         stage5_start = time.time()
@@ -483,12 +397,6 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     # Ensure final_ranked_recipes is defined
     if 'final_ranked_recipes' not in locals():
         final_ranked_recipes = all_recipes
-    
-    # DEBUG: Show final recipe selection before formatting
-    print(f"\n🔍 DEBUG FINAL SELECTION:")
-    print(f"   Final ranked recipes: {len(final_ranked_recipes)}")
-    for i, recipe in enumerate(final_ranked_recipes[:needed_count]):
-        print(f"   {i}: {recipe.get('title', 'No title')} - {recipe.get('source_url', 'No URL')}")
 
     # Stage 6: Final Formatting using modular function
     stage6_start = time.time()
@@ -517,7 +425,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     # Create minimal context for agent using modular function
     minimal_recipes = create_minimal_recipes_for_agent(formatted_recipes)
     
-    # TODO: DELETE LATER - Development debugging to see final recipe selections
+    # Final recipe selection display
     print("\n" + "="*60)
     print(f"🍳 FINAL {len(formatted_recipes)} RECIPES SELECTED:")
     print("="*60)
@@ -525,7 +433,6 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         print(f"{i}. {recipe.get('title', 'Unknown Title')}")
         print(f"   URL: {recipe.get('sourceUrl', 'No URL')}")
     print("="*60 + "\n")
-    # END DELETE LATER
     
     return {
         "results": minimal_recipes,  # Minimal context for agent

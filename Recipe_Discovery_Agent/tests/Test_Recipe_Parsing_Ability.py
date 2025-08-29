@@ -111,7 +111,6 @@ class RecipeParsingTester:
                 
             else:
                 result["error"] = parsed_data.get("error", "Unknown error") if parsed_data else "No data returned"
-                print(f"❌ FAILED: {result['error']}")
                 # If it's a partial failure, show what we DID get
                 if parsed_data and isinstance(parsed_data, dict):
                     print(f"   Partial data received:")
@@ -310,7 +309,7 @@ class RecipeParsingTester:
                 print(f"      - {field}: {count} ({percentage:.1f}%)")
         
         # Common failure patterns
-        print(f"\n⚠️  COMMON FAILURE PATTERNS:")
+        print(f"\nCOMMON FAILURE PATTERNS:")
         error_patterns = {}
         error_details = {}
         for result in self.results["detailed_results"]:

@@ -52,7 +52,6 @@ class BatchURLClassifier:
         Returns:
             List of URLClassification objects
         """
-        print(f"   🔍 Stage 3B Details: Processing {len(urls)} URLs")
         
         # Step 1: Fetch content samples in parallel
         fetch_start = time.time()
@@ -69,7 +68,6 @@ class BatchURLClassifier:
         classifications = []
         for i, result in enumerate(classification_results):
             if isinstance(result, Exception):
-                print(f"     ⚠️  Individual classification failed for {content_samples[i]['url']}: {result}")
                 # Fallback classification for failed calls
                 classifications.append(URLClassification(
                     url=content_samples[i]['url'],
@@ -100,10 +98,8 @@ class BatchURLClassifier:
             try:
                 # Step 1: Quick HEAD request to check accessibility
                 head_response = await client.head(url, follow_redirects=True, timeout=2.0)
-                print(f"🔍 Debug: HEAD {url} returned status {head_response.status_code}")
                 
                 if head_response.status_code == 403:
-                    print(f"⚠️  403 Forbidden for {url} - skipping content fetch")
                     return {
                         'url': url,
                         'title': title,
@@ -111,7 +107,6 @@ class BatchURLClassifier:
                         'error': '403 Forbidden (detected via HEAD)'
                     }
                 elif head_response.status_code not in [200, 301, 302]:
-                    print(f"⚠️  HTTP {head_response.status_code} for {url} - skipping content fetch")
                     return {
                         'url': url,
                         'title': title,
@@ -121,10 +116,8 @@ class BatchURLClassifier:
                 
                 # Step 2: If HEAD is successful, proceed with content fetch
                 async with client.stream('GET', url, follow_redirects=True) as response:
-                    print(f"🔍 Debug: GET {url} returned status {response.status_code}")
                     
                     if response.status_code != 200:
-                        print(f"⚠️  HTTP {response.status_code} for {url}")
                     
                     content = b""
                     async for chunk in response.aiter_bytes(chunk_size=1024):
@@ -272,7 +265,6 @@ Content: {content_preview[:800]}"""
                 'content_preview': sample['content'][:2000]  # Limit per-URL content
             })
         prep_time = time.time() - prep_start
-        print(f"     📋 Prompt Preparation: {prep_time:.3f}s")
         
         prompt = f"""Classify these URLs based on their content and structure using these flexible guidelines.
 

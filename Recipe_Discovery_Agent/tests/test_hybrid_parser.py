@@ -132,7 +132,6 @@ Content to analyze:
         
         data = response.json()
         llm_response = data['choices'][0]['message']['content'].strip()
-        print(f"   🔍 LLM Response: {llm_response[:200]}...")
         
         # Parse JSON response
         try:
@@ -186,7 +185,6 @@ async def test_hybrid_extraction():
     
     print("🧪 TESTING HYBRID EXTRACTION APPROACH")
     print("Strategy: Fast HTML scraping + GPT-3.5 extraction")
-    print(f"📍 Test URL: {TEST_URL}")
     print("=" * 80)
     
     # Get API keys
@@ -245,7 +243,6 @@ async def test_hybrid_extraction():
                 
                 # Check if it incorrectly found category pages
                 if '/recipes/' in url and url.endswith('/recipes/'):
-                    print(f"   ⚠️  WARNING: This looks like a category page")
         
         print(f"\n" + "=" * 80)
         print("🎯 EXTRACTION SUMMARY")

@@ -175,7 +175,6 @@ async def expand_urls_with_lists(initial_results: List[Dict], openai_key: str = 
         return [], []
     
     # Step 1: Batch classify all URLs at once (much faster than individual classification)
-    print(f"🔍 Classifying {len(initial_results)} URLs in batch...")
     classifications = await classify_urls_batch(initial_results, openai_key)
     
     # Create a mapping of URL to classification for easy lookup

@@ -325,7 +325,7 @@ Content to analyze:
                 )
             
             if response.status_code != 200:
-                print(f"   ❌ FAILED: API error - {response.status_code}")
+                print(f"   FAILED: API error - {response.status_code}")
                 failed += 1
                 continue
             
@@ -341,7 +341,7 @@ Content to analyze:
             result = json.loads(llm_response)
             
             if 'error' in result:
-                print(f"   ❌ FAILED: Parser error - {result['error']}")
+                print(f"   FAILED: Parser error - {result['error']}")
                 failed += 1
                 continue
             
@@ -412,7 +412,7 @@ Content to analyze:
                 failed += 1
                 
         except Exception as e:
-            print(f"   ❌ FAILED: Exception - {e}")
+            print(f"   FAILED: Exception - {e}")
             failed += 1
     
     # Final results
@@ -425,7 +425,7 @@ Content to analyze:
     if passed == len(TEST_CASES):
         print(f"\n🎉 SUCCESS! 100% accuracy achieved!")
     else:
-        print(f"\n⚠️  FAILED: Did not meet 100% accuracy requirement")
+        print(f"\nFAILED: Did not meet 100% accuracy requirement")
 
 def main():
     """Run the tests."""

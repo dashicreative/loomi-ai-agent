@@ -47,13 +47,6 @@ async def verify_recipes_meet_requirements(scraped_recipes: List[Dict], requirem
             "cook_time": recipe.get("cook_time", "Not specified")
         })
         
-        # DEBUG: Print what data is being sent to verification LLM
-        print(f"   🔍 DEBUG Recipe {i+1}: {recipe.get('title', 'No title')}")
-        print(f"      URL: {recipe.get('source_url', 'No URL')}")
-        print(f"      Unified Nutrition: {nutrition_text}")
-        print(f"      Original Raw Field: {recipe.get('nutrition', 'MISSING')}")
-        print(f"      Original Structured Field: {recipe.get('structured_nutrition', 'MISSING')}")
-        print(f"      Normalized Unified Field: {recipe.get('unified_nutrition', 'MISSING')}")
     
     prompt = f"""User's Original Query: "{user_query}"
 
@@ -81,12 +74,6 @@ Use your reasoning to evaluate each recipe against the user's requirements and r
   "qualifying_indices": [0, 2, 4]
 }}"""
 
-    # DEBUG: Print exact LLM input
-    print(f"\n🔍 DEBUG PHASE 1 LLM INPUT:")
-    print(f"   Requirements Dict: {requirements}")
-    print(f"   User Query: {user_query}")
-    print(f"   Number of recipes to verify: {len(recipe_data)}")
-    print(f"   Full Prompt Length: {len(prompt)} characters")
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
@@ -114,9 +101,6 @@ Use your reasoning to evaluate each recipe against the user's requirements and r
             data = response.json()
             llm_response = data['choices'][0]['message']['content'].strip()
             
-            # DEBUG: Print exact LLM response
-            print(f"\n🔍 DEBUG PHASE 1 LLM OUTPUT:")
-            print(f"   Raw LLM Response: {llm_response}")
             
             # Parse JSON response
             if '```json' in llm_response:
@@ -127,8 +111,6 @@ Use your reasoning to evaluate each recipe against the user's requirements and r
             result = json.loads(llm_response.strip())
             qualifying_indices = result.get('qualifying_indices', [])
             
-            # DEBUG: Print parsed results
-            print(f"   Parsed Qualifying Indices: {qualifying_indices}")
             
             # Return only qualifying recipes
             qualifying_recipes = []
@@ -138,15 +120,9 @@ Use your reasoning to evaluate each recipe against the user's requirements and r
             
             print(f"   ✅ Phase 1 Verification: {len(qualifying_recipes)}/{len(scraped_recipes)} recipes passed requirements")
             
-            # DEBUG: Show which recipes passed/failed
-            passed_indices = set(qualifying_indices)
-            for i, recipe in enumerate(scraped_recipes):
-                status = "✅ PASSED" if i in passed_indices else "❌ FAILED"
-                print(f"      {status}: {recipe.get('title', 'No title')}")
-            
             return qualifying_recipes
             
         except (json.JSONDecodeError, KeyError) as e:
-            print(f"   ⚠️  Phase 1 verification failed: {e}")
+            pass
             # If parsing fails, return all recipes (fail-safe)
             return scraped_recipes
