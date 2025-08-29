@@ -118,6 +118,7 @@ class BatchURLClassifier:
                 async with client.stream('GET', url, follow_redirects=True) as response:
                     
                     if response.status_code != 200:
+                        pass
                     
                     content = b""
                     async for chunk in response.aiter_bytes(chunk_size=1024):

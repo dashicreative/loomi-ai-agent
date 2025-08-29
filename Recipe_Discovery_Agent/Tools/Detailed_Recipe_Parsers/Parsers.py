@@ -449,6 +449,7 @@ async def hybrid_recipe_parser(url: str, openai_key: str) -> Dict:
             print(f"   ✅ Using raw JSON-LD ingredients ({len(raw_ingredients)} items) - instant processing")
             # Ingredients remain as strings for ranking/display, shopping conversion happens later
         else:
+            pass
         
         recipe_data['source_url'] = url
         total_time = time.time() - parse_start
