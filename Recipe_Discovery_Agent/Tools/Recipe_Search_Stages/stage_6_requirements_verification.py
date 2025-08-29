@@ -74,6 +74,21 @@ Use your reasoning to evaluate each recipe against the user's requirements and r
   "qualifying_indices": [0, 2, 4]
 }}"""
 
+    # DEBUG: Show exactly what data is being sent to verification LLM
+    print(f"\n🔍 REQUIREMENTS VERIFICATION DEBUG:")
+    print(f"   User Query: '{user_query}'")
+    print(f"   Requirements: {json.dumps(requirements, indent=4)}")
+    print(f"   Number of recipes to verify: {len(recipe_data)}")
+    
+    print(f"\n📋 RECIPE DATA SENT TO LLM:")
+    for i, recipe in enumerate(recipe_data):
+        print(f"   Recipe {i}: {recipe['title']}")
+        print(f"      Nutrition: {recipe['nutrition']}")
+        print(f"      Cook Time: {recipe['cook_time']}")
+        print(f"      Source URL: {scraped_recipes[i].get('source_url', 'No URL')}")
+        print(f"      Ingredients (first 5): {recipe['ingredients'][:5]}")
+        print()
+
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
@@ -101,6 +116,10 @@ Use your reasoning to evaluate each recipe against the user's requirements and r
             data = response.json()
             llm_response = data['choices'][0]['message']['content'].strip()
             
+            # DEBUG: Show the raw LLM response
+            print(f"\n🤖 RAW LLM RESPONSE:")
+            print(f"{llm_response}")
+            print()
             
             # Parse JSON response
             if '```json' in llm_response:
@@ -119,6 +138,16 @@ Use your reasoning to evaluate each recipe against the user's requirements and r
                     qualifying_recipes.append(scraped_recipes[idx])
             
             print(f"   ✅ Phase 1 Verification: {len(qualifying_recipes)}/{len(scraped_recipes)} recipes passed requirements")
+            
+            # DEBUG: Show which recipes passed/failed
+            print(f"\n📊 VERIFICATION RESULTS:")
+            passed_indices = set(qualifying_indices)
+            for i, recipe in enumerate(scraped_recipes):
+                status = "✅ PASSED" if i in passed_indices else "❌ FAILED"
+                print(f"   {status}: {recipe.get('title', 'No title')}")
+                print(f"      URL: {recipe.get('source_url', 'No URL')}")
+                print(f"      Nutrition: {recipe_data[i]['nutrition']}")
+                print()
             
             return qualifying_recipes
             
