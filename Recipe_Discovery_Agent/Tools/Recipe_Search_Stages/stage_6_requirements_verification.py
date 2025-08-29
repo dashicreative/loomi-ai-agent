@@ -33,29 +33,29 @@ def clean_nutrition_for_verification(unified_nutrition: List[str]) -> Dict[str, 
     # Look for explicit nutrition labels with values
     nutrition_patterns = {
         "calories": [
-            r'calories[:\s]*(\d+(?:\.\d+)?)',
-            r'(\d+(?:\.\d+)?)\s*calories',
-            r'kcal[:\s]*(\d+(?:\.\d+)?)',
-            r'(\d+(?:\.\d+)?)\s*kcal'
+            r'\b(\d{2,4})\s*calories\b',  # 2-4 digits followed by calories
+            r'\bcalories[:\s]*(\d{2,4})\b',  # calories: followed by 2-4 digits
+            r'\b(\d{2,4})\s*kcal\b',
+            r'\bkcal[:\s]*(\d{2,4})\b'
         ],
         "protein": [
-            r'protein[:\s]*(\d+(?:\.\d+)?)\s*([a-z]*)',
-            r'(\d+(?:\.\d+)?)\s*([a-z]*)\s+protein'
+            r'\bprotein[:\s]*(\d+(?:\.\d+)?)\s*([a-z]*)\b',
+            r'\b(\d+(?:\.\d+)?)\s*([a-z]*)\s+protein\b'
         ],
         "carbs": [
-            r'carbohydrates?[:\s]*(\d+(?:\.\d+)?)\s*([a-z]*)',
-            r'carbs[:\s]*(\d+(?:\.\d+)?)\s*([a-z]*)',
-            r'(\d+(?:\.\d+)?)\s*([a-z]*)\s+carbs',
-            r'(\d+(?:\.\d+)?)\s*([a-z]*)\s+carbohydrates?'
+            r'\bcarbohydrates?[:\s]*(\d+(?:\.\d+)?)\s*([a-z]*)\b',
+            r'\bcarbs[:\s]*(\d+(?:\.\d+)?)\s*([a-z]*)\b',
+            r'\b(\d+(?:\.\d+)?)\s*([a-z]*)\s+carbs\b',
+            r'\b(\d+(?:\.\d+)?)\s*([a-z]*)\s+carbohydrates?\b'
         ],
         "fat": [
-            r'(?:total\s+)?fat[:\s]*(\d+(?:\.\d+)?)\s*([a-z]*)',
-            r'(\d+(?:\.\d+)?)\s*([a-z]*)\s+fat'
+            r'\b(?:total\s+)?fat[:\s]*(\d+(?:\.\d+)?)\s*([a-z]*)\b',
+            r'\b(\d+(?:\.\d+)?)\s*([a-z]*)\s+fat\b'
         ]
     }
     
     # Debug: Show what we're parsing
-    print(f"      🔍 Parsing nutrition from: {full_text[:300]}...")
+    print(f"      🔍 Parsing nutrition from: {full_text[:500]}...")
     
     for nutrient, patterns in nutrition_patterns.items():
         found = False
@@ -148,38 +148,38 @@ async def verify_recipes_meet_requirements(scraped_recipes: List[Dict], requirem
     
     print(f"   📊 Sending {len(qualified_recipe_data)}/{len(recipe_data)} recipes to LLM (others auto-failed)")
 
-    prompt = f"""User's Original Query: "{user_query}"
+    prompt = f"""You are a precise nutrition requirements checker. Your job is to verify if recipes meet EXACT numerical requirements.
 
-You are verifying if recipes meet the user's requirements using your reasoning abilities.
+USER QUERY: "{user_query}"
+EXTRACTED REQUIREMENTS: {json.dumps(requirements, indent=2)}
 
-REQUIREMENTS EXTRACTED FROM USER'S QUERY:
-{json.dumps(requirements, indent=2)}
+VERIFICATION RULES:
+1. For nutrition requirements: Compare numbers EXACTLY
+   - protein >= 30g: Recipe needs 30g or MORE protein
+   - calories <= 400: Recipe needs 400 or FEWER calories
+   - Extract the NUMBER from nutrition strings and compare mathematically
 
-YOUR TASK:
-Use your reasoning to determine if each recipe meets the user's intent and all extracted requirements.
+2. For meal_type requirements: Check if recipe fits the meal category
+3. For dietary restrictions: Check ingredients for excluded items  
+4. For time constraints: Check if cook time meets limits
 
-VERIFICATION LOGIC:
-- If nutrition requirements specified: Check if recipe meets the numeric values (e.g., "protein >= 30g")
-- If meal_type specified: Verify the recipe is appropriate for that meal type
-- If dietary restrictions: Check ingredients don't contain excluded items
-- If time constraints: Verify cooking time fits requirements
-- STRICT NUMERICAL COMPARISON: For protein >= 30g, recipe must have 30g or more to pass
-- When in doubt about meeting requirements: FAIL the recipe
+CRITICAL: Do EXACT numerical comparison. Do not fail recipes that clearly meet requirements.
 
-EXAMPLE PROTEIN VERIFICATION:
-- Requirement: protein >= 30g
-- Recipe has "protein: 24g" → FAIL (24 < 30)
-- Recipe has "protein: 30g" → PASS (30 >= 30)  
-- Recipe has "protein: 35g" → PASS (35 > 30)
+PROTEIN REQUIREMENT EXAMPLES (if requirement is >= 30g):
+- "protein: 15g" → 15 < 30 → FAIL ❌
+- "protein: 24g" → 24 < 30 → FAIL ❌  
+- "protein: 30g" → 30 >= 30 → PASS ✅
+- "protein: 35g" → 35 >= 30 → PASS ✅
+- "protein: 37g" → 37 >= 30 → PASS ✅
 
-RECIPES TO VERIFY (with clean nutrition data):
+RECIPES TO VERIFY:
 {json.dumps(qualified_recipe_data, indent=2)}
 
-IMPORTANT: Use the "nutrition" field which contains clean, parsed nutrition data. All recipes below have valid nutrition data.
+For each recipe, extract the protein number from the "nutrition" field and compare it to the requirement. If the protein amount meets or exceeds the requirement, include that recipe's index in the qualifying_indices array.
 
-Use your reasoning to evaluate each recipe against the user's requirements and return qualifying indices:
+Return ONLY valid JSON:
 {{
-  "qualifying_indices": [0, 2, 4]
+  "qualifying_indices": [list_of_passing_recipe_indices]
 }}"""
 
     # DEBUG: Show exactly what data is being sent to verification LLM
