@@ -295,10 +295,10 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         # Stage 5: Final Ranking after each batch
         stage5_start = time.time()
         
-        if len(all_recipes) > 1:
-            # Phase 1: Verify recipes meet requirements (two-tier system)
-            batch_qualified, batch_processed = await verify_recipes_meet_requirements(all_recipes, requirements, ctx.deps.openai_key, user_query)
-            qualified_recipes = batch_qualified
+        if len(successful_parses) > 0:
+            # Phase 1: Verify ONLY newly parsed recipes from this batch (avoid redundant processing)
+            batch_qualified, batch_processed = await verify_recipes_meet_requirements(successful_parses, requirements, ctx.deps.openai_key, user_query)
+            qualified_recipes.extend(batch_qualified)
             all_processed_recipes.extend(batch_processed)  # Accumulate all processed recipes
             
             # Phase 2: Rank qualified recipes by relevance  
@@ -443,6 +443,9 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         print(f"   ⚠️  Only processed {urls_processed_count}/{total_urls_to_process} URLs - stopped early or hit limits")
 
     # FALLBACK: Fill remaining slots with closest matches if needed (after ALL URLs exhausted)
+    fallback_used = False
+    exact_match_count = len(final_ranked_recipes)
+    
     if len(final_ranked_recipes) < needed_count and 'all_processed_recipes' in locals() and all_processed_recipes:
         remaining_slots = needed_count - len(final_ranked_recipes)
         print(f"\n🔄 CLOSEST MATCH FALLBACK:")
@@ -470,10 +473,11 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
             print(f"      {i}. {title} ({percentage}% match)")
         
         print(f"🚨 FINAL RECIPE COUNT AFTER FALLBACK: {len(final_ranked_recipes)}")
+        fallback_used = True
 
     # Stage 6: Final Formatting using modular function
     stage6_start = time.time()
-    formatted_recipes = format_recipes_for_ios(final_ranked_recipes, needed_count)
+    formatted_recipes = format_recipes_for_ios(final_ranked_recipes, needed_count, fallback_used, exact_match_count)
     
     # Track failures for reporting
     failed_parse_report = create_failed_parse_report(all_fp1_failures, all_failed_parses)
@@ -496,7 +500,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     print(f"   Stage 6 (Final Formatting): {total_stage6_time:.2f}s ({(total_stage6_time/total_time)*100:.1f}%)")
     
     # Create minimal context for agent using modular function
-    minimal_recipes = create_minimal_recipes_for_agent(formatted_recipes)
+    agent_context = create_minimal_recipes_for_agent(formatted_recipes)
     
     # Final recipe selection display
     print("\n" + "="*60)
@@ -508,9 +512,12 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     print("="*60 + "\n")
     
     return {
-        "results": minimal_recipes,  # Minimal context for agent
+        "results": agent_context["recipes"],  # Minimal context for agent
         "full_recipes": formatted_recipes,  # Full data for iOS
         "totalResults": len(formatted_recipes),
         "searchQuery": query,
+        "exact_matches": agent_context["exact_matches"],
+        "closest_matches": agent_context["closest_matches"], 
+        "fallback_used": agent_context["fallback_used"],
         "_failed_parse_report": failed_parse_report
     }
