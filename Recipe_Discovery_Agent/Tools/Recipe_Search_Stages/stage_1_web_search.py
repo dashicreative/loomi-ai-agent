@@ -17,7 +17,7 @@ from Dependencies import RecipeDeps
 from .utils.constants import BLOCKED_SITES
 
 
-async def search_recipes_serpapi(ctx: RunContext[RecipeDeps], query: str, number: int = 40) -> Dict:
+async def search_recipes_serpapi(ctx: RunContext[RecipeDeps], query: str, number: int = 50) -> Dict:
     """
     SUPPLEMENTAL FUNCTION: Search for recipes on the web using SerpAPI.
     Internal function for the search step.
@@ -95,13 +95,13 @@ async def search_recipes_serpapi(ctx: RunContext[RecipeDeps], query: str, number
             })
         
         return {
-            "results": formatted_results[:30],  # Cap at 30 after filtering
-            "total": len(formatted_results[:30]),
+            "results": formatted_results[:50],  # Cap at 50 after filtering
+            "total": len(formatted_results[:50]),
             "query": query
         }
 
 
-async def search_recipes_google_custom(ctx: RunContext[RecipeDeps], query: str, number: int = 40) -> Dict:
+async def search_recipes_google_custom(ctx: RunContext[RecipeDeps], query: str, number: int = 50) -> Dict:
     """
     FALLBACK FUNCTION: Search for recipes using Google Custom Search API.
     Used when SerpAPI returns insufficient results (<20 URLs).

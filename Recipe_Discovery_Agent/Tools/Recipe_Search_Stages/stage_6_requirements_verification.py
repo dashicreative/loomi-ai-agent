@@ -137,35 +137,59 @@ def layer1_nutrition_check(recipe: Dict, nutrition_reqs: Dict) -> Tuple[bool, Di
     
     # If nutrition requirements exist but no nutrition data, auto-fail
     if not clean_nutrition:
+        # Mark as 0% match for missing nutrition data
+        recipe['nutrition_match_percentage'] = 0.0
+        recipe['nutrition_exact_match'] = False
         return False, {"status": "❌ FAIL - No nutrition data available"}
     
     verification_details = {}
     passes_all = True
+    total_percentage = 0.0
+    requirement_count = 0
     
     for nutrient, constraints in nutrition_reqs.items():
+        requirement_count += 1
+        
         if nutrient not in clean_nutrition:
             verification_details[nutrient] = f"Missing {nutrient} data ❌"
             passes_all = False
+            # 0% for missing nutrient
             continue
         
         actual_value = clean_nutrition[nutrient]
+        nutrient_percentage = 0.0
         
-        # Check constraints
+        # Check constraints and calculate percentage
         if 'min' in constraints:
             required_min = constraints['min']
             if actual_value >= required_min:
                 verification_details[nutrient] = f"{actual_value} >= {required_min} ✅"
+                nutrient_percentage = 100.0  # Meets requirement = 100%
             else:
                 verification_details[nutrient] = f"{actual_value} < {required_min} ❌"
                 passes_all = False
+                # Calculate percentage: actual/required * 100
+                nutrient_percentage = min(100.0, (actual_value / required_min) * 100.0)
         
         if 'max' in constraints:
             required_max = constraints['max']
             if actual_value <= required_max:
                 verification_details[nutrient] = f"{actual_value} <= {required_max} ✅"
+                nutrient_percentage = 100.0  # Meets requirement = 100%
             else:
                 verification_details[nutrient] = f"{actual_value} > {required_max} ❌"
                 passes_all = False
+                # For max constraints, percentage = required/actual * 100 (penalize excess)
+                nutrient_percentage = min(100.0, (required_max / actual_value) * 100.0)
+        
+        total_percentage += nutrient_percentage
+    
+    # Calculate overall nutrition match percentage (ONLY when nutrition requirements exist)
+    overall_percentage = total_percentage / requirement_count if requirement_count > 0 else 0.0
+    
+    # Add percentage tracking to recipe
+    recipe['nutrition_match_percentage'] = round(overall_percentage, 1)
+    recipe['nutrition_exact_match'] = passes_all  # True for 100% matches, False for partial
     
     return passes_all, verification_details
 
@@ -473,29 +497,30 @@ def clean_nutrition_for_verification(unified_nutrition: List[str]) -> Dict[str, 
     clean_text = delimited_text.replace('per serving', '').replace('per portion', '')
     clean_text = clean_text.replace('amount per serving', '').replace('nutrition facts', '')
     
-    # Step 4: Enhanced patterns with validation
+    # Step 4: Enhanced patterns with validation - FIXED ORDER
     nutrition_patterns = {
         "calories": [
-            r'calories[:\s]*(\d{2,4})\b',           # "Calories: 400"
-            r'(\d{2,4})\s*calories\b',              # "400 calories"
-            r'(\d{2,4})\s*kcal\b',                  # "400 kcal"
-            r'energy[:\s]*(\d{2,4})\b',             # "Energy: 400"
+            r'(\d{2,4})\s*calories\b',              # "334 calories" - PRIORITIZE NUMBER FIRST
+            r'(\d{2,4})\s*kcal\b',                  # "334 kcal"  
+            r'calories[:\s]*(\d{2,4})\b',           # "Calories: 334" - SECONDARY
+            r'energy[:\s]*(\d{2,4})\b',             # "Energy: 334"
         ],
         "protein": [
-            r'protein[:\s]*(\d+(?:\.\d+)?)\s*g?\b',     # "Protein: 30g" or "Protein: 30"
-            r'(\d+(?:\.\d+)?)\s*g?\s*protein\b',        # "30g protein" or "30 protein"
-            r'(\d+(?:\.\d+)?)\s*grams?\s+protein\b',    # "30 grams protein"
+            r'(\d+(?:\.\d+)?)\s*g\s*protein\b',         # "19g protein" - PRIORITIZE NUMBER FIRST
+            r'(\d+(?:\.\d+)?)\s*grams?\s*protein\b',    # "19 grams protein"  
+            r'protein[:\s]*(\d+(?:\.\d+)?)\s*g?\b',     # "Protein: 19g" - SECONDARY
         ],
         "carbs": [
-            r'carbohydrates?[:\s]*(\d+(?:\.\d+)?)\s*g?\b',
+            r'(\d+(?:\.\d+)?)\s*g\s*carbohydrates?\b',      # "26g carbohydrates" - PRIORITIZE NUMBER FIRST
+            r'(\d+(?:\.\d+)?)\s*g\s*carbs\b',              # "26g carbs"
+            r'carbohydrates?[:\s]*(\d+(?:\.\d+)?)\s*g?\b',  # "Carbohydrates: 26g" - SECONDARY
             r'carbs[:\s]*(\d+(?:\.\d+)?)\s*g?\b',
-            r'(\d+(?:\.\d+)?)\s*g?\s*carbs?\b',
-            r'(\d+(?:\.\d+)?)\s*g?\s*carbohydrates?\b',
             r'total\s+carbohydrates?[:\s]*(\d+(?:\.\d+)?)\b',
         ],
         "fat": [
-            r'(?:total\s+)?fat[:\s]*(\d+(?:\.\d+)?)\s*g?\b',
-            r'(\d+(?:\.\d+)?)\s*g?\s*(?:total\s+)?fat\b',
+            r'(\d+(?:\.\d+)?)\s*g\s*fat\b',                 # "17g fat" - PRIORITIZE NUMBER FIRST
+            r'(\d+(?:\.\d+)?)\s*g\s*total\s*fat\b',         # "17g total fat"
+            r'(?:total\s+)?fat[:\s]*(\d+(?:\.\d+)?)\s*g?\b', # "Fat: 17g" - SECONDARY
         ]
     }
     
@@ -535,9 +560,9 @@ async def verify_recipes_meet_requirements(
     requirements: Dict, 
     openai_key: str, 
     user_query: str = ""
-) -> List[Dict]:
+) -> Tuple[List[Dict], List[Dict]]:
     """
-    Layered verification system with deterministic filters and minimal LLM usage.
+    Two-tier verification system: exact matches + percentage tracking for closest matches.
     
     Processing order:
     1. Layer 1: Deterministic numerical checks (nutrition, time) - 100% reliable
@@ -545,15 +570,18 @@ async def verify_recipes_meet_requirements(
     3. Layer 3: Metadata analysis (meal type, dietary tags) - confidence scored
     4. Layer 4: LLM verification (only for subjective/uncertain cases)
     
-    Returns only recipes that pass ALL requirements.
+    Returns:
+        Tuple[exact_matches, all_processed_recipes]:
+        - exact_matches: recipes passing ALL requirements (for early exit)
+        - all_processed_recipes: all recipes with percentage tracking (for closest match fallback)
     """
     if not scraped_recipes or not requirements:
-        return scraped_recipes
+        return scraped_recipes, scraped_recipes  # Return both lists for consistency
     
     # Categorize requirements
     categorized_reqs = extract_requirement_types(requirements, user_query)
     
-    print(f"\n🔄 LAYERED VERIFICATION SYSTEM")
+    print(f"\n🔄 TWO-TIER VERIFICATION SYSTEM")
     print(f"   Total recipes: {len(scraped_recipes)}")
     print(f"   Numerical requirements: {categorized_reqs['numerical']}")
     print(f"   Ingredient requirements: {categorized_reqs['ingredients']}")
@@ -567,13 +595,19 @@ async def verify_recipes_meet_requirements(
     print(f"   CATEGORIZED INGREDIENTS: {categorized_reqs['ingredients']}")
     print(f"   CATEGORIZED SUBJECTIVE: {categorized_reqs['subjective']}")
     
-    qualifying_recipes = []
+    # Two-tier tracking
+    exact_matches = []          # Recipes passing ALL requirements (for early exit)
+    all_processed_recipes = []  # All recipes with percentage data (for closest matches)
+    has_nutrition_reqs = bool(categorized_reqs['numerical']['nutrition'])
     
     for i, recipe in enumerate(scraped_recipes):
         print(f"\n📋 Recipe {i}: {recipe.get('title', 'Unknown')}")
         print(f"   URL: {recipe.get('source_url', 'No URL')}")
         
-        # LAYER 1a: Nutrition Check (Deterministic)
+        # Track if recipe is a complete match
+        is_exact_match = True
+        
+        # LAYER 1a: Nutrition Check (Deterministic) - ALWAYS PROCESS for percentage tracking
         if categorized_reqs['numerical']['nutrition']:
             # DEBUG: Show raw nutrition data before processing
             raw_nutrition = recipe.get('unified_nutrition', [])
@@ -590,8 +624,9 @@ async def verify_recipes_meet_requirements(
                 print(f"      {nutrient}: {result}")
             
             if not passes:
-                print(f"🚨 DEBUG RECIPE FAILED NUTRITION - SKIPPING TO NEXT")
-                continue  # Skip to next recipe
+                is_exact_match = False
+                print(f"🚨 DEBUG RECIPE FAILED NUTRITION - MARKED AS PARTIAL MATCH")
+                # DON'T SKIP - continue processing for percentage tracking
         
         # LAYER 1b: Time Check (Deterministic)
         if categorized_reqs['numerical']['time']:
@@ -604,7 +639,11 @@ async def verify_recipes_meet_requirements(
                 print(f"      {result}")
             
             if not passes:
-                continue
+                is_exact_match = False
+                # For non-nutrition requirements, still skip recipes that fail completely
+                # (Only nutrition gets percentage tracking)
+                if not has_nutrition_reqs:
+                    continue
         
         # LAYER 2a: Ingredient Exclusion (Deterministic)
         if categorized_reqs['ingredients']['exclude']:
@@ -615,7 +654,9 @@ async def verify_recipes_meet_requirements(
             print(f"   Layer 2a (Exclusions): {'✅ PASS' if passes else '❌ FAIL'}")
             if not passes:
                 print(f"      Found: {details.get('excluded_found', [])}")
-                continue
+                is_exact_match = False
+                if not has_nutrition_reqs:
+                    continue
         
         # LAYER 2b: Ingredient Inclusion (Deterministic)
         if categorized_reqs['ingredients']['include']:
@@ -626,7 +667,9 @@ async def verify_recipes_meet_requirements(
             print(f"   Layer 2b (Required): {'✅ PASS' if passes else '❌ FAIL'}")
             if not passes:
                 print(f"      Missing: {details.get('missing', [])}")
-                continue
+                is_exact_match = False
+                if not has_nutrition_reqs:
+                    continue
         
         # LAYER 2c: Dietary Restrictions (Deterministic)
         if categorized_reqs['ingredients']['dietary_tags']:
@@ -638,7 +681,9 @@ async def verify_recipes_meet_requirements(
             if not passes:
                 for violation in details.get('dietary_violations', []):
                     print(f"      {violation['dietary_tag']}: {violation['violations']}")
-                continue
+                is_exact_match = False
+                if not has_nutrition_reqs:
+                    continue
         
         # LAYER 3: Metadata Analysis
         layer3_confidence = 1.0
@@ -661,15 +706,34 @@ async def verify_recipes_meet_requirements(
                 print(f"      {details['reasoning']}")
             
             if not passes or confidence < 0.6:
-                continue
+                is_exact_match = False
+                if not has_nutrition_reqs:
+                    continue
         
-        # Recipe passed all layers!
-        print(f"   🎉 QUALIFIED")
-        print(f"🚨 DEBUG RECIPE QUALIFIED - ADDED TO FINAL LIST")
-        qualifying_recipes.append(recipe)
+        # Add to appropriate lists
+        if has_nutrition_reqs:
+            # Always add to all_processed_recipes when nutrition requirements exist
+            all_processed_recipes.append(recipe)
+            if hasattr(recipe, 'nutrition_match_percentage'):
+                percentage = recipe.get('nutrition_match_percentage', 0.0)
+                print(f"   📊 Nutrition Match: {percentage}%")
+        
+        if is_exact_match:
+            # Recipe passed all layers - exact match!
+            print(f"   🎉 EXACT MATCH - QUALIFIED")
+            print(f"🚨 DEBUG RECIPE QUALIFIED AS EXACT MATCH")
+            exact_matches.append(recipe)
+        else:
+            print(f"   📊 PARTIAL MATCH - Added for percentage tracking")
+            if not has_nutrition_reqs:
+                # If no nutrition requirements, add to both lists for consistency
+                all_processed_recipes.append(recipe)
     
-    print(f"\n✅ Final Results: {len(qualifying_recipes)}/{len(scraped_recipes)} recipes qualified")
-    print(f"🚨 DEBUG FINAL QUALIFYING RECIPE COUNT: {len(qualifying_recipes)}")
+    print(f"\n✅ Two-Tier Results:")
+    print(f"   Exact matches: {len(exact_matches)}/{len(scraped_recipes)} recipes")
+    print(f"   All processed: {len(all_processed_recipes)}/{len(scraped_recipes)} recipes")
+    print(f"🚨 DEBUG FINAL EXACT MATCH COUNT: {len(exact_matches)}")
+    print(f"🚨 DEBUG FINAL ALL PROCESSED COUNT: {len(all_processed_recipes)}")
     print(f"🚨 DEBUG REQUIREMENTS THAT CAUSED FAILURES:")
     if categorized_reqs['numerical']['nutrition']:
         print(f"   NUTRITION REQS: {categorized_reqs['numerical']['nutrition']}")
@@ -679,11 +743,18 @@ async def verify_recipes_meet_requirements(
         print(f"   DIETARY REQS: {categorized_reqs['ingredients']['dietary_tags']}")
     
     # Final summary
-    if not qualifying_recipes and scraped_recipes:
-        print("\n⚠️  No recipes met all requirements. Common failures:")
-        if categorized_reqs['numerical']['nutrition']:
-            print("   - Nutrition requirements not met or data missing")
-        if categorized_reqs['ingredients']['exclude']:
-            print("   - Contained excluded ingredients/allergens")
+    if not exact_matches and scraped_recipes:
+        print("\n⚠️  No recipes met all requirements exactly. Using closest matches:")
+        if categorized_reqs['numerical']['nutrition'] and all_processed_recipes:
+            # Show top percentages
+            sorted_by_percentage = sorted(
+                [r for r in all_processed_recipes if r.get('nutrition_match_percentage', 0) > 0],
+                key=lambda r: r.get('nutrition_match_percentage', 0),
+                reverse=True
+            )[:3]
+            for recipe in sorted_by_percentage:
+                percentage = recipe.get('nutrition_match_percentage', 0)
+                title = recipe.get('title', 'Unknown')[:50]
+                print(f"   - {title}: {percentage}% match")
     
-    return qualifying_recipes
+    return exact_matches, all_processed_recipes

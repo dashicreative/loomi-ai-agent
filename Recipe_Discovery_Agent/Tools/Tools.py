@@ -115,6 +115,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         all_fp1_failures = []
         all_failed_parses = []
         qualified_recipes = []
+        all_processed_recipes = []  # Track all recipes with percentage data for fallback
         batch_count = 0
         url_backlog = []
         
@@ -158,11 +159,18 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
             "error": f"Batch setup failed: {str(e)}"
         }
     
+    # URL TRACKING: Initialize counters for progress tracking
+    total_urls_to_process = len(urls)
+    urls_processed_count = 0
+    
     # Process URLs in batches until we have enough recipes
     for batch_start in range(0, len(urls), batch_size):
         batch_count += 1
         batch_end = min(batch_start + batch_size, len(urls))
         current_batch = urls[batch_start:batch_end]
+        
+        print(f"🚨 BATCH {batch_count}: Processing URLs {batch_start+1}-{batch_end} of {len(urls)} total URLs")
+        print(f"   Current batch size: {len(current_batch)} URLs")
         
         batch_total_start = time.time()
         
@@ -192,9 +200,11 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         # Defer ALL list URLs to backlog - don't process any now
         if batch_list_urls:
             url_backlog.extend(batch_list_urls)
+            print(f"🚨 BATCH {batch_count}: Deferred {len(batch_list_urls)} list URLs to backlog")
         
         # Only process recipe URLs
         urls_to_process = batch_recipe_urls
+        print(f"🚨 BATCH {batch_count}: Processing {len(urls_to_process)} recipe URLs from this batch")
         
         # Stage 3C: URL Expansion - SKIPPED (all list URLs deferred to backlog)
         stage3_expansion_start = time.time()
@@ -205,6 +215,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         print(f"📊 Stage 3C: URL Expansion - Skipped (list URLs deferred) - {stage3_expansion_time:.3f}s")
         
         if not expanded_results:
+            print(f"🚨 BATCH {batch_count}: No recipe URLs to process in this batch, moving to next batch")
             all_fp1_failures.extend(fp1_failures)
             continue
         
@@ -220,6 +231,10 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         for result in expanded_results:
             url = result.get("url")
             if url:
+                # URL TRACKING: Show progress for each URL being processed
+                urls_processed_count += 1
+                print(f"🚨 URL PROGRESS: Processing URL {urls_processed_count}/{total_urls_to_process} - {result.get('title', 'No title')[:50]}...")
+                
                 task = asyncio.wait_for(parse_recipe(url, ctx.deps.openai_key), timeout=25.0)
                 parsing_tasks.append(task)
                 result_mapping.append(result)
@@ -238,6 +253,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
                     url_backlog.append(result)
                 elif isinstance(data, Exception):
                     # Track other exceptions as failed parses
+                    print(f"🚨 URL FAILED: {url} - Exception: {str(data)[:100]}")
                     failed_parses.append({
                         "result": result,
                         "error": str(data),
@@ -280,8 +296,10 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         stage5_start = time.time()
         
         if len(all_recipes) > 1:
-            # Phase 1: Verify recipes meet requirements
-            qualified_recipes = await verify_recipes_meet_requirements(all_recipes, requirements, ctx.deps.openai_key, user_query)
+            # Phase 1: Verify recipes meet requirements (two-tier system)
+            batch_qualified, batch_processed = await verify_recipes_meet_requirements(all_recipes, requirements, ctx.deps.openai_key, user_query)
+            qualified_recipes = batch_qualified
+            all_processed_recipes.extend(batch_processed)  # Accumulate all processed recipes
             
             # Phase 2: Rank qualified recipes by relevance  
             final_ranked_recipes = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
@@ -296,18 +314,32 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         
         # Early exit: if we have enough FINAL recipes after ranking, stop processing batches
         if len(final_ranked_recipes) >= needed_count:
+            print(f"🚨 EARLY EXIT: Found {len(final_ranked_recipes)} recipes (needed {needed_count}) after processing {urls_processed_count}/{total_urls_to_process} URLs")
             break
+        else:
+            print(f"🚨 BATCH {batch_count} COMPLETE: Have {len(final_ranked_recipes)}/{needed_count} recipes, continuing to next batch...")
     
     # Process url_backlog if we still need more recipes
     if len(final_ranked_recipes) < needed_count and url_backlog:
+        print(f"🚨 BACKLOG PROCESSING: Need {needed_count - len(final_ranked_recipes)} more recipes. Processing {len(url_backlog)} backlog URLs after main batch processing.")
+        
+        # DEBUG: Print clean list of backlog URLs
+        print(f"\n🚨 DEBUG BACKLOG URL LIST ({len(url_backlog)} URLs):")
+        for i, url_data in enumerate(url_backlog, 1):
+            url = url_data.get('url', 'No URL')
+            title = url_data.get('title', 'No title')[:60]
+            print(f"   {i:2}. {title}")
+            print(f"       {url}")
+        print()
         stage3_backlog_start = time.time()
         # Process backlog URLs (these are primarily list URLs)
         backlog_copy = url_backlog.copy()
-        for backlog_url_dict in backlog_copy:
+        for backlog_idx, backlog_url_dict in enumerate(backlog_copy):
             if len(qualified_recipes) >= needed_count:
                 break
                 
             url = backlog_url_dict.get('url', '')
+            print(f"🚨 BACKLOG URL {backlog_idx + 1}/{len(url_backlog)}: Processing {backlog_url_dict.get('title', 'No title')[:50]}...")
             
             # IMMEDIATELY remove from original backlog so it can't be considered again
             url_backlog.remove(backlog_url_dict)
@@ -325,7 +357,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
                 extracted_recipes = await intelligent_parser.extract_recipe_urls(
                     url, 
                     html_content, 
-                    max_urls=4
+                    max_urls=10
                 )
                 
                 if extracted_recipes:
@@ -356,9 +388,10 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
                                     new_recipes.append(data)
                             
                             if new_recipes:
-                                # Phase 1: Verify ONLY the new recipes (not all recipes)
-                                newly_qualified = await verify_recipes_meet_requirements(new_recipes, requirements, ctx.deps.openai_key, user_query)
+                                # Phase 1: Verify ONLY the new recipes (not all recipes) 
+                                newly_qualified, newly_processed = await verify_recipes_meet_requirements(new_recipes, requirements, ctx.deps.openai_key, user_query)
                                 qualified_recipes.extend(newly_qualified)
+                                all_processed_recipes.extend(newly_processed)  # Accumulate processed recipes
                                 
                                 # Check if we have enough qualified recipes to stop
                                 if len(qualified_recipes) >= needed_count:
@@ -383,7 +416,9 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
             final_ranked_recipes = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
         elif len(all_recipes) > 1:
             # Fallback: verify all recipes if no qualified recipes found yet
-            qualified_recipes = await verify_recipes_meet_requirements(all_recipes, requirements, ctx.deps.openai_key, user_query)
+            fallback_qualified, fallback_processed = await verify_recipes_meet_requirements(all_recipes, requirements, ctx.deps.openai_key, user_query)
+            qualified_recipes = fallback_qualified
+            all_processed_recipes.extend(fallback_processed)  # Accumulate processed recipes
             final_ranked_recipes = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
         else:
             final_ranked_recipes = all_recipes
@@ -397,6 +432,44 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     # Ensure final_ranked_recipes is defined
     if 'final_ranked_recipes' not in locals():
         final_ranked_recipes = all_recipes
+    
+    # URL TRACKING: Final summary
+    print(f"🚨 FINAL URL PROCESSING SUMMARY:")
+    print(f"   Total URLs available: {total_urls_to_process}")
+    print(f"   URLs actually processed: {urls_processed_count}")
+    print(f"   Backlog URLs processed: {len(url_backlog) if 'url_backlog' in locals() else 0}")
+    print(f"   Final recipes found: {len(final_ranked_recipes)}")
+    if urls_processed_count < total_urls_to_process:
+        print(f"   ⚠️  Only processed {urls_processed_count}/{total_urls_to_process} URLs - stopped early or hit limits")
+
+    # FALLBACK: Fill remaining slots with closest matches if needed (after ALL URLs exhausted)
+    if len(final_ranked_recipes) < needed_count and 'all_processed_recipes' in locals() and all_processed_recipes:
+        remaining_slots = needed_count - len(final_ranked_recipes)
+        print(f"\n🔄 CLOSEST MATCH FALLBACK:")
+        print(f"   Need {remaining_slots} more recipes to reach {needed_count}")
+        
+        # Get recipes with percentage data, excluding ones already in final list
+        final_recipe_urls = {recipe.get('source_url', '') for recipe in final_ranked_recipes}
+        available_closest = [
+            recipe for recipe in all_processed_recipes 
+            if recipe.get('source_url', '') not in final_recipe_urls 
+            and recipe.get('nutrition_match_percentage', 0) > 0
+        ]
+        
+        # Sort by percentage match (highest first)
+        available_closest.sort(key=lambda r: r.get('nutrition_match_percentage', 0), reverse=True)
+        
+        # Add top closest matches to fill remaining slots
+        closest_matches = available_closest[:remaining_slots]
+        final_ranked_recipes.extend(closest_matches)
+        
+        print(f"   Added {len(closest_matches)} closest matches:")
+        for i, recipe in enumerate(closest_matches, 1):
+            percentage = recipe.get('nutrition_match_percentage', 0)
+            title = recipe.get('title', 'Unknown')[:50]
+            print(f"      {i}. {title} ({percentage}% match)")
+        
+        print(f"🚨 FINAL RECIPE COUNT AFTER FALLBACK: {len(final_ranked_recipes)}")
 
     # Stage 6: Final Formatting using modular function
     stage6_start = time.time()
