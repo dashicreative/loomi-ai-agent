@@ -11,6 +11,86 @@ import re
 from typing import Dict, List
 
 
+def nutrition_verification_tool(recipes_data: List[Dict], nutrition_requirements: Dict) -> Dict:
+    """
+    Deterministic nutrition verification tool for LLM to use.
+    Performs precise numerical comparisons on nutrition requirements.
+    
+    Args:
+        recipes_data: List of recipe data dicts with clean_nutrition field
+        nutrition_requirements: {"protein": {"min": 30}, "calories": {"max": 400}}
+        
+    Returns:
+        {
+            "passing_recipe_indices": [0, 2, 4],
+            "verification_details": [
+                {"index": 0, "passes": True, "protein": "35g >= 30g ✅"},
+                {"index": 1, "passes": False, "protein": "12g < 30g ❌"}
+            ]
+        }
+    """
+    passing_indices = []
+    verification_details = []
+    
+    for i, recipe_data in enumerate(recipes_data):
+        clean_nutrition = recipe_data.get('clean_nutrition', {})
+        passes_all = True
+        details = {"index": i, "title": recipe_data.get('title', 'Unknown')}
+        
+        # Check each nutrition requirement
+        for nutrient, constraints in nutrition_requirements.items():
+            if nutrient not in clean_nutrition:
+                details[nutrient] = f"No {nutrient} data - FAIL"
+                passes_all = False
+                continue
+                
+            # Extract numeric value from clean nutrition (e.g., "30g" -> 30)
+            nutrition_str = clean_nutrition[nutrient]
+            try:
+                # Extract number from strings like "30g", "400", "25.5g"
+                import re
+                match = re.search(r'(\d+(?:\.\d+)?)', nutrition_str)
+                if not match:
+                    details[nutrient] = f"Could not parse '{nutrition_str}' - FAIL"
+                    passes_all = False
+                    continue
+                    
+                actual_value = float(match.group(1))
+                
+                # Check min constraint
+                if 'min' in constraints:
+                    required_min = constraints['min']
+                    if actual_value >= required_min:
+                        details[nutrient] = f"{nutrition_str} >= {required_min} ✅"
+                    else:
+                        details[nutrient] = f"{nutrition_str} < {required_min} ❌"
+                        passes_all = False
+                        
+                # Check max constraint  
+                if 'max' in constraints:
+                    required_max = constraints['max']
+                    if actual_value <= required_max:
+                        details[nutrient] = f"{nutrition_str} <= {required_max} ✅"
+                    else:
+                        details[nutrient] = f"{nutrition_str} > {required_max} ❌"
+                        passes_all = False
+                        
+            except (ValueError, AttributeError) as e:
+                details[nutrient] = f"Parse error for '{nutrition_str}': {e} - FAIL"
+                passes_all = False
+        
+        details["passes"] = passes_all
+        verification_details.append(details)
+        
+        if passes_all:
+            passing_indices.append(i)
+    
+    return {
+        "passing_recipe_indices": passing_indices,
+        "verification_details": verification_details
+    }
+
+
 def clean_nutrition_for_verification(unified_nutrition: List[str]) -> Dict[str, str]:
     """
     Clean and extract the 4 required nutrition values from messy unified_nutrition data.
@@ -148,34 +228,60 @@ async def verify_recipes_meet_requirements(scraped_recipes: List[Dict], requirem
     
     print(f"   📊 Sending {len(qualified_recipe_data)}/{len(recipe_data)} recipes to LLM (others auto-failed)")
 
-    prompt = f"""You are a precise nutrition requirements checker. Your job is to verify if recipes meet EXACT numerical requirements.
+    # Check if we have nutrition requirements to use the deterministic tool
+    has_nutrition_requirements = bool(requirements.get('nutrition'))
+    
+    if has_nutrition_requirements:
+        # Use deterministic nutrition verification tool first
+        print(f"   🔧 Using deterministic nutrition verification tool...")
+        nutrition_results = nutrition_verification_tool(qualified_recipe_data, requirements['nutrition'])
+        
+        # Show results from deterministic tool
+        print(f"\n📊 DETERMINISTIC NUTRITION VERIFICATION:")
+        for detail in nutrition_results['verification_details']:
+            status = "✅ PASS" if detail['passes'] else "❌ FAIL"
+            print(f"   {status}: {detail['title']}")
+            for nutrient in ['protein', 'calories', 'carbs', 'fat']:
+                if nutrient in detail:
+                    print(f"      {nutrient}: {detail[nutrient]}")
+        
+        nutrition_passing_indices = nutrition_results['passing_recipe_indices']
+        print(f"   🎯 Nutrition tool result: {len(nutrition_passing_indices)}/{len(qualified_recipe_data)} recipes passed nutrition requirements")
+        
+        # Filter recipes that passed nutrition check for LLM to handle other requirements
+        nutrition_qualified_recipes = [qualified_recipe_data[i] for i in nutrition_passing_indices]
+        
+        if not nutrition_qualified_recipes:
+            print(f"   ❌ No recipes passed nutrition verification")
+            return []
+        
+        llm_recipes_data = nutrition_qualified_recipes
+        llm_instruction = f"""You have been given {len(nutrition_qualified_recipes)} recipes that have ALREADY PASSED nutrition verification using a deterministic tool.
+
+Your job is to verify the remaining non-nutrition requirements."""
+    else:
+        # No nutrition requirements, send all recipes to LLM
+        llm_recipes_data = qualified_recipe_data  
+        nutrition_passing_indices = list(range(len(qualified_recipe_data)))
+        llm_instruction = "You need to verify all requirements for these recipes."
+
+    prompt = f"""You are a recipe requirements checker. {llm_instruction}
 
 USER QUERY: "{user_query}"
 EXTRACTED REQUIREMENTS: {json.dumps(requirements, indent=2)}
 
 VERIFICATION RULES:
-1. For nutrition requirements: Compare numbers EXACTLY
-   - protein >= 30g: Recipe needs 30g or MORE protein
-   - calories <= 400: Recipe needs 400 or FEWER calories
-   - Extract the NUMBER from nutrition strings and compare mathematically
+1. For meal_type requirements: Check if recipe fits the meal category (breakfast, lunch, dinner, dessert, snack)
+2. For dietary restrictions: Check ingredients for excluded items (gluten-free, vegan, keto, etc.)
+3. For time constraints: Check if cook time meets limits (under 30 minutes, etc.)
+4. For cooking method restrictions: Check preparation methods (no-bake, slow cooker, etc.)
 
-2. For meal_type requirements: Check if recipe fits the meal category
-3. For dietary restrictions: Check ingredients for excluded items  
-4. For time constraints: Check if cook time meets limits
-
-CRITICAL: Do EXACT numerical comparison. Do not fail recipes that clearly meet requirements.
-
-PROTEIN REQUIREMENT EXAMPLES (if requirement is >= 30g):
-- "protein: 15g" → 15 < 30 → FAIL ❌
-- "protein: 24g" → 24 < 30 → FAIL ❌  
-- "protein: 30g" → 30 >= 30 → PASS ✅
-- "protein: 35g" → 35 >= 30 → PASS ✅
-- "protein: 37g" → 37 >= 30 → PASS ✅
+{f"NOTE: Nutrition requirements have been handled by a deterministic tool. These {len(llm_recipes_data)} recipes already passed nutrition verification." if has_nutrition_requirements else ""}
 
 RECIPES TO VERIFY:
-{json.dumps(qualified_recipe_data, indent=2)}
+{json.dumps(llm_recipes_data, indent=2)}
 
-For each recipe, extract the protein number from the "nutrition" field and compare it to the requirement. If the protein amount meets or exceeds the requirement, include that recipe's index in the qualifying_indices array.
+Verify each recipe against the remaining requirements and return the indices of qualifying recipes.
 
 Return ONLY valid JSON:
 {{
@@ -239,12 +345,21 @@ Return ONLY valid JSON:
             result = json.loads(llm_response.strip())
             llm_qualifying_indices = result.get('qualifying_indices', [])
             
-            # Map LLM indices back to original recipe indices
+            # Map LLM indices back through the nutrition filtering to original indices
             final_qualifying_indices = []
-            for llm_idx in llm_qualifying_indices:
-                if 0 <= llm_idx < len(pre_qualified_indices):
-                    original_idx = pre_qualified_indices[llm_idx]
-                    final_qualifying_indices.append(original_idx)
+            if has_nutrition_requirements:
+                # LLM worked on nutrition-qualified recipes, map back through both filters
+                for llm_idx in llm_qualifying_indices:
+                    if 0 <= llm_idx < len(nutrition_passing_indices):
+                        nutrition_idx = nutrition_passing_indices[llm_idx]  # Map to nutrition-qualified index
+                        original_idx = pre_qualified_indices[nutrition_idx]  # Map to original index
+                        final_qualifying_indices.append(original_idx)
+            else:
+                # No nutrition filtering, map directly through pre-qualified
+                for llm_idx in llm_qualifying_indices:
+                    if 0 <= llm_idx < len(pre_qualified_indices):
+                        original_idx = pre_qualified_indices[llm_idx]
+                        final_qualifying_indices.append(original_idx)
             
             # Return only qualifying recipes
             qualifying_recipes = []
@@ -252,18 +367,20 @@ Return ONLY valid JSON:
                 if 0 <= idx < len(scraped_recipes):
                     qualifying_recipes.append(scraped_recipes[idx])
             
-            print(f"   ✅ Phase 1 Verification: {len(qualifying_recipes)}/{len(scraped_recipes)} recipes passed requirements")
+            print(f"   ✅ Final Verification: {len(qualifying_recipes)}/{len(scraped_recipes)} recipes passed ALL requirements")
             
-            # DEBUG: Show which recipes passed/failed
-            print(f"\n📊 VERIFICATION RESULTS:")
+            # DEBUG: Show which recipes passed/failed with detailed reasoning
+            print(f"\n📊 FINAL VERIFICATION RESULTS:")
             passed_indices = set(final_qualifying_indices)
             for i, recipe in enumerate(scraped_recipes):
                 if has_nutrition_requirements and recipe_data[i]['nutrition'] == "NO NUTRITION DATA AVAILABLE":
                     status = "❌ AUTO-FAILED (No nutrition data)"
+                elif has_nutrition_requirements and i not in [pre_qualified_indices[ni] for ni in nutrition_passing_indices]:
+                    status = "❌ FAILED (Nutrition requirements)"
                 elif i in passed_indices:
-                    status = "✅ PASSED"
+                    status = "✅ PASSED (All requirements)"
                 else:
-                    status = "❌ FAILED"
+                    status = "❌ FAILED (Other requirements)"
                     
                 print(f"   {status}: {recipe.get('title', 'No title')}")
                 print(f"      URL: {recipe.get('source_url', 'No URL')}")
