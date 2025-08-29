@@ -559,6 +559,14 @@ async def verify_recipes_meet_requirements(
     print(f"   Ingredient requirements: {categorized_reqs['ingredients']}")
     print(f"   Subjective requirements: {categorized_reqs['subjective']}")
     
+    # DEBUG: Show original requirements and categorization
+    print(f"\n🚨 DEBUG REQUIREMENTS EXTRACTION:")
+    print(f"   ORIGINAL REQUIREMENTS: {json.dumps(requirements, indent=4)}")
+    print(f"   USER QUERY: '{user_query}'")
+    print(f"   CATEGORIZED NUTRITION: {categorized_reqs['numerical']['nutrition']}")
+    print(f"   CATEGORIZED INGREDIENTS: {categorized_reqs['ingredients']}")
+    print(f"   CATEGORIZED SUBJECTIVE: {categorized_reqs['subjective']}")
+    
     qualifying_recipes = []
     
     for i, recipe in enumerate(scraped_recipes):
@@ -567,15 +575,22 @@ async def verify_recipes_meet_requirements(
         
         # LAYER 1a: Nutrition Check (Deterministic)
         if categorized_reqs['numerical']['nutrition']:
+            # DEBUG: Show raw nutrition data before processing
+            raw_nutrition = recipe.get('unified_nutrition', [])
+            print(f"🚨 DEBUG NUTRITION RAW DATA: {raw_nutrition}")
+            
             passes, details = layer1_nutrition_check(
                 recipe, 
                 categorized_reqs['numerical']['nutrition']
             )
             print(f"   Layer 1a (Nutrition): {'✅ PASS' if passes else '❌ FAIL'}")
+            print(f"🚨 DEBUG NUTRITION REQUIREMENTS: {categorized_reqs['numerical']['nutrition']}")
+            print(f"🚨 DEBUG NUTRITION VERIFICATION DETAILS: {details}")
             for nutrient, result in details.items():
                 print(f"      {nutrient}: {result}")
             
             if not passes:
+                print(f"🚨 DEBUG RECIPE FAILED NUTRITION - SKIPPING TO NEXT")
                 continue  # Skip to next recipe
         
         # LAYER 1b: Time Check (Deterministic)
@@ -650,9 +665,18 @@ async def verify_recipes_meet_requirements(
         
         # Recipe passed all layers!
         print(f"   🎉 QUALIFIED")
+        print(f"🚨 DEBUG RECIPE QUALIFIED - ADDED TO FINAL LIST")
         qualifying_recipes.append(recipe)
     
     print(f"\n✅ Final Results: {len(qualifying_recipes)}/{len(scraped_recipes)} recipes qualified")
+    print(f"🚨 DEBUG FINAL QUALIFYING RECIPE COUNT: {len(qualifying_recipes)}")
+    print(f"🚨 DEBUG REQUIREMENTS THAT CAUSED FAILURES:")
+    if categorized_reqs['numerical']['nutrition']:
+        print(f"   NUTRITION REQS: {categorized_reqs['numerical']['nutrition']}")
+    if categorized_reqs['ingredients']['exclude']:
+        print(f"   EXCLUSION REQS: {categorized_reqs['ingredients']['exclude']}")
+    if categorized_reqs['ingredients']['dietary_tags']:
+        print(f"   DIETARY REQS: {categorized_reqs['ingredients']['dietary_tags']}")
     
     # Final summary
     if not qualifying_recipes and scraped_recipes:
