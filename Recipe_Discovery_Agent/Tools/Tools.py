@@ -28,10 +28,100 @@ from .Recipe_Search_Stages.stage_9_final_formatting import (
     create_minimal_recipes_for_agent, 
     create_failed_parse_report
 )
+from urllib.parse import urlparse
 from .Recipe_Search_Stages.utils.constants import PRIORITY_SITES, BLOCKED_SITES
 
 # Import parsers for nutrition processing
 from .Detailed_Recipe_Parsers.nutrition_parser import parse_nutrition_list
+
+
+def apply_domain_diversity_filter(recipes: List[Dict], max_per_domain: int = 2) -> List[Dict]:
+    """
+    Apply domain diversity filter to ensure variety in recipe sources.
+    
+    Takes relevance-ranked recipes and enforces domain quotas while preserving
+    quality ranking within domain limits.
+    
+    Args:
+        recipes: List of recipes ranked by relevance/quality
+        max_per_domain: Maximum recipes allowed per domain (default 2)
+        
+    Returns:
+        Filtered list with domain diversity enforced
+    """
+    if not recipes:
+        return recipes
+    
+    domain_counts = {}
+    diversified_recipes = []
+    
+    for recipe in recipes:
+        # Extract domain from source URL
+        source_url = recipe.get('source_url', '')
+        if not source_url:
+            continue
+            
+        try:
+            domain = urlparse(source_url).netloc.lower()
+            # Remove www. prefix for consistency
+            domain = domain.replace('www.', '')
+        except:
+            continue
+        
+        # Check if domain quota exceeded
+        current_count = domain_counts.get(domain, 0)
+        
+        if current_count < max_per_domain:
+            diversified_recipes.append(recipe)
+            domain_counts[domain] = current_count + 1
+            print(f"   📊 Added recipe from {domain} ({current_count + 1}/{max_per_domain}): {recipe.get('title', 'Unknown')[:40]}...")
+        else:
+            print(f"   ⚠️  Skipped recipe from {domain} (quota exceeded {max_per_domain}): {recipe.get('title', 'Unknown')[:40]}...")
+    
+    print(f"   🌍 Domain diversity: {len(domain_counts)} unique domains, {len(diversified_recipes)} total recipes")
+    return diversified_recipes
+
+
+def apply_domain_diversity_filter_with_existing(recipes: List[Dict], existing_domains: Dict[str, int], max_per_domain: int = 2) -> List[Dict]:
+    """
+    Apply domain diversity filter considering recipes already selected.
+    
+    Args:
+        recipes: List of recipes to filter
+        existing_domains: Dict of domain -> count from already selected recipes
+        max_per_domain: Maximum recipes allowed per domain
+        
+    Returns:
+        Filtered list respecting existing domain quotas
+    """
+    if not recipes:
+        return recipes
+    
+    domain_counts = existing_domains.copy()  # Start with existing counts
+    diversified_recipes = []
+    
+    for recipe in recipes:
+        source_url = recipe.get('source_url', '')
+        if not source_url:
+            continue
+            
+        try:
+            domain = urlparse(source_url).netloc.lower().replace('www.', '')
+        except:
+            continue
+        
+        current_count = domain_counts.get(domain, 0)
+        
+        if current_count < max_per_domain:
+            diversified_recipes.append(recipe)
+            domain_counts[domain] = current_count + 1
+            percentage = recipe.get('nutrition_match_percentage', 0)
+            print(f"   📊 Added closest match from {domain} ({current_count + 1}/{max_per_domain}): {recipe.get('title', 'Unknown')[:40]}... ({percentage}%)")
+        else:
+            percentage = recipe.get('nutrition_match_percentage', 0)
+            print(f"   ⚠️  Skipped closest match from {domain} (quota exceeded): {recipe.get('title', 'Unknown')[:40]}... ({percentage}%)")
+    
+    return diversified_recipes
 
 
 async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: str, needed_count: int = 5, requirements: Dict = None) -> Dict:
@@ -95,6 +185,35 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     stage2_time = time.time() - stage2_start
     
     print(f"📊 Stage 2: Initial Ranking - Ranked {len(ranked_urls)} URLs - {stage2_time:.2f}s")
+    
+    # Print site breakdown after ranking
+    print(f"\n📊 SITE BREAKDOWN ANALYSIS:")
+    site_counts = {}
+    
+    for url_dict in ranked_urls:
+        url = url_dict.get('url', '')
+        try:
+            domain = urlparse(url).netloc.lower().replace('www.', '')
+            
+            # Check if it's a priority site
+            is_priority = any(priority_site in domain for priority_site in PRIORITY_SITES)
+            if is_priority:
+                site_counts[domain] = site_counts.get(domain, 0) + 1
+            else:
+                site_counts['other'] = site_counts.get('other', 0) + 1
+        except:
+            site_counts['other'] = site_counts.get('other', 0) + 1
+    
+    # Print in order of priority sites first, then other
+    for priority_site in PRIORITY_SITES:
+        if priority_site in site_counts:
+            print(f"   {priority_site}: {site_counts[priority_site]} URLs")
+    
+    if 'other' in site_counts:
+        print(f"   other: {site_counts['other']} URLs")
+    
+    print(f"   Total unique domains: {len(site_counts)}")
+    print()
     
     # Initialize timing accumulators for stages 3-6
     total_stage3_time = 0
@@ -301,8 +420,9 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
             qualified_recipes.extend(batch_qualified)
             all_processed_recipes.extend(batch_processed)  # Accumulate all processed recipes
             
-            # Phase 2: Rank qualified recipes by relevance  
-            final_ranked_recipes = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
+            # Phase 2: Rank qualified recipes by relevance with domain diversity
+            relevance_ranked = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
+            final_ranked_recipes = apply_domain_diversity_filter(relevance_ranked, max_per_domain=2)
         else:
             final_ranked_recipes = all_recipes
         stage5_time = time.time() - stage5_start
@@ -312,12 +432,16 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         # Accumulate stage timing
         total_stage5_time += stage5_time
         
-        # Early exit: if we have enough FINAL recipes after ranking, stop processing batches
-        if len(final_ranked_recipes) >= needed_count:
-            print(f"🚨 EARLY EXIT: Found {len(final_ranked_recipes)} recipes (needed {needed_count}) after processing {urls_processed_count}/{total_urls_to_process} URLs")
+        # Domain-aware early exit: Check AFTER domain diversity is applied
+        unique_domains = len(set(recipe.get('source_url', '').split('/')[2] for recipe in final_ranked_recipes if recipe.get('source_url')))
+        
+        if len(final_ranked_recipes) >= needed_count and unique_domains >= 3:
+            print(f"🚨 EARLY EXIT: Found {len(final_ranked_recipes)} recipes from {unique_domains} domains (needed {needed_count}) after processing {urls_processed_count}/{total_urls_to_process} URLs")
             break
+        elif len(final_ranked_recipes) >= needed_count:
+            print(f"🚨 DIVERSITY CHECK: Have {len(final_ranked_recipes)} recipes but only {unique_domains} domains (need 3+), continuing processing...")
         else:
-            print(f"🚨 BATCH {batch_count} COMPLETE: Have {len(final_ranked_recipes)}/{needed_count} recipes, continuing to next batch...")
+            print(f"🚨 BATCH {batch_count} COMPLETE: Have {len(final_ranked_recipes)}/{needed_count} recipes from {unique_domains} domains, continuing...")
     
     # Process url_backlog if we still need more recipes
     if len(final_ranked_recipes) < needed_count and url_backlog:
@@ -335,8 +459,19 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         # Process backlog URLs (these are primarily list URLs)
         backlog_copy = url_backlog.copy()
         for backlog_idx, backlog_url_dict in enumerate(backlog_copy):
+            # Check if we have enough DIVERSE recipes (not just qualified recipes)
             if len(qualified_recipes) >= needed_count:
-                break
+                temp_relevance_ranked = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
+                temp_final_recipes = apply_domain_diversity_filter(temp_relevance_ranked, max_per_domain=2)
+                unique_domains = len(set(recipe.get('source_url', '').split('/')[2] for recipe in temp_final_recipes if recipe.get('source_url')))
+                
+                if len(temp_final_recipes) >= needed_count and unique_domains >= 3:
+                    print(f"🚨 BACKLOG EARLY EXIT: Found {len(temp_final_recipes)} diverse recipes from {unique_domains} domains")
+                    break
+                else:
+                    print(f"🚨 BACKLOG CONTINUE: Have {len(temp_final_recipes)} recipes from {unique_domains} domains, need more diversity...")
+            else:
+                print(f"🚨 BACKLOG CONTINUE: Have {len(qualified_recipes)}/{needed_count} qualified recipes, need more...")
                 
             url = backlog_url_dict.get('url', '')
             print(f"🚨 BACKLOG URL {backlog_idx + 1}/{len(url_backlog)}: Processing {backlog_url_dict.get('title', 'No title')[:50]}...")
@@ -393,8 +528,12 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
                                 qualified_recipes.extend(newly_qualified)
                                 all_processed_recipes.extend(newly_processed)  # Accumulate processed recipes
                                 
-                                # Check if we have enough qualified recipes to stop
-                                if len(qualified_recipes) >= needed_count:
+                                # Apply domain diversity and check if we have enough FINAL recipes to stop
+                                temp_relevance_ranked = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
+                                temp_final_recipes = apply_domain_diversity_filter(temp_relevance_ranked, max_per_domain=2)
+                                
+                                if len(temp_final_recipes) >= needed_count:
+                                    print(f"🚨 BACKLOG EARLY EXIT: Found {len(temp_final_recipes)} diverse recipes after domain filtering")
                                     break
                     
             except Exception as e:
@@ -412,14 +551,16 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         # Stage 5: Final Ranking after backlog processing
         stage5_start = time.time()
         if len(qualified_recipes) > 0:
-            # Phase 2: Rank qualified recipes by relevance (verification already done)
-            final_ranked_recipes = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
+            # Phase 2: Rank qualified recipes by relevance with domain diversity
+            relevance_ranked = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
+            final_ranked_recipes = apply_domain_diversity_filter(relevance_ranked, max_per_domain=2)
         elif len(all_recipes) > 1:
             # Fallback: verify all recipes if no qualified recipes found yet
             fallback_qualified, fallback_processed = await verify_recipes_meet_requirements(all_recipes, requirements, ctx.deps.openai_key, user_query)
             qualified_recipes = fallback_qualified
             all_processed_recipes.extend(fallback_processed)  # Accumulate processed recipes
-            final_ranked_recipes = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
+            relevance_ranked = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
+            final_ranked_recipes = apply_domain_diversity_filter(relevance_ranked, max_per_domain=2)
         else:
             final_ranked_recipes = all_recipes
         stage5_time = time.time() - stage5_start
@@ -462,8 +603,22 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         # Sort by percentage match (highest first)
         available_closest.sort(key=lambda r: r.get('nutrition_match_percentage', 0), reverse=True)
         
-        # Add top closest matches to fill remaining slots
-        closest_matches = available_closest[:remaining_slots]
+        # Apply domain diversity to closest matches, considering existing domains
+        existing_domains = {}
+        for recipe in final_ranked_recipes:
+            source_url = recipe.get('source_url', '')
+            if source_url:
+                try:
+                    domain = urlparse(source_url).netloc.lower().replace('www.', '')
+                    existing_domains[domain] = existing_domains.get(domain, 0) + 1
+                except:
+                    pass
+        
+        # Apply domain diversity filter with existing domain awareness
+        diversified_closest = apply_domain_diversity_filter_with_existing(available_closest, existing_domains, max_per_domain=2)
+        
+        # Add top diversified closest matches to fill remaining slots
+        closest_matches = diversified_closest[:remaining_slots]
         final_ranked_recipes.extend(closest_matches)
         
         print(f"   Added {len(closest_matches)} closest matches:")
