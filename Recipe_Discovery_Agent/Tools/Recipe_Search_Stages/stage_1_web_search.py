@@ -6,6 +6,7 @@ This module handles the initial web search phase of the recipe discovery pipelin
 """
 
 import httpx
+import asyncio
 import sys
 from pathlib import Path
 from typing import Dict, List
@@ -175,3 +176,90 @@ async def search_recipes_google_custom(ctx: RunContext[RecipeDeps], query: str, 
                 "query": query,
                 "error": f"Google Custom Search failed: {str(e)}"
             }
+
+
+async def search_recipes_parallel_priority(ctx: RunContext[RecipeDeps], query: str) -> Dict:
+    """
+    PRIORITY FUNCTION: Parallel search combining priority sites + general coverage.
+    
+    Strategy:
+    1. Google Custom Search for priority sites only (30 results)
+    2. SerpAPI for general coverage (30 results) 
+    3. Combine into 60 total URLs with priority sites ranked first
+    
+    Args:
+        query: The search query for recipes
+    
+    Returns:
+        Dictionary containing combined search results with priority sites first
+    """
+    from .utils.constants import PRIORITY_SITES
+    
+    # Add "recipe" to query if not already present
+    if "recipe" not in query.lower():
+        query = f"{query} recipe"
+    
+    # Create priority sites query for Google Custom Search
+    priority_sites_query = f"{query} (" + " OR ".join([f"site:{site}" for site in PRIORITY_SITES]) + ")"
+    
+    try:
+        # Run both searches in parallel
+        priority_task = search_recipes_google_custom(ctx, priority_sites_query, number=30)
+        general_task = search_recipes_serpapi(ctx, query, number=30)
+        
+        priority_results, general_results = await asyncio.gather(priority_task, general_task, return_exceptions=True)
+        
+        # Handle exceptions
+        if isinstance(priority_results, Exception):
+            print(f"⚠️  Priority search failed: {priority_results}")
+            priority_results = {"results": [], "total": 0}
+        
+        if isinstance(general_results, Exception):
+            print(f"⚠️  General search failed: {general_results}")
+            general_results = {"results": [], "total": 0}
+        
+        # Extract results
+        priority_urls = priority_results.get("results", [])
+        general_urls = general_results.get("results", [])
+        
+        # Mark sources for tracking
+        for url in priority_urls:
+            url["search_source"] = "priority_sites"
+        for url in general_urls:
+            url["search_source"] = "general_search"
+        
+        # Remove duplicates (prioritize priority site versions)
+        seen_urls = set()
+        combined_results = []
+        
+        # Add priority site results first
+        for result in priority_urls:
+            url = result.get("url", "")
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                combined_results.append(result)
+        
+        # Add general results (skipping duplicates)
+        for result in general_urls:
+            url = result.get("url", "")
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                combined_results.append(result)
+        
+        print(f"📊 PARALLEL SEARCH RESULTS:")
+        print(f"   Priority sites: {len(priority_urls)} URLs")
+        print(f"   General search: {len(general_urls)} URLs") 
+        print(f"   Combined total: {len(combined_results)} URLs (after deduplication)")
+        
+        return {
+            "results": combined_results,
+            "total": len(combined_results),
+            "query": query,
+            "priority_count": len(priority_urls),
+            "general_count": len(general_urls)
+        }
+        
+    except Exception as e:
+        # Fallback to SerpAPI only if both searches fail
+        print(f"⚠️  Parallel search failed, falling back to SerpAPI only: {e}")
+        return await search_recipes_serpapi(ctx, query, number=50)

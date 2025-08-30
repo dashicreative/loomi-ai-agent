@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from Dependencies import RecipeDeps
 
 # Import all modularized stages
-from .Recipe_Search_Stages.stage_1_web_search import search_recipes_serpapi, search_recipes_google_custom
+from .Recipe_Search_Stages.stage_1_web_search import search_recipes_serpapi, search_recipes_google_custom, search_recipes_parallel_priority
 from .Recipe_Search_Stages.stage_2_url_ranking import rerank_results_with_llm
 from .Recipe_Search_Stages.stage_3_url_classification import classify_urls_batch
 from .Recipe_Search_Stages.stage_4_recipe_parsing import parse_recipe
@@ -79,6 +79,20 @@ def apply_domain_diversity_filter(recipes: List[Dict], max_per_domain: int = 2) 
             print(f"   ⚠️  Skipped recipe from {domain} (quota exceeded {max_per_domain}): {recipe.get('title', 'Unknown')[:40]}...")
     
     print(f"   🌍 Domain diversity: {len(domain_counts)} unique domains, {len(diversified_recipes)} total recipes")
+    
+    # DEBUG: Show actual recipes and their domains for verification
+    print(f"   🔍 DOMAIN VERIFICATION:")
+    for i, recipe in enumerate(diversified_recipes, 1):
+        source_url = recipe.get('source_url', 'No URL')
+        try:
+            domain = urlparse(source_url).netloc.lower().replace('www.', '')
+        except:
+            domain = 'unknown'
+        title = recipe.get('title', 'Unknown')[:40]
+        print(f"      {i}. [{domain}] {title}...")
+        print(f"         {source_url}")
+    
+    print(f"   🚨 RETURNING {len(diversified_recipes)} DOMAIN-FILTERED RECIPES")
     return diversified_recipes
 
 
@@ -140,27 +154,10 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     """
     total_pipeline_start = time.time()
     
-    # Stage 1: Web Search with Google Custom Search fallback
+    # Stage 1: Priority Parallel Search System
     stage1_start = time.time()
-    search_results = await search_recipes_serpapi(ctx, query, number=40)
-    
+    search_results = await search_recipes_parallel_priority(ctx, query)
     raw_results = search_results.get("results", [])
-    
-    # FALLBACK: Use Google Custom Search if SerpAPI returns < 20 results
-    if len(raw_results) < 20:
-        try:
-            google_results = await search_recipes_google_custom(ctx, query, number=40)
-            google_urls = google_results.get("results", [])
-            
-            # Combine SerpAPI and Google results, avoiding duplicates
-            existing_urls = {result.get("url") for result in raw_results}
-            for google_result in google_urls:
-                if google_result.get("url") not in existing_urls:
-                    raw_results.append(google_result)
-            
-        except Exception as e:
-            pass
-    
     stage1_time = time.time() - stage1_start
     
     if not raw_results:
@@ -169,10 +166,12 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
             "full_recipes": [],
             "totalResults": 0,
             "searchQuery": query,
-            "error": "No search results found from either search API"
+            "error": "No search results found from parallel search system"
         }
     
-    print(f"📊 Stage 1: Web Search - Found {len(raw_results)} URLs - {stage1_time:.2f}s")
+    print(f"📊 Stage 1: Priority Parallel Search - Found {len(raw_results)} URLs - {stage1_time:.2f}s")
+    print(f"   Priority sites: {search_results.get('priority_count', 0)} URLs")
+    print(f"   General search: {search_results.get('general_count', 0)} URLs")
     
     # Stage 2: Initial Ranking
     stage2_start = time.time()
@@ -180,7 +179,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         raw_results, 
         query, 
         ctx.deps.openai_key, 
-        top_k=50
+        top_k=60  # Handle larger result set from parallel search
     )
     stage2_time = time.time() - stage2_start
     
@@ -188,7 +187,8 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     
     # Print site breakdown after ranking
     print(f"\n📊 SITE BREAKDOWN ANALYSIS:")
-    site_counts = {}
+    priority_site_counts = {}
+    other_site_counts = {}
     
     for url_dict in ranked_urls:
         url = url_dict.get('url', '')
@@ -198,21 +198,26 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
             # Check if it's a priority site
             is_priority = any(priority_site in domain for priority_site in PRIORITY_SITES)
             if is_priority:
-                site_counts[domain] = site_counts.get(domain, 0) + 1
+                priority_site_counts[domain] = priority_site_counts.get(domain, 0) + 1
             else:
-                site_counts['other'] = site_counts.get('other', 0) + 1
+                other_site_counts[domain] = other_site_counts.get(domain, 0) + 1
         except:
-            site_counts['other'] = site_counts.get('other', 0) + 1
+            other_site_counts['unknown'] = other_site_counts.get('unknown', 0) + 1
     
-    # Print in order of priority sites first, then other
+    # Print priority sites first
     for priority_site in PRIORITY_SITES:
-        if priority_site in site_counts:
-            print(f"   {priority_site}: {site_counts[priority_site]} URLs")
+        if priority_site in priority_site_counts:
+            print(f"   {priority_site}: {priority_site_counts[priority_site]} URLs")
     
-    if 'other' in site_counts:
-        print(f"   other: {site_counts['other']} URLs")
+    # Print detailed breakdown of other sites
+    if other_site_counts:
+        total_other = sum(other_site_counts.values())
+        print(f"   other: {total_other} URLs")
+        for domain, count in sorted(other_site_counts.items(), key=lambda x: x[1], reverse=True):
+            print(f"      └─ {domain}: {count} URLs")
     
-    print(f"   Total unique domains: {len(site_counts)}")
+    total_unique_domains = len(priority_site_counts) + len(other_site_counts)
+    print(f"   Total unique domains: {total_unique_domains}")
     print()
     
     # Initialize timing accumulators for stages 3-6
@@ -420,9 +425,10 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
             qualified_recipes.extend(batch_qualified)
             all_processed_recipes.extend(batch_processed)  # Accumulate all processed recipes
             
-            # Phase 2: Rank qualified recipes by relevance with domain diversity
-            relevance_ranked = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
-            final_ranked_recipes = apply_domain_diversity_filter(relevance_ranked, max_per_domain=2)
+            # Phase 2: Apply domain diversity to accumulated qualified recipes
+            print(f"🚨 DEBUG MAIN BATCH - BEFORE DOMAIN FILTER: {len(qualified_recipes)} recipes")
+            final_ranked_recipes = apply_domain_diversity_filter(qualified_recipes, max_per_domain=2)
+            print(f"🚨 DEBUG MAIN BATCH - AFTER DOMAIN FILTER: {len(final_ranked_recipes)} recipes")
         else:
             final_ranked_recipes = all_recipes
         stage5_time = time.time() - stage5_start

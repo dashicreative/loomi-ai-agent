@@ -11,12 +11,12 @@ PRIORITY_SITES = [
     "eatingwell.com",
     "foodnetwork.com",
     "delish.com",
+    "tasteofhome.com"
     "seriouseats.com",
     "foodandwine.com",
     "thepioneerwoman.com",
     "food.com",
-    "epicurious.com",
-    "bbcgoodfood.com"  # Added at bottom - good site but lower priority
+    "epicurious.com"
 ]
 
 # Sites to completely block from processing
