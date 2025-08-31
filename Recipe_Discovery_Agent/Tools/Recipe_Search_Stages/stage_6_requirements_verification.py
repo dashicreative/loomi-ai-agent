@@ -249,16 +249,24 @@ def layer2_ingredient_exclusion_check(recipe: Dict, exclude_list: List[str]) -> 
     if not ingredients:
         return True, {"status": "No ingredients data"}
     
+    # DEBUG: Show what we're checking
+    print(f"      🔍 EXCLUSION CHECK: Looking for {exclude_list} in ingredients")
+    
     found_excluded = []
     
     for ingredient in ingredients:
         ingredient_words = normalize_ingredient(ingredient)
+        
+        # DEBUG: Show normalized words
+        print(f"         Checking ingredient: '{ingredient[:60]}...'")
+        print(f"         Normalized words: {ingredient_words}")
         
         for excluded in exclude_list:
             excluded_lower = excluded.lower()
             # Check both exact word match and substring
             if excluded_lower in ingredient_words or any(excluded_lower in word for word in ingredient_words):
                 found_excluded.append(f"{excluded} in '{ingredient[:50]}...'")
+                print(f"         ❌ FOUND EXCLUDED: {excluded}")
                 break  # One violation per ingredient is enough
     
     if found_excluded:
@@ -593,6 +601,9 @@ async def verify_recipes_meet_requirements(
     print(f"   USER QUERY: '{user_query}'")
     print(f"   CATEGORIZED NUTRITION: {categorized_reqs['numerical']['nutrition']}")
     print(f"   CATEGORIZED INGREDIENTS: {categorized_reqs['ingredients']}")
+    print(f"      - Exclude list: {categorized_reqs['ingredients']['exclude']}")
+    print(f"      - Include list: {categorized_reqs['ingredients']['include']}")
+    print(f"      - Dietary tags: {categorized_reqs['ingredients']['dietary_tags']}")
     print(f"   CATEGORIZED SUBJECTIVE: {categorized_reqs['subjective']}")
     
     # Two-tier tracking

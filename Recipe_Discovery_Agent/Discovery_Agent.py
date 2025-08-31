@@ -2,7 +2,12 @@ from pydantic_ai import Agent
 from pydantic_ai.models import KnownModelName
 from pathlib import Path
 from Structured_Output import AgentOutput
-from Tools import search_and_process_recipes_tool
+from Tools import (
+    search_and_process_recipes_tool,
+    save_meal_to_session,
+    analyze_saved_meals,
+    temporary_save_meal_tool  # TEMPORARY: DELETE WHEN UI CONNECTED
+)
 from Dependencies import RecipeDeps
 import os
 import time
@@ -41,7 +46,12 @@ recipe_discovery_agent = Agent(
     model,
     system_prompt=load_system_prompt("System_Prompt.txt"),
     # Removed output_type=AgentOutput for performance - agent only returns response text
-    tools=[search_and_process_recipes_tool],
+    tools=[
+        search_and_process_recipes_tool,
+        save_meal_to_session,
+        analyze_saved_meals,
+        temporary_save_meal_tool  # TEMPORARY: DELETE WHEN UI CONNECTED
+    ],
     deps_type=RecipeDeps
 )
 
@@ -72,6 +82,13 @@ recipe_discovery_agent = Agent(
 def main():
     print("🍳 Recipe Discovery Agent")
     print("Type 'quit' to exit\n")
+    
+    # TODO: UI INTEGRATION - Frontend should provide real session_id
+    # TEMPORARY: Generate session ID for this conversation
+    import uuid
+    conversation_session_id = f"conversation-{uuid.uuid4().hex[:8]}"
+    print(f"📝 Session ID: {conversation_session_id}")
+    print("💡 Tip: Say 'save meal #3' to save recipes for testing\n")
     
     while True:
         user_input = input("\nWhat recipes would you like to find? > ")

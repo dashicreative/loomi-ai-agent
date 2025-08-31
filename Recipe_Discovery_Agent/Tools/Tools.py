@@ -14,6 +14,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from Dependencies import RecipeDeps
 
+# Import session context management
+from .session_context import get_or_create_session, SessionContext
+from .saved_meals_analyzer import analyze_saved_meals_tool
+
 # Import all modularized stages
 from .Recipe_Search_Stages.stage_1_web_search import search_recipes_serpapi, search_recipes_google_custom, search_recipes_parallel_priority
 from .Recipe_Search_Stages.stage_2_url_ranking import rerank_results_with_llm
@@ -138,7 +142,7 @@ def apply_domain_diversity_filter_with_existing(recipes: List[Dict], existing_do
     return diversified_recipes
 
 
-async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: str, needed_count: int = 5, requirements: Dict = None) -> Dict:
+async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: str, needed_count: int = 5, requirements: Dict = None, session_id: str = None, exclude_urls: List[str] = None) -> Dict:
     """
     AGENT TOOL: Complete recipe search pipeline orchestrator.
     
@@ -154,10 +158,34 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     """
     total_pipeline_start = time.time()
     
+    # Session Context Management
+    # TODO: UI INTEGRATION POINT
+    # Frontend should pass session_id to maintain conversation context
+    # Currently auto-generates mock session ID if not provided
+    session = get_or_create_session(session_id)
+    session.search_history.append(query)
+    
+    # Get URLs to exclude (from session or passed explicitly)
+    urls_to_exclude = set()
+    if exclude_urls:
+        urls_to_exclude.update(exclude_urls)
+    # Add all previously shown URLs from session
+    urls_to_exclude.update(session.shown_recipe_urls)
+    
+    if urls_to_exclude:
+        print(f"🚫 Excluding {len(urls_to_exclude)} previously shown URLs from search")
+    
     # Stage 1: Priority Parallel Search System
     stage1_start = time.time()
     search_results = await search_recipes_parallel_priority(ctx, query)
     raw_results = search_results.get("results", [])
+    
+    # Filter out excluded URLs
+    if urls_to_exclude:
+        filtered_results = [r for r in raw_results if r.get('url') not in urls_to_exclude]
+        print(f"   Filtered: {len(raw_results)} → {len(filtered_results)} URLs (excluded {len(raw_results) - len(filtered_results)})")
+        raw_results = filtered_results
+    
     stage1_time = time.time() - stage1_start
     
     if not raw_results:
@@ -287,14 +315,89 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     total_urls_to_process = len(urls)
     urls_processed_count = 0
     
-    # Process URLs in batches until we have enough recipes
-    for batch_start in range(0, len(urls), batch_size):
-        batch_count += 1
-        batch_end = min(batch_start + batch_size, len(urls))
-        current_batch = urls[batch_start:batch_end]
+    # INTERLEAVED BATCHING: Group URLs by domain for round-robin distribution
+    from collections import defaultdict
+    urls_by_domain = defaultdict(list)
+    
+    for url_dict in urls:
+        url = url_dict.get('url', '')
+        try:
+            domain = urlparse(url).netloc.lower().replace('www.', '')
+            urls_by_domain[domain].append(url_dict)
+        except:
+            urls_by_domain['unknown'].append(url_dict)
+    
+    # Sort domains by priority (priority sites first, then others)
+    priority_domains = []
+    other_domains = []
+    
+    for domain in urls_by_domain.keys():
+        is_priority = any(priority_site in domain for priority_site in PRIORITY_SITES)
+        if is_priority:
+            # Find exact priority index for proper ordering
+            for i, priority_site in enumerate(PRIORITY_SITES):
+                if priority_site in domain:
+                    priority_domains.append((i, domain))
+                    break
+        else:
+            other_domains.append(domain)
+    
+    # Sort priority domains by their order in PRIORITY_SITES
+    priority_domains.sort(key=lambda x: x[0])
+    ordered_domains = [domain for _, domain in priority_domains] + sorted(other_domains)
+    
+    # Create interleaved batches using round-robin with 2 URLs per domain
+    all_batches = []
+    domain_indices = {domain: 0 for domain in ordered_domains}  # Track position in each domain's list
+    
+    while any(domain_indices[domain] < len(urls_by_domain[domain]) for domain in ordered_domains):
+        current_batch = []
+        urls_taken_this_round = {domain: 0 for domain in ordered_domains}
         
-        print(f"🚨 BATCH {batch_count}: Processing URLs {batch_start+1}-{batch_end} of {len(urls)} total URLs")
-        print(f"   Current batch size: {len(current_batch)} URLs")
+        # Round-robin: Take up to 2 URLs from each domain
+        while len(current_batch) < batch_size:
+            added_any = False
+            
+            for domain in ordered_domains:
+                if len(current_batch) >= batch_size:
+                    break
+                    
+                # Take up to 2 URLs from this domain (if available)
+                urls_to_take = min(2 - urls_taken_this_round[domain], 
+                                  len(urls_by_domain[domain]) - domain_indices[domain],
+                                  batch_size - len(current_batch))
+                
+                if urls_to_take > 0:
+                    for _ in range(urls_to_take):
+                        current_batch.append(urls_by_domain[domain][domain_indices[domain]])
+                        domain_indices[domain] += 1
+                        urls_taken_this_round[domain] += 1
+                    added_any = True
+            
+            # If we couldn't add any URLs in this round, we're done
+            if not added_any:
+                break
+        
+        if current_batch:
+            all_batches.append(current_batch)
+    
+    print(f"🔄 INTERLEAVED BATCHING: Created {len(all_batches)} diverse batches from {len(ordered_domains)} domains")
+    
+    # Process each interleaved batch
+    for batch_idx, current_batch in enumerate(all_batches):
+        batch_count = batch_idx + 1
+        
+        print(f"🚨 BATCH {batch_count}: Processing {len(current_batch)} interleaved URLs")
+        # Show domain distribution in this batch
+        batch_domains = {}
+        for url_dict in current_batch:
+            url = url_dict.get('url', '')
+            try:
+                domain = urlparse(url).netloc.lower().replace('www.', '')
+                batch_domains[domain] = batch_domains.get(domain, 0) + 1
+            except:
+                batch_domains['unknown'] = batch_domains.get('unknown', 0) + 1
+        print(f"   Domain distribution: {', '.join(f'{d}:{c}' for d, c in batch_domains.items())}")
         
         batch_total_start = time.time()
         
@@ -660,6 +763,9 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     print(f"   Stage 5 (Final Ranking): {total_stage5_time:.2f}s ({(total_stage5_time/total_time)*100:.1f}%)")
     print(f"   Stage 6 (Final Formatting): {total_stage6_time:.2f}s ({(total_stage6_time/total_time)*100:.1f}%)")
     
+    # Update session context with new recipes
+    session.update_current_batch(formatted_recipes)
+    
     # Create minimal context for agent using modular function
     agent_context = create_minimal_recipes_for_agent(formatted_recipes)
     
@@ -672,6 +778,24 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         print(f"   URL: {recipe.get('sourceUrl', 'No URL')}")
     print("="*60 + "\n")
     
+    # Print full formatted data structure for iOS
+    print("\n" + "="*60)
+    print("📱 IOS APP DATA STRUCTURE:")
+    print("="*60)
+    import json
+    ios_data = {
+        "recipes": formatted_recipes,
+        "metadata": {
+            "totalResults": len(formatted_recipes),
+            "searchQuery": query,
+            "exact_matches": agent_context["exact_matches"],
+            "closest_matches": agent_context["closest_matches"],
+            "fallback_used": agent_context["fallback_used"]
+        }
+    }
+    print(json.dumps(ios_data, indent=2))
+    print("="*60 + "\n")
+    
     return {
         "results": agent_context["recipes"],  # Minimal context for agent
         "full_recipes": formatted_recipes,  # Full data for iOS
@@ -680,5 +804,13 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         "exact_matches": agent_context["exact_matches"],
         "closest_matches": agent_context["closest_matches"], 
         "fallback_used": agent_context["fallback_used"],
-        "_failed_parse_report": failed_parse_report
+        "_failed_parse_report": failed_parse_report,
+        # TODO: UI INTEGRATION POINT
+        # Frontend should store and reuse this session_id for all subsequent calls
+        "session_id": session.session_id,  # For frontend tracking
+        "session_info": {
+            "total_shown_urls": len(session.shown_recipe_urls),
+            "saved_meals_count": len(session.saved_meals),
+            "search_count": len(session.search_history)
+        }
     }
