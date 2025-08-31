@@ -28,6 +28,74 @@ def load_system_prompt(filename: str) -> str:
     with open(prompt_path, 'r') as f:
         return f.read()
 
+
+def build_context_aware_prompt(session) -> str:
+    """
+    Build system prompt with current session context.
+    
+    Args:
+        session: Current SessionContext with saved meals and current recipes
+        
+    Returns:
+        Context-aware system prompt
+    """
+    base_prompt = load_system_prompt("System_Prompt.txt")
+    
+    # Add current session context
+    context_addition = "\n\n## CURRENT SESSION CONTEXT\n"
+    
+    # Current recipes (numbered 1-5)
+    if session.current_batch_recipes:
+        context_addition += f"\n**Currently Shown Recipes (1-{len(session.current_batch_recipes)}):**\n"
+        for i, recipe in enumerate(session.current_batch_recipes, 1):
+            title = recipe.get('title', 'Unknown')
+            calories = "Unknown"
+            protein = "Unknown"
+            
+            # Extract nutrition from iOS format
+            nutrition = recipe.get('nutrition', [])
+            for nutrient in nutrition:
+                if isinstance(nutrient, dict):
+                    name = nutrient.get('name', '').lower()
+                    amount = nutrient.get('amount', '0')
+                    unit = nutrient.get('unit', '')
+                    
+                    if 'calorie' in name:
+                        calories = f"{amount}{unit}"
+                    elif 'protein' in name:
+                        protein = f"{amount}{unit}"
+            
+            context_addition += f"{i}. {title} ({calories}, {protein} protein)\n"
+    
+    # Saved meals summary
+    if session.saved_meals:
+        totals = session.get_saved_nutrition_totals()
+        context_addition += f"\n**Saved Meals ({len(session.saved_meals)} total):**\n"
+        for meal in session.saved_meals:
+            title = meal.get('title', 'Unknown')
+            orig_num = meal.get('original_number', '?')
+            context_addition += f"- {title} (originally #{orig_num})\n"
+        
+        context_addition += f"\n**Saved Meals Nutrition Totals:**\n"
+        context_addition += f"- Calories: {totals['calories']:.0f} kcal\n"
+        context_addition += f"- Protein: {totals['protein']:.1f}g\n"
+        context_addition += f"- Fat: {totals['fat']:.1f}g\n"
+        context_addition += f"- Carbs: {totals['carbs']:.1f}g\n"
+        
+        # Show nutrition gaps if any
+        if session.current_nutrition_gaps:
+            context_addition += f"\n**Current Nutrition Gaps:**\n"
+            for nutrient, gap in session.current_nutrition_gaps.items():
+                context_addition += f"- Need {gap:.1f}g more {nutrient}\n"
+    
+    # Session stats
+    context_addition += f"\n**Session Stats:**\n"
+    context_addition += f"- Total searches: {len(session.search_history)}\n"
+    context_addition += f"- URLs shown: {len(session.shown_recipe_urls)}\n"
+    context_addition += f"- Meals saved: {len(session.saved_meals)}\n"
+    
+    return base_prompt + context_addition
+
 model: KnownModelName = 'openai:gpt-4o'  # Using type-safe model name
 
 # Set up dependencies
@@ -90,6 +158,9 @@ def main():
     print(f"📝 Session ID: {conversation_session_id}")
     print("💡 Tip: Say 'save meal #3' to save recipes for testing\n")
     
+    # Track message history for conversation context
+    message_history = []
+    
     while True:
         user_input = input("\nWhat recipes would you like to find? > ")
         if user_input.lower() in ['quit', 'exit', 'q']:
@@ -100,10 +171,28 @@ def main():
             print(f"\n⏱️  AGENT PROCESSING STARTED...")
             agent_start = time.time()
             
+            # Get current session context for agent awareness
+            from Tools.session_context import get_or_create_session
+            session = get_or_create_session(conversation_session_id)
+            
+            # Build context-aware system prompt
+            context_prompt = build_context_aware_prompt(session)
+            
+            # Debug: Show context being provided to agent
+            if session.current_batch_recipes or session.saved_meals:
+                print(f"📋 Providing context: {len(session.current_batch_recipes)} current recipes, {len(session.saved_meals)} saved meals")
+            
+            # Update agent with current context
+            recipe_discovery_agent.system_prompt = context_prompt
+            
             result = recipe_discovery_agent.run_sync(
                 user_input,
-                deps=deps
+                deps=deps,
+                message_history=message_history  # Maintain conversation context
             )
+            
+            # Update message history
+            message_history.extend(result.all_messages())
             
             agent_time = time.time() - agent_start
             print(f"\n⏱️  AGENT RESPONSE GENERATION: {agent_time:.2f}s")

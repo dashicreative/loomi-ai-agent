@@ -90,7 +90,9 @@ class SessionContext:
             for nutrient_info in nutrition:
                 if isinstance(nutrient_info, dict):
                     name = nutrient_info.get('name', '').lower()
-                    value_str = str(nutrient_info.get('value', '0'))
+                    # Handle both iOS format (amount) and old format (value)
+                    amount_str = nutrient_info.get('amount', nutrient_info.get('value', '0'))
+                    value_str = str(amount_str)
                     # Extract numeric value
                     try:
                         value = float(''.join(c for c in value_str if c.isdigit() or c == '.'))
