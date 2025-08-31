@@ -17,21 +17,21 @@ from Dependencies import RecipeDeps
 # Session context now in Dependencies - no imports needed
 
 # Import all modularized stages
-from Tools.Recipe_Search_Stages.stage_1_web_search import search_recipes_serpapi, search_recipes_google_custom, search_recipes_parallel_priority
-from Tools.Recipe_Search_Stages.stage_2_url_ranking import rerank_results_with_llm
-from Tools.Recipe_Search_Stages.stage_3_url_classification import classify_urls_batch
-from Tools.Recipe_Search_Stages.stage_4_recipe_parsing import parse_recipe
-from Tools.Recipe_Search_Stages.stage_5_nutrition_normalization import normalize_nutrition_data
-from Tools.Recipe_Search_Stages.stage_6_requirements_verification import verify_recipes_meet_requirements
-from Tools.Recipe_Search_Stages.stage_7_relevance_ranking import rank_qualified_recipes_by_relevance
-from Tools.Recipe_Search_Stages.stage_8_list_processing import expand_urls_with_lists, ListParser
-from Tools.Recipe_Search_Stages.stage_9_final_formatting import (
+from .pipeline.stage_1_web_search import search_recipes_serpapi, search_recipes_google_custom, search_recipes_parallel_priority
+from .pipeline.stage_2_url_ranking import rerank_results_with_llm
+from .pipeline.stage_3_url_classification import classify_urls_batch
+from .pipeline.stage_4_recipe_parsing import parse_recipe
+from .pipeline.stage_5_nutrition_normalization import normalize_nutrition_data
+from .pipeline.stage_6_requirements_verification import verify_recipes_meet_requirements
+from .pipeline.stage_7_relevance_ranking import rank_qualified_recipes_by_relevance
+from .pipeline.stage_8_list_processing import expand_urls_with_lists, ListParser
+from .pipeline.stage_9_final_formatting import (
     format_recipes_for_ios, 
     create_minimal_recipes_for_agent, 
     create_failed_parse_report
 )
 from urllib.parse import urlparse
-from Tools.Recipe_Search_Stages.utils.constants import PRIORITY_SITES, BLOCKED_SITES
+from .pipeline.utils.constants import PRIORITY_SITES, BLOCKED_SITES
 
 # Import parsers for nutrition processing
 from Tools.Detailed_Recipe_Parsers.nutrition_parser import parse_nutrition_list
