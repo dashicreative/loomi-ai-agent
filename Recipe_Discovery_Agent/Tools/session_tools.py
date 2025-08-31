@@ -8,7 +8,7 @@ from typing import Dict, Optional
 from .session_context import get_or_create_session
 
 
-async def save_meal_to_session(session_id: Optional[str], meal_number: int) -> Dict:
+async def save_meal_to_session(meal_number: int, session_id: Optional[str] = None) -> Dict:
     """
     Save a meal from the current batch to the session's saved meals.
     
@@ -20,12 +20,21 @@ async def save_meal_to_session(session_id: Optional[str], meal_number: int) -> D
     # DELETE this chat-based saving when UI is connected
     
     Args:
-        session_id: Session identifier (auto-generated if None)
         meal_number: Recipe number (1-5) from the current batch
+        session_id: Session identifier (optional, will use most recent if not provided)
         
     Returns:
         Dictionary with save status and message
     """
+    from .session_context import ACTIVE_SESSIONS
+    
+    # If no session_id provided, try to get the most recent session
+    if not session_id:
+        if ACTIVE_SESSIONS:
+            # Get the most recently created/used session
+            session_id = list(ACTIVE_SESSIONS.keys())[-1]
+            print(f"   📝 Using session: {session_id}")
+    
     session = get_or_create_session(session_id)
     
     if not session.current_batch_recipes:
@@ -60,19 +69,27 @@ async def save_meal_to_session(session_id: Optional[str], meal_number: int) -> D
         }
 
 
-async def analyze_saved_meals(session_id: Optional[str], query: str, daily_goals: Optional[Dict] = None) -> Dict:
+async def analyze_saved_meals(query: str, session_id: Optional[str] = None, daily_goals: Optional[Dict] = None) -> Dict:
     """
     Analyze saved meals based on user query.
     
     Args:
-        session_id: Session identifier
         query: Analysis query (e.g., "total calories", "protein needed for 100g goal")
+        session_id: Session identifier (optional, will use most recent if not provided)
         daily_goals: Optional daily nutrition goals
         
     Returns:
         Dictionary with analysis results
     """
     from .saved_meals_analyzer import analyze_saved_meals_tool
+    from .session_context import ACTIVE_SESSIONS
+    
+    # If no session_id provided, try to get the most recent session
+    if not session_id:
+        if ACTIVE_SESSIONS:
+            # Get the most recently created/used session
+            session_id = list(ACTIVE_SESSIONS.keys())[-1]
+            print(f"   📝 Using session: {session_id}")
     
     session = get_or_create_session(session_id)
     result = await analyze_saved_meals_tool(session, query, daily_goals)

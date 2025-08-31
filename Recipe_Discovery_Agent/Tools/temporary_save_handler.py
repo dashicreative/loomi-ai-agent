@@ -40,7 +40,7 @@ async def handle_temporary_save_command(message: str, session_id: Optional[str] 
         match = re.search(pattern, message_lower)
         if match:
             meal_number = int(match.group(1))
-            result = await save_meal_to_session(session_id, meal_number)
+            result = await save_meal_to_session(meal_number, session_id)
             
             # Add temporary flag to indicate this was from chat
             result['_temporary_chat_save'] = True
@@ -59,7 +59,7 @@ async def handle_temporary_save_command(message: str, session_id: Optional[str] 
         word = match.group(1)
         if word in word_to_num:
             meal_number = word_to_num[word]
-            result = await save_meal_to_session(session_id, meal_number)
+            result = await save_meal_to_session(meal_number, session_id)
             
             # Add temporary flag
             result['_temporary_chat_save'] = True
