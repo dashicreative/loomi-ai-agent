@@ -1,14 +1,10 @@
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.models import KnownModelName
 from pathlib import Path
+from typing import Optional, Dict
 from Structured_Output import AgentOutput
-from Tools import (
-    search_and_process_recipes_tool,
-    save_meal_to_session,
-    analyze_saved_meals,
-    temporary_save_meal_tool  # TEMPORARY: DELETE WHEN UI CONNECTED
-)
-from Dependencies import RecipeDeps
+from Tools import search_and_process_recipes_tool
+from Dependencies import RecipeDeps, SessionContext
 import os
 import time
 from dotenv import load_dotenv
@@ -29,7 +25,7 @@ def load_system_prompt(filename: str) -> str:
         return f.read()
 
 
-def build_context_aware_prompt(session) -> str:
+def build_context_aware_prompt(session: SessionContext) -> str:
     """
     Build system prompt with current session context.
     
@@ -98,30 +94,71 @@ def build_context_aware_prompt(session) -> str:
 
 model: KnownModelName = 'openai:gpt-4o'  # Using type-safe model name
 
-# Set up dependencies
-deps = RecipeDeps(
-    serpapi_key=os.getenv("SERPAPI_KEY"),
-    firecrawl_key=os.getenv("FIRECRAWL_API_KEY"),
-    openai_key=os.getenv("OPENAI_API_KEY"),
-    google_search_key=os.getenv("GOOGLE_SEARCH_KEY"),
-    google_search_engine_id=os.getenv("GOOGLE_SEARCH_ENGINE_ID")
-)
 
 
-
-#Recipe discovery agent instantiation
+# Recipe discovery agent with dynamic system prompt - Proper Pydantic AI Pattern
 recipe_discovery_agent = Agent(
     model,
-    system_prompt=load_system_prompt("System_Prompt.txt"),
-    # Removed output_type=AgentOutput for performance - agent only returns response text
-    tools=[
-        search_and_process_recipes_tool,
-        save_meal_to_session,
-        analyze_saved_meals,
-        temporary_save_meal_tool  # TEMPORARY: DELETE WHEN UI CONNECTED
-    ],
     deps_type=RecipeDeps
 )
+
+# Dynamic system prompt that includes session context
+@recipe_discovery_agent.system_prompt
+def dynamic_system_prompt(ctx: RunContext[RecipeDeps]) -> str:
+    """Dynamic system prompt with current session context."""
+    return build_context_aware_prompt(ctx.deps.session)
+
+# Tools using proper dependency injection
+@recipe_discovery_agent.tool
+async def save_meal(ctx: RunContext[RecipeDeps], meal_number: int) -> Dict:
+    """Save a meal from current batch to saved meals."""
+    from Tools.session_tools_refactored import save_meal_tool
+    return await save_meal_tool(ctx, meal_number)
+
+@recipe_discovery_agent.tool  
+async def analyze_saved_meals(ctx: RunContext[RecipeDeps], query: str, daily_goals: Optional[Dict] = None) -> Dict:
+    """Analyze saved meals based on user query."""
+    from Tools.session_tools_refactored import analyze_saved_meals_tool
+    return await analyze_saved_meals_tool(ctx, query, daily_goals)
+
+@recipe_discovery_agent.tool
+async def temporary_save_meal(ctx: RunContext[RecipeDeps], user_message: str) -> Dict:
+    """TEMPORARY: Handle chat save commands. DELETE WHEN UI CONNECTED."""
+    import re
+    
+    patterns = [
+        r'save\s+meal\s+#?(\d+)',
+        r'save\s+recipe\s+#?(\d+)', 
+        r'save\s+#?(\d+)',
+        r'save\s+the\s+(\w+)\s+one'
+    ]
+    
+    message_lower = user_message.lower()
+    
+    # Try numeric patterns
+    for pattern in patterns[:3]:
+        match = re.search(pattern, message_lower)
+        if match:
+            meal_number = int(match.group(1))
+            return await save_meal(ctx, meal_number)
+    
+    # Handle word numbers
+    word_to_num = {'first': 1, 'second': 2, 'third': 3, 'fourth': 4, 'fifth': 5}
+    match = re.search(patterns[3], message_lower)
+    if match:
+        word = match.group(1)
+        if word in word_to_num:
+            meal_number = word_to_num[word]
+            return await save_meal(ctx, meal_number)
+    
+    return {
+        "success": False,
+        "message": "No save command found. Try 'save meal #3' or 'save recipe #2'",
+        "_temporary_tool": True
+    }
+
+# Main search tool
+recipe_discovery_agent.tool(search_and_process_recipes_tool)
 
 
 
@@ -148,17 +185,26 @@ recipe_discovery_agent = Agent(
 
 # Interactive loop
 def main():
-    print("🍳 Recipe Discovery Agent")
+    print("🍳 Recipe Discovery Agent - Refactored with Proper Pydantic AI Patterns")
     print("Type 'quit' to exit\n")
     
-    # TODO: UI INTEGRATION - Frontend should provide real session_id
-    # TEMPORARY: Generate session ID for this conversation
-    import uuid
-    conversation_session_id = f"conversation-{uuid.uuid4().hex[:8]}"
-    print(f"📝 Session ID: {conversation_session_id}")
+    # TODO: UI INTEGRATION - Frontend should provide existing session or create new one
+    # TEMPORARY: Create session in deps for this conversation
+    session = SessionContext()
+    print(f"📝 Session ID: {session.session_id}")
     print("💡 Tip: Say 'save meal #3' to save recipes for testing\n")
     
-    # Track message history for conversation context
+    # Create deps with session - Proper Pydantic AI Pattern
+    deps_with_session = RecipeDeps(
+        serpapi_key=os.getenv("SERPAPI_KEY"),
+        firecrawl_key=os.getenv("FIRECRAWL_API_KEY"),
+        openai_key=os.getenv("OPENAI_API_KEY"),
+        google_search_key=os.getenv("GOOGLE_SEARCH_KEY"),
+        google_search_engine_id=os.getenv("GOOGLE_SEARCH_ENGINE_ID"),
+        session=session  # Session context in dependencies
+    )
+    
+    # Track message history for conversation continuity
     message_history = []
     
     while True:
@@ -171,27 +217,18 @@ def main():
             print(f"\n⏱️  AGENT PROCESSING STARTED...")
             agent_start = time.time()
             
-            # Get current session context for agent awareness
-            from Tools.session_context import get_or_create_session
-            session = get_or_create_session(conversation_session_id)
-            
-            # Build context-aware system prompt
-            context_prompt = build_context_aware_prompt(session)
-            
             # Debug: Show context being provided to agent
             if session.current_batch_recipes or session.saved_meals:
-                print(f"📋 Providing context: {len(session.current_batch_recipes)} current recipes, {len(session.saved_meals)} saved meals")
+                print(f"📋 Context: {len(session.current_batch_recipes)} current recipes, {len(session.saved_meals)} saved meals")
             
-            # Update agent with current context
-            recipe_discovery_agent.system_prompt = context_prompt
-            
+            # Pydantic AI automatically handles dynamic system prompt and context
             result = recipe_discovery_agent.run_sync(
                 user_input,
-                deps=deps,
-                message_history=message_history  # Maintain conversation context
+                deps=deps_with_session,
+                message_history=message_history
             )
             
-            # Update message history
+            # Update message history for conversation continuity
             message_history.extend(result.all_messages())
             
             agent_time = time.time() - agent_start

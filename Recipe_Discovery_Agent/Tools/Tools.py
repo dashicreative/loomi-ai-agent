@@ -14,9 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from Dependencies import RecipeDeps
 
-# Import session context management
-from .session_context import get_or_create_session, SessionContext
-from .saved_meals_analyzer import analyze_saved_meals_tool
+# Session context now in Dependencies - no imports needed
 
 # Import all modularized stages
 from .Recipe_Search_Stages.stage_1_web_search import search_recipes_serpapi, search_recipes_google_custom, search_recipes_parallel_priority
@@ -142,7 +140,7 @@ def apply_domain_diversity_filter_with_existing(recipes: List[Dict], existing_do
     return diversified_recipes
 
 
-async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: str, needed_count: int = 5, requirements: Dict = None, session_id: str = None, exclude_urls: List[str] = None) -> Dict:
+async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: str, needed_count: int = 5, requirements: Dict = None, exclude_urls: List[str] = None) -> Dict:
     """
     AGENT TOOL: Complete recipe search pipeline orchestrator.
     
@@ -158,11 +156,8 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     """
     total_pipeline_start = time.time()
     
-    # Session Context Management
-    # TODO: UI INTEGRATION POINT
-    # Frontend should pass session_id to maintain conversation context
-    # Currently auto-generates mock session ID if not provided
-    session = get_or_create_session(session_id)
+    # Session Context Management - Proper Pydantic AI Pattern
+    session = ctx.deps.session
     session.search_history.append(query)
     
     # Get URLs to exclude (from session or passed explicitly)
