@@ -419,23 +419,34 @@ async def layer4_llm_verification(
         "description": recipe.get("description", "")[:300]
     }
     
-    prompt = f"""Evaluate if this recipe meets these subjective requirements:
+    prompt = f"""Evaluate if this recipe meets these requirements AND matches the user's search intent:
 
+USER QUERY: "{user_query}"
 REQUIREMENTS: {json.dumps(subjective_reqs, indent=2)}
+
+NUTRITIONAL REASONING GUIDELINES:
+- "High protein" = 20g+ protein per serving
+- "Low calorie" = Under 400 calories per serving  
+- "High carb" = 40g+ carbs per serving
+- "Low carb" = Under 20g carbs per serving
+- "Lean meat" = Low fat content, high protein ratio
+- "High fiber" = 8g+ fiber per serving
 
 RECIPE:
 Title: {context['title']}
 Description: {context['description']}
 Ingredients: {json.dumps(context['ingredients'], indent=2)}
 
-Evaluate ONLY subjective aspects like meal type suitability, cuisine matching, or complex dietary compliance.
-DO NOT evaluate numerical requirements (those are handled separately).
+CRITICAL: First check if this recipe is RELEVANT to what the user searched for.
+If user used soft nutritional terms ("high protein", "low calorie"), apply the guidelines above.
+Then evaluate subjective aspects like meal type suitability, cuisine matching, or dietary compliance.
+DO NOT evaluate exact numerical requirements (those are handled separately).
 
 Return JSON:
 {{
   "passes": true/false,
   "confidence": 0.0-1.0,
-  "reasoning": "brief explanation"
+  "reasoning": "brief explanation including relevance check"
 }}"""
 
     try:
