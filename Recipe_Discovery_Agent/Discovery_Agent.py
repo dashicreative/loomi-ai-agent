@@ -123,38 +123,96 @@ async def analyze_saved_meals(ctx: RunContext[RecipeDeps], query: str, daily_goa
 
 @recipe_discovery_agent.tool
 async def temporary_save_meal(ctx: RunContext[RecipeDeps], user_message: str) -> Dict:
-    """TEMPORARY: Handle chat save commands. DELETE WHEN UI CONNECTED."""
+    """TEMPORARY: Handle chat save commands with intelligent recipe name matching. DELETE WHEN UI CONNECTED."""
     import re
+    from difflib import SequenceMatcher
     
-    patterns = [
-        r'save\s+meal\s+#?(\d+)',
-        r'save\s+recipe\s+#?(\d+)', 
-        r'save\s+#?(\d+)',
-        r'save\s+the\s+(\w+)\s+one'
-    ]
-    
+    session = ctx.deps.session
     message_lower = user_message.lower()
     
-    # Try numeric patterns
-    for pattern in patterns[:3]:
+    # Early validation
+    if not session.current_batch_recipes:
+        return {
+            "success": False,
+            "message": "No recipes currently displayed. Please search for recipes first.",
+            "_temporary_tool": True
+        }
+    
+    # Pattern 1: Direct numeric patterns (fastest)
+    numeric_patterns = [
+        r'save\s+meal\s+#?(\d+)',
+        r'save\s+recipe\s+#?(\d+)', 
+        r'save\s+#?(\d+)'
+    ]
+    
+    for pattern in numeric_patterns:
         match = re.search(pattern, message_lower)
         if match:
             meal_number = int(match.group(1))
             return await save_meal(ctx, meal_number)
     
-    # Handle word numbers
+    # Pattern 2: Word numbers (second fastest)
     word_to_num = {'first': 1, 'second': 2, 'third': 3, 'fourth': 4, 'fifth': 5}
-    match = re.search(patterns[3], message_lower)
-    if match:
-        word = match.group(1)
+    word_match = re.search(r'save\s+the\s+(\w+)\s+one', message_lower)
+    if word_match:
+        word = word_match.group(1)
         if word in word_to_num:
             meal_number = word_to_num[word]
             return await save_meal(ctx, meal_number)
     
+    # Pattern 3: Intelligent recipe name matching (for natural language)
+    # Extract potential recipe name from user message
+    save_patterns = [
+        r'save\s+(?:the\s+)?(.+?)(?:\s+recipe|\s+one|$)',
+        r'save\s+(?:recipe\s+)?(.+?)(?:\s+for\s+me|$)',
+        r'(?:can\s+you\s+)?save\s+(.+?)(?:\s+please|$)'
+    ]
+    
+    for save_pattern in save_patterns:
+        match = re.search(save_pattern, message_lower)
+        if match:
+            potential_name = match.group(1).strip()
+            
+            # Skip if it's just a number or common words
+            if potential_name.isdigit() or potential_name in ['that', 'this', 'it', 'one']:
+                continue
+            
+            # Find best matching recipe by title similarity
+            best_match = None
+            best_score = 0.0
+            best_index = -1
+            
+            for i, recipe in enumerate(session.current_batch_recipes):
+                recipe_title = recipe.get('title', '').lower()
+                
+                # Calculate similarity score
+                similarity = SequenceMatcher(None, potential_name, recipe_title).ratio()
+                
+                # Also check if any key words from potential_name appear in title
+                potential_words = set(potential_name.split())
+                title_words = set(recipe_title.split())
+                word_overlap = len(potential_words & title_words) / len(potential_words) if potential_words else 0
+                
+                # Combined score (70% similarity, 30% word overlap)
+                combined_score = (similarity * 0.7) + (word_overlap * 0.3)
+                
+                if combined_score > best_score and combined_score > 0.3:  # Minimum threshold
+                    best_match = recipe
+                    best_score = combined_score
+                    best_index = i + 1
+            
+            if best_match:
+                print(f"   🎯 Matched '{potential_name}' to '{best_match.get('title')}' (score: {best_score:.2f})")
+                return await save_meal(ctx, best_index)
+    
+    # Pattern 4: Context-based matching (last resort - provide helpful context)
+    current_titles = [f"{i+1}. {recipe.get('title', 'Unknown')}" for i, recipe in enumerate(session.current_batch_recipes)]
+    
     return {
         "success": False,
-        "message": "No save command found. Try 'save meal #3' or 'save recipe #2'",
-        "_temporary_tool": True
+        "message": f"I couldn't identify which recipe to save from '{user_message}'. Current recipes:\n" + "\n".join(current_titles) + "\n\nTry: 'save meal #3' or 'save recipe #2'",
+        "_temporary_tool": True,
+        "_available_recipes": current_titles
     }
 
 # Main search tool
