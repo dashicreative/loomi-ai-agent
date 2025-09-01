@@ -61,23 +61,28 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     session = ctx.deps.session
     session.search_history.append(query)
     
-    # Wrap entire pipeline in main span for automatic timing and tracing
-    with logfire.span("recipe_search_pipeline", 
-                      query=query, 
-                      session_id=session.session_id,
-                      needed_count=needed_count,
-                      has_requirements=bool(requirements)):
-        
-        # Get URLs to exclude (from session or passed explicitly)
-        urls_to_exclude = set()
-        if exclude_urls:
-            urls_to_exclude.update(exclude_urls)
-        # Add all previously shown URLs from session
-        urls_to_exclude.update(session.shown_recipe_urls)
-        
-        # Stage 1: Priority Parallel Search System
-        with logfire.span("stage_1_web_search"):
-            search_results = await search_recipes_parallel_priority(ctx, query)
+    total_pipeline_start = time.time()
+    
+    # Start pipeline logging with session correlation
+    logfire.info("search_started", 
+                 query=query, 
+                 session_id=session.session_id,
+                 needed_count=needed_count,
+                 has_requirements=bool(requirements))
+    
+    # Get URLs to exclude (from session or passed explicitly)
+    urls_to_exclude = set()
+    if exclude_urls:
+        urls_to_exclude.update(exclude_urls)
+    # Add all previously shown URLs from session
+    urls_to_exclude.update(session.shown_recipe_urls)
+    
+    if urls_to_exclude:
+        logfire.debug("excluding_previous_urls", count=len(urls_to_exclude))
+    
+    # Stage 1: Priority Parallel Search System
+    stage1_start = time.time()
+    search_results = await search_recipes_parallel_priority(ctx, query)
     raw_results = search_results.get("results", [])
     
     # Filter out excluded URLs
