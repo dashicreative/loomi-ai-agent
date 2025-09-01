@@ -15,7 +15,7 @@ import asyncio
 import time
 import os
 from firecrawl import FirecrawlApp
-from ...Detailed_Recipe_Parsers.ingredient_parser import parse_ingredients_list
+from Tools.Detailed_Recipe_Parsers.ingredient_parser import parse_ingredients_list
 
 
 # Cache for robots.txt to avoid repeated fetches

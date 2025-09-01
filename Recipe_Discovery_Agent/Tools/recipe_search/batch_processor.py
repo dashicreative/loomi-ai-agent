@@ -20,7 +20,7 @@ from Dependencies import RecipeDeps
 from .pipeline.stage_1_web_search import search_recipes_serpapi, search_recipes_google_custom, search_recipes_parallel_priority
 from .pipeline.stage_2_url_ranking import rerank_results_with_llm
 from .pipeline.stage_3_url_classification import classify_urls_batch
-from .pipeline.stage_4_recipe_parsing import parse_recipe
+from parsers.recipe_parser import parse_recipe
 from .pipeline.stage_5_nutrition_normalization import normalize_nutrition_data
 from .pipeline.stage_6_requirements_verification import verify_recipes_meet_requirements
 from .pipeline.stage_7_relevance_ranking import rank_qualified_recipes_by_relevance

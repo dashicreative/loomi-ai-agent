@@ -6,7 +6,7 @@ This module formats parsed recipes into the final structure required by the iOS 
 """
 
 from typing import Dict, List
-from ...Detailed_Recipe_Parsers.nutrition_parser import parse_nutrition_list
+from Tools.Detailed_Recipe_Parsers.nutrition_parser import parse_nutrition_list
 
 
 def format_recipes_for_ios(recipes: List[Dict], max_recipes: int = 5, fallback_used: bool = False, exact_match_count: int = 0) -> List[Dict]:

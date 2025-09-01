@@ -11,8 +11,8 @@ import json
 from typing import Dict, List
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
-from ...Detailed_Recipe_Parsers.list_parser import ListParser
-from ...Detailed_Recipe_Parsers.url_classifier import classify_urls_batch
+from Tools.Detailed_Recipe_Parsers.list_parser import ListParser
+from Tools.Detailed_Recipe_Parsers.url_classifier import classify_urls_batch
 
 
 # Initialize the advanced list parser (will be updated with OpenAI key during runtime)
