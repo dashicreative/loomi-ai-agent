@@ -39,6 +39,7 @@ from Tools.Detailed_Recipe_Parsers.nutrition_parser import parse_nutrition_list
 
 # Import modular components
 from .domain_filtering import apply_domain_diversity_filter, apply_domain_diversity_filter_with_existing
+from .stage_logger import PipelineStageLogger
 
 
 
@@ -63,6 +64,9 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     
     total_pipeline_start = time.time()
     
+    # Initialize structured stage logger
+    stage_logger = PipelineStageLogger(session.session_id, query)
+    
     # Start pipeline logging with session correlation
     logfire.info("search_started", 
                  query=query, 
@@ -81,6 +85,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         logfire.debug("excluding_previous_urls", count=len(urls_to_exclude))
     
     # Stage 1: Priority Parallel Search System
+    stage_logger.start_stage(1, "web_search")
     stage1_start = time.time()
     search_results = await search_recipes_parallel_priority(ctx, query)
     raw_results = search_results.get("results", [])
@@ -92,6 +97,10 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         raw_results = filtered_results
     
     stage1_time = time.time() - stage1_start
+    stage_logger.complete_stage(1, 
+                                urls_found=len(raw_results),
+                                priority_urls=search_results.get('priority_count', 0),
+                                general_urls=search_results.get('general_count', 0))
     
     if not raw_results:
         logfire.error("search_no_results", query=query, session_id=session.session_id)
@@ -112,6 +121,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
                  session_id=session.session_id)
     
     # Stage 2: Initial Ranking
+    stage_logger.start_stage(2, "url_ranking")
     stage2_start = time.time()
     ranked_urls = await rerank_results_with_llm(
         raw_results, 
@@ -138,6 +148,11 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
             other_site_counts['unknown'] = other_site_counts.get('unknown', 0) + 1
     
     total_unique_domains = len(priority_site_counts) + len(other_site_counts)
+    
+    stage_logger.complete_stage(2,
+                                urls_ranked=len(ranked_urls),
+                                unique_domains=total_unique_domains,
+                                priority_sites_count=len(priority_site_counts))
     
     logfire.info("stage_completed",
                  stage="url_ranking", 
@@ -633,6 +648,12 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     
     # Create minimal context for agent using modular function
     agent_context = create_minimal_recipes_for_agent(formatted_recipes)
+    
+    # Log structured pipeline summary
+    pipeline_summary = stage_logger.log_pipeline_summary(
+        total_recipes=len(formatted_recipes),
+        fallback_used=fallback_used
+    )
     
     # Log final pipeline completion with key metrics
     logfire.info("search_completed",
