@@ -48,25 +48,8 @@ def apply_domain_diversity_filter(recipes: List[Dict], max_per_domain: int = 2) 
         if current_count < max_per_domain:
             diversified_recipes.append(recipe)
             domain_counts[domain] = current_count + 1
-            print(f"   📊 Added recipe from {domain} ({current_count + 1}/{max_per_domain}): {recipe.get('title', 'Unknown')[:40]}...")
-        else:
-            print(f"   ⚠️  Skipped recipe from {domain} (quota exceeded {max_per_domain}): {recipe.get('title', 'Unknown')[:40]}...")
     
-    print(f"   🌍 Domain diversity: {len(domain_counts)} unique domains, {len(diversified_recipes)} total recipes")
     
-    # DEBUG: Show actual recipes and their domains for verification
-    print(f"   🔍 DOMAIN VERIFICATION:")
-    for i, recipe in enumerate(diversified_recipes, 1):
-        source_url = recipe.get('source_url', 'No URL')
-        try:
-            domain = urlparse(source_url).netloc.lower().replace('www.', '')
-        except:
-            domain = 'unknown'
-        title = recipe.get('title', 'Unknown')[:40]
-        print(f"      {i}. [{domain}] {title}...")
-        print(f"         {source_url}")
-    
-    print(f"   🚨 RETURNING {len(diversified_recipes)} DOMAIN-FILTERED RECIPES")
     return diversified_recipes
 
 
@@ -104,9 +87,7 @@ def apply_domain_diversity_filter_with_existing(recipes: List[Dict], existing_do
             diversified_recipes.append(recipe)
             domain_counts[domain] = current_count + 1
             percentage = recipe.get('nutrition_match_percentage', 0)
-            print(f"   📊 Added closest match from {domain} ({current_count + 1}/{max_per_domain}): {recipe.get('title', 'Unknown')[:40]}... ({percentage}%)")
         else:
             percentage = recipe.get('nutrition_match_percentage', 0)
-            print(f"   ⚠️  Skipped closest match from {domain} (quota exceeded): {recipe.get('title', 'Unknown')[:40]}... ({percentage}%)")
     
     return diversified_recipes

@@ -9,6 +9,7 @@ import httpx
 import time
 from bs4 import BeautifulSoup
 from typing import Dict
+import logfire
 from ..extraction.structured_extractor import extract_from_json_ld, extract_from_structured_html
 
 
@@ -43,23 +44,20 @@ async def hybrid_recipe_parser(url: str, openai_key: str) -> Dict:
             response.raise_for_status()
             html_content = response.text
         http_time = time.time() - http_start
-        print(f"   ⏱️  HTTP fetch: {http_time:.2f}s ({len(html_content):,} chars)")
         
         # Step 2: BeautifulSoup parsing
         soup_start = time.time()
         soup = BeautifulSoup(html_content, 'html.parser')
         soup_time = time.time() - soup_start
-        print(f"   ⏱️  BeautifulSoup parse: {soup_time:.2f}s")
         
         # Tier 1: Try JSON-LD first (fastest and most reliable)
         jsonld_start = time.time()
         recipe_data = extract_from_json_ld(soup, url)
         jsonld_time = time.time() - jsonld_start
         
+        extraction_method = None
         if recipe_data:
-            print(f"   ✅ JSON-LD extraction: {jsonld_time:.2f}s (SUCCESS)")
-        else:
-            print(f"   ❌ JSON-LD extraction: {jsonld_time:.2f}s (no data found)")
+            extraction_method = "json_ld"
             
             # Tier 2: Try structured HTML parsing
             html_start = time.time()
@@ -67,9 +65,7 @@ async def hybrid_recipe_parser(url: str, openai_key: str) -> Dict:
             html_time = time.time() - html_start
             
             if recipe_data:
-                print(f"   ✅ HTML extraction: {html_time:.2f}s (SUCCESS)")
-            else:
-                print(f"   ❌ HTML extraction: {html_time:.2f}s (no data found)")
+                extraction_method = "structured_html"
         
         if not recipe_data:
             total_time = time.time() - parse_start
@@ -78,18 +74,28 @@ async def hybrid_recipe_parser(url: str, openai_key: str) -> Dict:
         # Step 3: Keep raw ingredients for instant recipe discovery
         # Shopping conversion moved to background processing after recipe save
         raw_ingredients = recipe_data.get('ingredients', [])
-        if raw_ingredients:
-            print(f"   ✅ Using raw JSON-LD ingredients ({len(raw_ingredients)} items) - instant processing")
-            # Ingredients remain as strings for ranking/display, shopping conversion happens later
-        else:
-            pass
         
         recipe_data['source_url'] = url
         total_time = time.time() - parse_start
-        print(f"   ✅ PARSE SUCCESS - Total time: {total_time:.2f}s")
+        # Only log if parsing took unusually long (performance bottleneck)
+        if total_time > 5.0:
+            logfire.warn("slow_recipe_parse",
+                         url=url,
+                         total_time=total_time,
+                         extraction_method=extraction_method)
         return recipe_data
         
     except Exception as e:
         total_time = time.time() - parse_start
-        print(f"   ❌ PARSE EXCEPTION - Total time: {total_time:.2f}s - Error: {str(e)}")
+        # Downgrade 403 Forbidden to warning (expected for sites that block crawling)
+        if "403" in str(e) or "Forbidden" in str(e):
+            logfire.warn("site_blocks_crawling",
+                         url=url,
+                         total_time=total_time,
+                         error=str(e))
+        else:
+            logfire.error("recipe_parse_exception",
+                          url=url,
+                          total_time=total_time,
+                          error=str(e))
         return {'error': f'Hybrid parsing failed: {str(e)}', 'source_url': url}

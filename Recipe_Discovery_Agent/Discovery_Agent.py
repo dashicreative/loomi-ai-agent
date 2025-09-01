@@ -202,7 +202,11 @@ async def temporary_save_meal(ctx: RunContext[RecipeDeps], user_message: str) ->
                     best_index = i + 1
             
             if best_match:
-                print(f"   🎯 Matched '{potential_name}' to '{best_match.get('title')}' (score: {best_score:.2f})")
+                logfire.debug("recipe_name_match", 
+                              user_input=potential_name, 
+                              matched_title=best_match.get('title'),
+                              score=best_score,
+                              session_id=ctx.deps.session.session_id)
                 return await save_meal(ctx, best_index)
     
     # Pattern 4: Context-based matching (last resort - provide helpful context)
@@ -272,12 +276,16 @@ def main():
             break
         
         try:
-            print(f"\n⏱️  AGENT PROCESSING STARTED...")
             agent_start = time.time()
+            logfire.info("agent_request_started", 
+                         user_input=user_input,
+                         session_id=session.session_id)
             
-            # Debug: Show context being provided to agent
-            if session.current_batch_recipes or session.saved_meals:
-                print(f"📋 Context: {len(session.current_batch_recipes)} current recipes, {len(session.saved_meals)} saved meals")
+            # Log session context for monitoring
+            logfire.debug("agent_context", 
+                          current_recipes=len(session.current_batch_recipes),
+                          saved_meals=len(session.saved_meals),
+                          session_id=session.session_id)
             
             # Pydantic AI automatically handles dynamic system prompt and context
             result = recipe_discovery_agent.run_sync(
@@ -290,7 +298,9 @@ def main():
             message_history.extend(result.all_messages())
             
             agent_time = time.time() - agent_start
-            print(f"\n⏱️  AGENT RESPONSE GENERATION: {agent_time:.2f}s")
+            logfire.info("agent_response_completed",
+                         response_time=agent_time,
+                         session_id=session.session_id)
             
             # Agent now returns plain text response only (no expensive JSON generation)
             agent_response = result.data if hasattr(result, 'data') else str(result)
@@ -340,21 +350,18 @@ def main():
             # Display agent's conversational response
             print(f"\n{agent_response}")
             
-            # Display structured data info
+            # Log results summary
             if tool_data:
-                print(f"\nFound {tool_data['totalResults']} recipes for: {tool_data['searchQuery']}")
-                
-                # Display structured data for iOS app verification
-                if tool_data.get('full_recipes'):
-                    print("\n" + "="*80)
-                    print("📱 STRUCTURED DATA FOR iOS APP:")
-                    print("="*80)
-                    import json
-                    for i, recipe in enumerate(tool_data['full_recipes'], 1):
-                        print(f"\n🍳 Recipe {i}:")
-                        print(json.dumps(recipe, indent=2))
+                logfire.info("results_displayed",
+                             total_results=tool_data['totalResults'],
+                             search_query=tool_data['searchQuery'],
+                             session_id=session.session_id)
                     
         except Exception as e:
+            logfire.error("agent_error", 
+                          error=str(e),
+                          user_input=user_input,
+                          session_id=session.session_id)
             print(f"Error: {e}")
 
 if __name__ == "__main__":

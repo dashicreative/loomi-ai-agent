@@ -9,6 +9,7 @@ import asyncio
 import time
 import sys
 from pathlib import Path
+import logfire
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -56,25 +57,27 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     Returns:
         Dict with structured recipe data ready for agent/iOS consumption
     """
-    total_pipeline_start = time.time()
-    
     # Session Context Management - Proper Pydantic AI Pattern
     session = ctx.deps.session
     session.search_history.append(query)
     
-    # Get URLs to exclude (from session or passed explicitly)
-    urls_to_exclude = set()
-    if exclude_urls:
-        urls_to_exclude.update(exclude_urls)
-    # Add all previously shown URLs from session
-    urls_to_exclude.update(session.shown_recipe_urls)
-    
-    if urls_to_exclude:
-        print(f"🚫 Excluding {len(urls_to_exclude)} previously shown URLs from search")
-    
-    # Stage 1: Priority Parallel Search System
-    stage1_start = time.time()
-    search_results = await search_recipes_parallel_priority(ctx, query)
+    # Wrap entire pipeline in main span for automatic timing and tracing
+    with logfire.span("recipe_search_pipeline", 
+                      query=query, 
+                      session_id=session.session_id,
+                      needed_count=needed_count,
+                      has_requirements=bool(requirements)):
+        
+        # Get URLs to exclude (from session or passed explicitly)
+        urls_to_exclude = set()
+        if exclude_urls:
+            urls_to_exclude.update(exclude_urls)
+        # Add all previously shown URLs from session
+        urls_to_exclude.update(session.shown_recipe_urls)
+        
+        # Stage 1: Priority Parallel Search System
+        with logfire.span("stage_1_web_search"):
+            search_results = await search_recipes_parallel_priority(ctx, query)
     raw_results = search_results.get("results", [])
     
     # Filter out excluded URLs
@@ -86,6 +89,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     stage1_time = time.time() - stage1_start
     
     if not raw_results:
+        logfire.error("search_no_results", query=query, session_id=session.session_id)
         return {
             "results": [],
             "full_recipes": [],
@@ -94,9 +98,13 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
             "error": "No search results found from parallel search system"
         }
     
-    print(f"📊 Stage 1: Priority Parallel Search - Found {len(raw_results)} URLs - {stage1_time:.2f}s")
-    print(f"   Priority sites: {search_results.get('priority_count', 0)} URLs")
-    print(f"   General search: {search_results.get('general_count', 0)} URLs")
+    logfire.info("stage_completed",
+                 stage="web_search",
+                 duration=stage1_time,
+                 urls_found=len(raw_results),
+                 priority_urls=search_results.get('priority_count', 0),
+                 general_urls=search_results.get('general_count', 0),
+                 session_id=session.session_id)
     
     # Stage 2: Initial Ranking
     stage2_start = time.time()
@@ -108,10 +116,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     )
     stage2_time = time.time() - stage2_start
     
-    print(f"📊 Stage 2: Initial Ranking - Ranked {len(ranked_urls)} URLs - {stage2_time:.2f}s")
-    
-    # Print site breakdown after ranking
-    print(f"\n📊 SITE BREAKDOWN ANALYSIS:")
+    # Calculate domain distribution for logging
     priority_site_counts = {}
     other_site_counts = {}
     
@@ -119,8 +124,6 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         url = url_dict.get('url', '')
         try:
             domain = urlparse(url).netloc.lower().replace('www.', '')
-            
-            # Check if it's a priority site
             is_priority = any(priority_site in domain for priority_site in PRIORITY_SITES)
             if is_priority:
                 priority_site_counts[domain] = priority_site_counts.get(domain, 0) + 1
@@ -129,21 +132,15 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         except:
             other_site_counts['unknown'] = other_site_counts.get('unknown', 0) + 1
     
-    # Print priority sites first
-    for priority_site in PRIORITY_SITES:
-        if priority_site in priority_site_counts:
-            print(f"   {priority_site}: {priority_site_counts[priority_site]} URLs")
-    
-    # Print detailed breakdown of other sites
-    if other_site_counts:
-        total_other = sum(other_site_counts.values())
-        print(f"   other: {total_other} URLs")
-        for domain, count in sorted(other_site_counts.items(), key=lambda x: x[1], reverse=True):
-            print(f"      └─ {domain}: {count} URLs")
-    
     total_unique_domains = len(priority_site_counts) + len(other_site_counts)
-    print(f"   Total unique domains: {total_unique_domains}")
-    print()
+    
+    logfire.info("stage_completed",
+                 stage="url_ranking", 
+                 duration=stage2_time,
+                 urls_ranked=len(ranked_urls),
+                 unique_domains=total_unique_domains,
+                 priority_sites=dict(priority_site_counts),
+                 session_id=session.session_id)
     
     # Initialize timing accumulators for stages 3-6
     total_stage3_time = 0
@@ -195,7 +192,6 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         
         stage3_batch_setup_time = time.time() - stage3_start
         total_stage3_time += stage3_batch_setup_time
-        print(f"📊 Stage 3A: Batch Setup - {stage3_batch_setup_time:.2f}s")
         
     except Exception as e:
         import traceback
@@ -278,23 +274,15 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         if current_batch:
             all_batches.append(current_batch)
     
-    print(f"🔄 INTERLEAVED BATCHING: Created {len(all_batches)} diverse batches from {len(ordered_domains)} domains")
+    logfire.debug("batch_creation_completed", 
+                  batch_count=len(all_batches), 
+                  domain_count=len(ordered_domains),
+                  session_id=session.session_id)
     
     # Process each interleaved batch
     for batch_idx, current_batch in enumerate(all_batches):
         batch_count = batch_idx + 1
         
-        print(f"🚨 BATCH {batch_count}: Processing {len(current_batch)} interleaved URLs")
-        # Show domain distribution in this batch
-        batch_domains = {}
-        for url_dict in current_batch:
-            url = url_dict.get('url', '')
-            try:
-                domain = urlparse(url).netloc.lower().replace('www.', '')
-                batch_domains[domain] = batch_domains.get(domain, 0) + 1
-            except:
-                batch_domains['unknown'] = batch_domains.get('unknown', 0) + 1
-        print(f"   Domain distribution: {', '.join(f'{d}:{c}' for d, c in batch_domains.items())}")
         
         batch_total_start = time.time()
         
@@ -308,7 +296,6 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         
         stage3_classify_time = time.time() - stage3_classify_start
         total_stage3_time += stage3_classify_time
-        print(f"📊 Stage 3B: URL Classification - {stage3_classify_time:.2f}s")
         
         # Separate recipe URLs from list URLs in this batch
         batch_recipe_urls = []
@@ -324,11 +311,9 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         # Defer ALL list URLs to backlog - don't process any now
         if batch_list_urls:
             url_backlog.extend(batch_list_urls)
-            print(f"🚨 BATCH {batch_count}: Deferred {len(batch_list_urls)} list URLs to backlog")
         
         # Only process recipe URLs
         urls_to_process = batch_recipe_urls
-        print(f"🚨 BATCH {batch_count}: Processing {len(urls_to_process)} recipe URLs from this batch")
         
         # Stage 3C: URL Expansion - SKIPPED (all list URLs deferred to backlog)
         stage3_expansion_start = time.time()
@@ -336,10 +321,8 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         fp1_failures = []
         stage3_expansion_time = time.time() - stage3_expansion_start
         total_stage3_time += stage3_expansion_time
-        print(f"📊 Stage 3C: URL Expansion - Skipped (list URLs deferred) - {stage3_expansion_time:.3f}s")
         
         if not expanded_results:
-            print(f"🚨 BATCH {batch_count}: No recipe URLs to process in this batch, moving to next batch")
             all_fp1_failures.extend(fp1_failures)
             continue
         
@@ -357,7 +340,6 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
             if url:
                 # URL TRACKING: Show progress for each URL being processed
                 urls_processed_count += 1
-                print(f"🚨 URL PROGRESS: Processing URL {urls_processed_count}/{total_urls_to_process} - {result.get('title', 'No title')[:50]}...")
                 
                 task = asyncio.wait_for(parse_recipe(url, ctx.deps.openai_key), timeout=25.0)
                 parsing_tasks.append(task)
@@ -377,7 +359,12 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
                     url_backlog.append(result)
                 elif isinstance(data, Exception):
                     # Track other exceptions as failed parses
-                    print(f"🚨 URL FAILED: {url} - Exception: {str(data)[:100]}")
+                    # Downgrade 403 Forbidden to warning (expected for sites that block crawling)
+                    error_str = str(data)
+                    if "403" in error_str or "Forbidden" in error_str:
+                        logfire.warn("site_blocks_crawling", url=url, error=error_str[:200], session_id=session.session_id)
+                    else:
+                        logfire.error("recipe_parse_failure", url=url, error=error_str[:200], session_id=session.session_id)
                     failed_parses.append({
                         "result": result,
                         "error": str(data),
@@ -406,7 +393,11 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         stage4_time = time.time() - stage4_start
         batch_total_time = time.time() - batch_total_start
         
-        print(f"📊 Stage 4: Recipe Scraping - Successfully parsed {len(successful_parses)} recipes - {stage4_time:.2f}s")
+        logfire.info("stage_completed",
+                     stage="recipe_scraping",
+                     duration=stage4_time,
+                     recipes_parsed=len(successful_parses),
+                     session_id=session.session_id)
         
         # Accumulate stage timing
         total_stage4_time += stage4_time
@@ -426,14 +417,11 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
             all_processed_recipes.extend(batch_processed)  # Accumulate all processed recipes
             
             # Phase 2: Apply domain diversity to accumulated qualified recipes
-            print(f"🚨 DEBUG MAIN BATCH - BEFORE DOMAIN FILTER: {len(qualified_recipes)} recipes")
             final_ranked_recipes = apply_domain_diversity_filter(qualified_recipes, max_per_domain=2)
-            print(f"🚨 DEBUG MAIN BATCH - AFTER DOMAIN FILTER: {len(final_ranked_recipes)} recipes")
         else:
             final_ranked_recipes = all_recipes
         stage5_time = time.time() - stage5_start
         
-        print(f"📊 Stage 5: Final Ranking - Ranking {len(final_ranked_recipes)} qualified recipes - {stage5_time:.2f}s")
         
         # Accumulate stage timing
         total_stage5_time += stage5_time
@@ -442,25 +430,19 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         unique_domains = len(set(recipe.get('source_url', '').split('/')[2] for recipe in final_ranked_recipes if recipe.get('source_url')))
         
         if len(final_ranked_recipes) >= needed_count and unique_domains >= 3:
-            print(f"🚨 EARLY EXIT: Found {len(final_ranked_recipes)} recipes from {unique_domains} domains (needed {needed_count}) after processing {urls_processed_count}/{total_urls_to_process} URLs")
+            logfire.info("early_exit_triggered", 
+                         recipes_found=len(final_ranked_recipes),
+                         unique_domains=unique_domains,
+                         urls_processed=urls_processed_count,
+                         session_id=session.session_id)
             break
-        elif len(final_ranked_recipes) >= needed_count:
-            print(f"🚨 DIVERSITY CHECK: Have {len(final_ranked_recipes)} recipes but only {unique_domains} domains (need 3+), continuing processing...")
-        else:
-            print(f"🚨 BATCH {batch_count} COMPLETE: Have {len(final_ranked_recipes)}/{needed_count} recipes from {unique_domains} domains, continuing...")
     
     # Process url_backlog if we still need more recipes
     if len(final_ranked_recipes) < needed_count and url_backlog:
-        print(f"🚨 BACKLOG PROCESSING: Need {needed_count - len(final_ranked_recipes)} more recipes. Processing {len(url_backlog)} backlog URLs after main batch processing.")
-        
-        # DEBUG: Print clean list of backlog URLs
-        print(f"\n🚨 DEBUG BACKLOG URL LIST ({len(url_backlog)} URLs):")
-        for i, url_data in enumerate(url_backlog, 1):
-            url = url_data.get('url', 'No URL')
-            title = url_data.get('title', 'No title')[:60]
-            print(f"   {i:2}. {title}")
-            print(f"       {url}")
-        print()
+        logfire.debug("backlog_processing_started",
+                      needed_count=needed_count - len(final_ranked_recipes),
+                      backlog_urls=len(url_backlog),
+                      session_id=session.session_id)
         stage3_backlog_start = time.time()
         # Process backlog URLs (these are primarily list URLs)
         backlog_copy = url_backlog.copy()
@@ -472,15 +454,9 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
                 unique_domains = len(set(recipe.get('source_url', '').split('/')[2] for recipe in temp_final_recipes if recipe.get('source_url')))
                 
                 if len(temp_final_recipes) >= needed_count and unique_domains >= 3:
-                    print(f"🚨 BACKLOG EARLY EXIT: Found {len(temp_final_recipes)} diverse recipes from {unique_domains} domains")
                     break
-                else:
-                    print(f"🚨 BACKLOG CONTINUE: Have {len(temp_final_recipes)} recipes from {unique_domains} domains, need more diversity...")
-            else:
-                print(f"🚨 BACKLOG CONTINUE: Have {len(qualified_recipes)}/{needed_count} qualified recipes, need more...")
                 
             url = backlog_url_dict.get('url', '')
-            print(f"🚨 BACKLOG URL {backlog_idx + 1}/{len(url_backlog)}: Processing {backlog_url_dict.get('title', 'No title')[:50]}...")
             
             # IMMEDIATELY remove from original backlog so it can't be considered again
             url_backlog.remove(backlog_url_dict)
@@ -539,7 +515,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
                                 temp_final_recipes = apply_domain_diversity_filter(temp_relevance_ranked, max_per_domain=2)
                                 
                                 if len(temp_final_recipes) >= needed_count:
-                                    print(f"🚨 BACKLOG EARLY EXIT: Found {len(temp_final_recipes)} diverse recipes after domain filtering")
+                                    logfire.debug("backlog_early_exit", recipes_found=len(temp_final_recipes), session_id=session.session_id)
                                     break
                     
             except Exception as e:
@@ -552,7 +528,6 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         
         stage3_backlog_time = time.time() - stage3_backlog_start
         total_stage3_time += stage3_backlog_time
-        print(f"📊 Stage 3D: Backlog Processing - {stage3_backlog_time:.2f}s")
         
         # Stage 5: Final Ranking after backlog processing
         stage5_start = time.time()
@@ -571,7 +546,6 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
             final_ranked_recipes = all_recipes
         stage5_time = time.time() - stage5_start
         
-        print(f"📊 Stage 5: Final Ranking after backlog - Ranking {len(final_ranked_recipes)} qualified recipes - {stage5_time:.2f}s")
         
         # Accumulate stage timing
         total_stage5_time += stage5_time
@@ -580,14 +554,12 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     if 'final_ranked_recipes' not in locals():
         final_ranked_recipes = all_recipes
     
-    # URL TRACKING: Final summary
-    print(f"🚨 FINAL URL PROCESSING SUMMARY:")
-    print(f"   Total URLs available: {total_urls_to_process}")
-    print(f"   URLs actually processed: {urls_processed_count}")
-    print(f"   Backlog URLs processed: {len(url_backlog) if 'url_backlog' in locals() else 0}")
-    print(f"   Final recipes found: {len(final_ranked_recipes)}")
-    if urls_processed_count < total_urls_to_process:
-        print(f"   ⚠️  Only processed {urls_processed_count}/{total_urls_to_process} URLs - stopped early or hit limits")
+    # Log processing summary
+    logfire.debug("url_processing_summary",
+                  total_urls_available=total_urls_to_process,
+                  urls_processed=urls_processed_count,
+                  final_recipes=len(final_ranked_recipes),
+                  session_id=session.session_id)
 
     # FALLBACK: Fill remaining slots with closest matches if needed (after ALL URLs exhausted)
     fallback_used = False
@@ -595,8 +567,10 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     
     if len(final_ranked_recipes) < needed_count and 'all_processed_recipes' in locals() and all_processed_recipes:
         remaining_slots = needed_count - len(final_ranked_recipes)
-        print(f"\n🔄 CLOSEST MATCH FALLBACK:")
-        print(f"   Need {remaining_slots} more recipes to reach {needed_count}")
+        logfire.debug("fallback_initiated", 
+                      remaining_slots=remaining_slots, 
+                      needed_count=needed_count,
+                      session_id=session.session_id)
         
         # Get recipes with percentage data, excluding ones already in final list
         final_recipe_urls = {recipe.get('source_url', '') for recipe in final_ranked_recipes}
@@ -627,13 +601,11 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         closest_matches = diversified_closest[:remaining_slots]
         final_ranked_recipes.extend(closest_matches)
         
-        print(f"   Added {len(closest_matches)} closest matches:")
-        for i, recipe in enumerate(closest_matches, 1):
-            percentage = recipe.get('nutrition_match_percentage', 0)
-            title = recipe.get('title', 'Unknown')[:50]
-            print(f"      {i}. {title} ({percentage}% match)")
         
-        print(f"🚨 FINAL RECIPE COUNT AFTER FALLBACK: {len(final_ranked_recipes)}")
+        logfire.info("fallback_applied",
+                     final_count=len(final_ranked_recipes),
+                     closest_matches_added=len(closest_matches),
+                     session_id=session.session_id)
         fallback_used = True
 
     # Stage 6: Final Formatting using modular function
@@ -644,21 +616,12 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     failed_parse_report = create_failed_parse_report(all_fp1_failures, all_failed_parses)
     stage6_time = time.time() - stage6_start
     
-    print(f"📊 Stage 6: Final Formatting - Structured {len(formatted_recipes)} recipes - {stage6_time:.2f}s")
     
     # Accumulate stage timing
     total_stage6_time += stage6_time
     
     # Performance summary
     total_time = time.time() - total_pipeline_start
-    print(f"\n⏱️  COMPLETE PIPELINE PERFORMANCE:")
-    print(f"   Total Time: {total_time:.2f}s")
-    print(f"   Stage 1 (Web Search): {stage1_time:.2f}s ({(stage1_time/total_time)*100:.1f}%)")
-    print(f"   Stage 2 (Initial Ranking): {stage2_time:.2f}s ({(stage2_time/total_time)*100:.1f}%)")
-    print(f"   Stage 3 (URL Expansion): {total_stage3_time:.2f}s ({(total_stage3_time/total_time)*100:.1f}%)")
-    print(f"   Stage 4 (Recipe Scraping): {total_stage4_time:.2f}s ({(total_stage4_time/total_time)*100:.1f}%)")
-    print(f"   Stage 5 (Final Ranking): {total_stage5_time:.2f}s ({(total_stage5_time/total_time)*100:.1f}%)")
-    print(f"   Stage 6 (Final Formatting): {total_stage6_time:.2f}s ({(total_stage6_time/total_time)*100:.1f}%)")
     
     # Update session context with new recipes
     session.update_current_batch(formatted_recipes)
@@ -666,32 +629,23 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     # Create minimal context for agent using modular function
     agent_context = create_minimal_recipes_for_agent(formatted_recipes)
     
-    # Final recipe selection display
-    print("\n" + "="*60)
-    print(f"🍳 FINAL {len(formatted_recipes)} RECIPES SELECTED:")
-    print("="*60)
-    for i, recipe in enumerate(formatted_recipes[:5], 1):
-        print(f"{i}. {recipe.get('title', 'Unknown Title')}")
-        print(f"   URL: {recipe.get('sourceUrl', 'No URL')}")
-    print("="*60 + "\n")
-    
-    # Print full formatted data structure for iOS
-    print("\n" + "="*60)
-    print("📱 IOS APP DATA STRUCTURE:")
-    print("="*60)
-    import json
-    ios_data = {
-        "recipes": formatted_recipes,
-        "metadata": {
-            "totalResults": len(formatted_recipes),
-            "searchQuery": query,
-            "exact_matches": agent_context["exact_matches"],
-            "closest_matches": agent_context["closest_matches"],
-            "fallback_used": agent_context["fallback_used"]
-        }
-    }
-    print(json.dumps(ios_data, indent=2))
-    print("="*60 + "\n")
+    # Log final pipeline completion with key metrics
+    logfire.info("search_completed",
+                 query=query,
+                 session_id=session.session_id,
+                 total_time=total_time,
+                 recipes_found=len(formatted_recipes),
+                 exact_matches=agent_context["exact_matches"],
+                 closest_matches=agent_context["closest_matches"],
+                 fallback_used=agent_context["fallback_used"],
+                 stage_timings={
+                     "web_search": stage1_time,
+                     "url_ranking": stage2_time,
+                     "url_expansion": total_stage3_time,
+                     "recipe_scraping": total_stage4_time,
+                     "final_ranking": total_stage5_time,
+                     "formatting": total_stage6_time
+                 })
     
     return {
         "results": agent_context["recipes"],  # Minimal context for agent

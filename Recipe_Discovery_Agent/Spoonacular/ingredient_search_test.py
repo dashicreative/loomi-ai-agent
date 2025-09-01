@@ -4,6 +4,7 @@ import requests
 import json
 import os
 from typing import Optional, Dict, Any
+from dotenv import load_dotenv
 
 def search_ingredient(ingredient_name: str, api_key: str) -> Optional[str]:
     """
@@ -34,9 +35,10 @@ def search_ingredient(ingredient_name: str, api_key: str) -> Optional[str]:
             ingredient = data["results"][0]
             ingredient_id = ingredient.get("id")
             ingredient_name = ingredient.get("name")
+            image_filename = ingredient.get("image")
             
-            # Create ingredient detail URL
-            ingredient_url = f"https://spoonacular.com/ingredients/{ingredient_id}-{ingredient_name.replace(' ', '-').lower()}"
+            # Create ingredient image URL
+            ingredient_url = f"https://img.spoonacular.com/ingredients_100x100/{image_filename}"
             
             print(f"Found ingredient: {ingredient['name']}")
             print(f"Ingredient ID: {ingredient_id}")
@@ -59,6 +61,9 @@ def main():
     print("=== Spoonacular Ingredient Search Test ===")
     print("This tool searches for ingredients and returns their Spoonacular URLs.")
     print()
+    
+    # Load environment variables from .env file
+    load_dotenv("/Users/agustin/Desktop/loomi_ai_agent/.env")
     
     # Check for API key
     api_key = os.getenv("SPOONACULAR_API_KEY")
