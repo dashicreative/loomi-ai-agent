@@ -15,7 +15,8 @@ from . import (
     stage_6_requirements_verification,
     stage_7_relevance_ranking,
     stage_8_list_processing,
-    stage_9_final_formatting,
+    stage_9a_final_formatting,
+    stage_9b_ingredient_parsing,
 )
 
 __all__ = [
@@ -27,5 +28,6 @@ __all__ = [
     'stage_6_requirements_verification',
     'stage_7_relevance_ranking',
     'stage_8_list_processing',
-    'stage_9_final_formatting',
+    'stage_9a_final_formatting',
+    'stage_9b_ingredient_parsing',
 ]

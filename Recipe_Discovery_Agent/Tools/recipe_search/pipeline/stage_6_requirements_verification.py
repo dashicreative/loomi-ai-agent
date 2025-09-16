@@ -135,6 +135,9 @@ def layer1_nutrition_check(recipe: Dict, nutrition_reqs: Dict) -> Tuple[bool, Di
     unified_nutrition = recipe.get('unified_nutrition', [])
     clean_nutrition = clean_nutrition_for_verification(unified_nutrition)
     
+    # Store parsed nutrition data in recipe for efficient reuse in later stages
+    recipe['parsed_nutrition'] = clean_nutrition
+    
     # If nutrition requirements exist but no nutrition data, auto-fail
     if not clean_nutrition:
         # Mark as 0% match for missing nutrition data

@@ -26,7 +26,7 @@ from .pipeline.stage_5_nutrition_normalization import normalize_nutrition_data
 from .pipeline.stage_6_requirements_verification import verify_recipes_meet_requirements
 from .pipeline.stage_7_relevance_ranking import rank_qualified_recipes_by_relevance
 from .pipeline.stage_8_list_processing import expand_urls_with_lists, ListParser
-from .pipeline.stage_9_final_formatting import (
+from .pipeline.stage_9a_final_formatting import (
     format_recipes_for_ios, 
     create_minimal_recipes_for_agent, 
     create_failed_parse_report
@@ -630,7 +630,26 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
 
     # Stage 6: Final Formatting using modular function
     stage6_start = time.time()
-    formatted_recipes = format_recipes_for_ios(final_ranked_recipes, needed_count, fallback_used, exact_match_count)
+    
+    # Stage 9b: Advanced ingredient parsing (run in async context)
+    try:
+        from .pipeline.stage_9b_ingredient_parsing import process_all_recipe_ingredients
+        print("\n🔧 STAGE 9B: Advanced Ingredient Processing")
+        stage9b_start = time.time()
+        
+        # Process ingredients in parallel for final recipes
+        final_recipes_with_ingredients = await process_all_recipe_ingredients(final_ranked_recipes[:needed_count])
+        
+        stage9b_time = time.time() - stage9b_start
+        print(f"   ✅ Advanced ingredient parsing completed: {stage9b_time:.2f}s")
+        
+        # Stage 9a: Final formatting (with pre-processed ingredients)
+        formatted_recipes = format_recipes_for_ios(final_recipes_with_ingredients, needed_count, fallback_used, exact_match_count)
+        
+    except Exception as e:
+        print(f"⚠️  Stage 9b failed, using basic formatting: {e}")
+        # Fallback to basic formatting
+        formatted_recipes = format_recipes_for_ios(final_ranked_recipes, needed_count, fallback_used, exact_match_count)
     
     # Track failures for reporting
     failed_parse_report = create_failed_parse_report(all_fp1_failures, all_failed_parses)
@@ -645,6 +664,13 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     
     # Update session context with new recipes
     session.update_current_batch(formatted_recipes)
+    
+    # Print final formatted recipes JSON for iOS app
+    import json
+    print(f"\n🍽️ FINAL FORMATTED RECIPES JSON FOR iOS APP:")
+    print("=" * 60)
+    print(json.dumps(formatted_recipes, indent=2))
+    print("=" * 60)
     
     # Create minimal context for agent using modular function
     agent_context = create_minimal_recipes_for_agent(formatted_recipes)
