@@ -631,6 +631,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     # Stage 6: Final Formatting using modular function
     stage6_start = time.time()
     
+    
     # Stage 9b: Advanced ingredient parsing (run in async context)
     try:
         from .pipeline.stage_9b_ingredient_parsing import process_all_recipe_ingredients
@@ -651,6 +652,20 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         # Fallback to basic formatting
         formatted_recipes = format_recipes_for_ios(final_ranked_recipes, needed_count, fallback_used, exact_match_count)
     
+    # Print FINAL formatted output after Stage 9 completion
+    import json
+    print(f"\n🎯 FINAL FORMATTED OUTPUT (Post-Stage 9):")
+    print("=" * 60)
+    print(f"Number of formatted recipes: {len(formatted_recipes)}")
+    
+    # Print all recipes for verification
+    for i, recipe in enumerate(formatted_recipes):
+        print(f"\n🔍 RECIPE {i+1} FINAL STRUCTURE:")
+        print(json.dumps(recipe, indent=2))
+        if i < len(formatted_recipes) - 1:  # Add separator between recipes
+            print("-" * 40)
+    print("=" * 60)
+    
     # Track failures for reporting
     failed_parse_report = create_failed_parse_report(all_fp1_failures, all_failed_parses)
     stage6_time = time.time() - stage6_start
@@ -665,12 +680,12 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     # Update session context with new recipes
     session.update_current_batch(formatted_recipes)
     
-    # Print final formatted recipes JSON for iOS app
-    import json
-    print(f"\n🍽️ FINAL FORMATTED RECIPES JSON FOR iOS APP:")
-    print("=" * 60)
-    print(json.dumps(formatted_recipes, indent=2))
-    print("=" * 60)
+    # Print final formatted recipes JSON for iOS app (COMMENTED OUT to analyze pre-stage-9 data)
+    # import json
+    # print(f"\n🍽️ FINAL FORMATTED RECIPES JSON FOR iOS APP:")
+    # print("=" * 60)
+    # print(json.dumps(formatted_recipes, indent=2))
+    # print("=" * 60)
     
     # Create minimal context for agent using modular function
     agent_context = create_minimal_recipes_for_agent(formatted_recipes)

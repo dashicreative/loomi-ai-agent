@@ -137,10 +137,9 @@ def _format_recipes_sync(processed_recipes: List[Dict], max_recipes: int = 5, fa
         # Use processed ingredients from Stage 9b (already structured)
         processed_ingredients = recipe.get("ingredients", [])
         
-        # If ingredients are already structured from Stage 9b, use them
-        # Otherwise fall back to simple display format
-        if processed_ingredients and len(processed_ingredients) > 0 and isinstance(processed_ingredients[0], dict) and "store_quantity" in processed_ingredients[0]:
-            # Ingredients are already structured from Stage 9b
+        # Use processed ingredients from Stage 9b (Instacart-compatible format)
+        if processed_ingredients and len(processed_ingredients) > 0 and isinstance(processed_ingredients[0], dict):
+            # Ingredients are already structured from Stage 9b with Instacart units
             structured_ingredients = processed_ingredients
         else:
             # Fallback: Convert to simple display format for iOS app
