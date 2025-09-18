@@ -168,7 +168,7 @@ COMPLEX ingredients need conversion or are subjective:
 - **Multiple measurements**: "12 ounces fresh fruit (about 2 cups)" (needs unit selection)
 - **Subjective amounts**: "salt to taste", "pepper as needed" (mark disqualified)
 - **Descriptive quantities**: "juice from 1 lemon" (convert to "each")
-- **Non-standard units**: "splash of vinegar", "pinch of salt" (convert or disqualify)
+- **Non-standard units**: "1 dash salt", "splash of vinegar", "pinch of salt" (convert or disqualify)
 - **Compound ingredients**: "salt and pepper to taste" (split and process)
 - **Ranges**: "1-2 pounds beef" (convert to average)
 - **Cross-references**: "see recipe notes" (mark disqualified)
@@ -359,7 +359,10 @@ async def _parse_simple_ingredients(ingredients: List[str]) -> List[Dict]:
             processed = processed.replace(unicode_frac, decimal)
         
         # Add spaces between numbers and letters (handles "1tablespoon" → "1 tablespoon")
-        processed = re.sub(r'(\d+(?:\.\d+)?(?:/\d+)?)([a-zA-Z])', r'\1 \2', processed)
+        # Special case for text fractions first: "1/2cup" → "1/2 cup"
+        processed = re.sub(r'(\d+/\d+)([a-zA-Z])', r'\1 \2', processed)
+        # General case: "1tablespoon" → "1 tablespoon" 
+        processed = re.sub(r'(\d+(?:\.\d+)?)([a-zA-Z])', r'\1 \2', processed)
         
         # Handle mixed patterns like "1 0.5cupsgraham" → "1.5 cupsgraham"
         # Combine adjacent numbers separated by space
@@ -390,14 +393,17 @@ async def _parse_simple_ingredients(ingredients: List[str]) -> List[Dict]:
             
             text_lower = text_after_quantity.lower()
             
-            # Find the longest matching unit at the start with word boundaries
+            # Find the longest matching unit at the start
             best_match = None
             for unit in sorted(valid_units, key=len, reverse=True):  # Check longer units first
                 if text_lower.startswith(unit):
-                    # Ensure it's a complete word - next char must be non-alphabetic or end of string
-                    if len(text_after_quantity) == len(unit) or not text_after_quantity[len(unit)].isalpha():
-                        best_match = unit
-                        break
+                    # Only apply word boundary check for "gram" to avoid "graham" confusion
+                    if unit == "gram":
+                        # For "gram" specifically, ensure next char isn't 'h' (to avoid "graham")
+                        if len(text_after_quantity) > 4 and text_after_quantity[4] == 'h':
+                            continue  # Skip "gram" if it's actually "graham"
+                    best_match = unit
+                    break
             
             if best_match:
                 remaining = text_after_quantity[len(best_match):].strip()
