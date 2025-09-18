@@ -18,34 +18,34 @@ from Dependencies import RecipeDeps
 # Session context now in Dependencies - no imports needed
 
 # Import all modularized stages
-from .pipeline.stage_1_web_search import search_recipes_serpapi, search_recipes_google_custom, search_recipes_parallel_priority
-from .pipeline.stage_2_url_ranking import rerank_results_with_llm
-from .pipeline.stage_3_url_classification import classify_urls_batch
+from Tools.recipe_search.pipeline.stage_1_web_search import search_recipes_serpapi, search_recipes_google_custom, search_recipes_parallel_priority
+from Tools.recipe_search.pipeline.stage_2_url_ranking import rerank_results_with_llm
+from Tools.recipe_search.pipeline.stage_3_url_classification import classify_urls_batch
 from parsers.recipe_parser import parse_recipe
-from .pipeline.stage_5_nutrition_normalization import normalize_nutrition_data
-from .pipeline.stage_6_requirements_verification import verify_recipes_meet_requirements
-from .pipeline.stage_7_relevance_ranking import rank_qualified_recipes_by_relevance
-from .pipeline.stage_8_list_processing import expand_urls_with_lists, ListParser
+from Tools.recipe_search.pipeline.stage_5_nutrition_normalization import normalize_nutrition_data
+from Tools.recipe_search.pipeline.stage_6_requirements_verification import verify_recipes_meet_requirements
+from Tools.recipe_search.pipeline.stage_7_relevance_ranking import rank_qualified_recipes_by_relevance
+from Tools.recipe_search.pipeline.stage_8_list_processing import expand_urls_with_lists, ListParser
 # STAGE 8B IMPORTS (TEMPORARILY DISABLED - reverting to 9a/9b)
-# from .pipeline.stage_8b_unified_formatting import (
+# from Tools.recipe_search.pipeline.stage_8b_unified_formatting import (
 #     format_recipes_unified_async, 
 #     create_minimal_recipes_for_agent, 
 #     create_failed_parse_report
 # )
-from .pipeline.stage_9a_final_formatting import (
+from Tools.recipe_search.pipeline.stage_9a_final_formatting import (
     format_recipes_for_ios, 
     create_minimal_recipes_for_agent, 
     create_failed_parse_report
 )
 from urllib.parse import urlparse
-from .pipeline.utils.constants import PRIORITY_SITES, BLOCKED_SITES
+from Tools.recipe_search.pipeline.utils.constants import PRIORITY_SITES, BLOCKED_SITES
 
 # Import parsers for nutrition processing
 from Tools.Detailed_Recipe_Parsers.nutrition_parser import parse_nutrition_list
 
 # Import modular components
-from .domain_filtering import apply_domain_diversity_filter, apply_domain_diversity_filter_with_existing
-from .stage_logger import PipelineStageLogger
+from Tools.recipe_search.domain_filtering import apply_domain_diversity_filter, apply_domain_diversity_filter_with_existing
+from Tools.recipe_search.stage_logger import PipelineStageLogger
 
 
 
@@ -640,7 +640,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     
     # STAGE 9B: Advanced ingredient parsing (BACK TO ORIGINAL IMPLEMENTATION)
     try:
-        from .pipeline.stage_9b_ingredient_parsing import process_all_recipe_ingredients
+        from Tools.recipe_search.pipeline.stage_9b_ingredient_parsing import process_all_recipe_ingredients
         print("\n🔧 STAGE 9B: Advanced Ingredient Processing")
         stage9b_start = time.time()
         
@@ -660,7 +660,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     
     # STAGE 8B: Unified Formatting and Ingredient Processing (TEMPORARILY DISABLED - reverted to 9a/9b)
     # try:
-    #     from .pipeline.stage_8b_unified_formatting import format_recipes_unified_async
+    #     from Tools.recipe_search.pipeline.stage_8b_unified_formatting import format_recipes_unified_async
     #     print("\n🔧 STAGE 8B: Unified Formatting and Ingredient Processing")
     #     stage8b_start = time.time()
     #     

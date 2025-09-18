@@ -15,7 +15,7 @@ from pydantic_ai import RunContext
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from Dependencies import RecipeDeps
-from .utils.constants import BLOCKED_SITES
+from Tools.recipe_search.pipeline.utils.constants import BLOCKED_SITES
 
 
 async def search_recipes_serpapi(ctx: RunContext[RecipeDeps], query: str, number: int = 50) -> Dict:
@@ -193,7 +193,7 @@ async def search_recipes_parallel_priority(ctx: RunContext[RecipeDeps], query: s
     Returns:
         Dictionary containing combined search results with priority sites first
     """
-    from .utils.constants import PRIORITY_SITES
+    from Tools.recipe_search.pipeline.utils.constants import PRIORITY_SITES
     
     # Add "recipe" to query if not already present
     if "recipe" not in query.lower():

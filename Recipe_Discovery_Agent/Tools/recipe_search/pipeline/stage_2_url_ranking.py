@@ -7,7 +7,7 @@ This module handles the initial ranking of search results before processing.
 
 import httpx
 from typing import List, Dict
-from .utils.constants import PRIORITY_SITES
+from Tools.recipe_search.pipeline.utils.constants import PRIORITY_SITES
 
 
 async def rerank_results_with_llm(results: List[Dict], query: str, openai_key: str, top_k: int = 10) -> List[Dict]:

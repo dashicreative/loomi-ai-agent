@@ -79,17 +79,26 @@ async def process_all_recipe_ingredients(recipes: List[Dict], openai_key: str = 
     
     total_start = time.time()
     
-    # STAGE 1: Parallel ingredient labeling (5 concurrent LLM calls)
-    print("🏷️  Stage 1: Parallel ingredient labeling...")
+    # STAGE 1: Parallel spacing fixes (5 concurrent LLM calls)
+    print("✂️  Stage 1: Parallel spacing fixes...")
+    spacing_start = time.time()
+    
+    spaced_recipes = await _fix_spacing_all_recipes_parallel(recipes, api_key)
+    
+    spacing_time = time.time() - spacing_start
+    print(f"   ✅ Spacing fixes completed: {spacing_time:.2f}s")
+    
+    # STAGE 2: Parallel ingredient labeling (5 concurrent LLM calls)
+    print("🏷️  Stage 2: Parallel ingredient labeling...")
     labeling_start = time.time()
     
-    labeled_recipes = await _label_all_ingredients_parallel(recipes, api_key)
+    labeled_recipes = await _label_all_ingredients_parallel(spaced_recipes, api_key)
     
     labeling_time = time.time() - labeling_start
     print(f"   ✅ Labeling completed: {labeling_time:.2f}s")
     
-    # STAGE 2: Parallel hybrid parsing (regex + focused LLM)
-    print("🔧 Stage 2: Parallel hybrid parsing...")
+    # STAGE 3: Parallel hybrid parsing (regex + focused LLM)
+    print("🔧 Stage 3: Parallel hybrid parsing...")
     parsing_start = time.time()
     
     parsed_recipes = await _parse_all_ingredients_parallel(labeled_recipes, api_key)
@@ -104,9 +113,36 @@ async def process_all_recipe_ingredients(recipes: List[Dict], openai_key: str = 
     return parsed_recipes
 
 
+async def _fix_spacing_all_recipes_parallel(recipes: List[Dict], api_key: str) -> List[Dict]:
+    """
+    Stage 1: Fix ingredient spacing across all recipes in parallel.
+    5 concurrent LLM calls for spacing fixes only.
+    """
+    spacing_tasks = []
+    
+    for recipe in recipes:
+        task = _fix_recipe_ingredient_spacing(recipe, api_key)
+        spacing_tasks.append(task)
+    
+    # Execute all spacing fixes in parallel
+    spaced_recipes = await asyncio.gather(*spacing_tasks, return_exceptions=True)
+    
+    # Handle any exceptions
+    results = []
+    for i, result in enumerate(spaced_recipes):
+        if isinstance(result, Exception):
+            print(f"⚠️  Spacing fix failed for recipe {i+1}: {result}")
+            # Keep original recipe unchanged
+            results.append(recipes[i])
+        else:
+            results.append(result)
+    
+    return results
+
+
 async def _label_all_ingredients_parallel(recipes: List[Dict], api_key: str) -> List[Dict]:
     """
-    Stage 1: Label all ingredients across all recipes in parallel.
+    Stage 2: Label all ingredients across all recipes in parallel.
     5 concurrent LLM calls for speed.
     """
     labeling_tasks = []
@@ -129,6 +165,145 @@ async def _label_all_ingredients_parallel(recipes: List[Dict], api_key: str) -> 
             results.append(result)
     
     return results
+
+
+async def _fix_recipe_ingredient_spacing(recipe: Dict, api_key: str) -> Dict:
+    """
+    Fix spacing issues in ingredients for a single recipe.
+    Uses LLM to add proper spaces between numbers, units, and ingredient names.
+    """
+    ingredients = recipe.get('ingredients', [])
+    if not ingredients:
+        return recipe
+    
+    # Extract ingredient strings
+    ingredient_strings = []
+    for ing in ingredients:
+        if isinstance(ing, dict):
+            ingredient_strings.append(ing.get('ingredient', ''))
+        else:
+            ingredient_strings.append(str(ing))
+    
+    # Create spacing fix prompt with examples
+    ingredients_text = "\n".join([f"- {ing}" for ing in ingredient_strings])
+    
+    prompt = f"""Fix spacing in ingredient strings to follow the pattern: [quantity] [unit] [ingredient name]
+
+TARGET PATTERN: [quantity] [unit] [ingredient name]
+- Example: "1 cup flour", "2 tablespoons butter", "½ teaspoon salt"
+
+SPACING PRINCIPLES:
+- Separate numbers from units with space
+- Separate units from ingredient names with space  
+- Remove dots after unit abbreviations
+- Keep properly spaced ingredients unchanged
+
+BEFORE → AFTER EXAMPLES:
+"12oz.storebought gingersnaps" → "12 oz storebought gingersnaps"
+"1/2cupchopped pecans" → "1/2 cup chopped pecans"
+"6Tbsp.butter, melted" → "6 Tbsp butter, melted"
+"1 ½cupsgraham cracker crumbs" → "1 ½ cups graham cracker crumbs"
+"¼cupfinely ground walnuts" → "¼ cup finely ground walnuts"
+"1tablespooncinnamon sugar" → "1 tablespoon cinnamon sugar"
+"½cupbutter, melted" → "½ cup butter, melted"
+"3(8 ounce) packagescream cheese" → "3 (8 ounce) packages cream cheese"
+"¾cupwhite sugar" → "¾ cup white sugar"
+"1teaspoonvanilla extract" → "1 teaspoon vanilla extract"
+"1cupheavy whipping cream" → "1 cup heavy whipping cream"
+"3largeeggs, slightly beaten" → "3 large eggs, slightly beaten"
+
+ALREADY CORRECT (no changes needed):
+"4 (8 ounce) packages cream cheese"
+"2 tablespoons butter, melted"
+"1 cup heavy whipping cream"
+
+INGREDIENTS TO FIX:
+{ingredients_text}
+
+Return the corrected ingredients, one per line, same order:"""
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "gpt-4o-mini",  # Fast model for simple spacing task
+                    "max_tokens": 500,
+                    "temperature": 0.0,  # More deterministic
+                    "messages": [
+                        {"role": "system", "content": "You are an expert at fixing spacing in ingredient text. Use the examples as guides to understand the spacing patterns and principles. Apply your reasoning to fix similar spacing issues. Only fix spacing - don't change words, quantities, or units."},
+                        {"role": "user", "content": prompt}
+                    ]
+                }
+            )
+        
+        if response.status_code == 200:
+            data = response.json()
+            llm_response = data['choices'][0]['message']['content'].strip()
+            
+            # Parse the response - split by lines and clean up
+            fixed_ingredients = []
+            for line in llm_response.split('\n'):
+                line = line.strip()
+                # Remove list markers if present
+                if line.startswith('- '):
+                    line = line[2:]
+                elif line.startswith('• '):
+                    line = line[2:]
+                if line:
+                    fixed_ingredients.append(line)
+            
+            # Update recipe with fixed ingredients if we got the right count
+            if len(fixed_ingredients) == len(ingredient_strings):
+                # Convert ingredients to dicts with original and spaced_formatted versions
+                spaced_ingredients = []
+                for i, spaced_ingredient in enumerate(fixed_ingredients):
+                    original_ingredient = ingredient_strings[i]
+                    spaced_ingredients.append({
+                        'original': original_ingredient,
+                        'spaced_formatted': spaced_ingredient,
+                        'ingredient': spaced_ingredient  # Will be parsed later
+                    })
+                recipe['ingredients'] = spaced_ingredients
+                return recipe
+        
+        # Fallback: return original recipe if spacing fix fails
+        print(f"   ⚠️  Spacing fix failed for {recipe.get('title', 'Unknown')}")
+        # Convert to dict format but keep original spacing
+        fallback_ingredients = []
+        for ingredient_string in ingredient_strings:
+            fallback_ingredients.append({
+                'original': ingredient_string,
+                'spaced_formatted': ingredient_string,  # Same as original when spacing fails
+                'ingredient': ingredient_string
+            })
+        recipe['ingredients'] = fallback_ingredients
+        return recipe
+        
+    except Exception as e:
+        print(f"   ⚠️  Spacing fix error: {e}")
+        # Convert to dict format but keep original spacing
+        ingredients = recipe.get('ingredients', [])
+        ingredient_strings = []
+        for ing in ingredients:
+            if isinstance(ing, dict):
+                ingredient_strings.append(ing.get('ingredient', ''))
+            else:
+                ingredient_strings.append(str(ing))
+        
+        fallback_ingredients = []
+        for ingredient_string in ingredient_strings:
+            fallback_ingredients.append({
+                'original': ingredient_string,
+                'spaced_formatted': ingredient_string,  # Same as original on error
+                'ingredient': ingredient_string
+            })
+        recipe['ingredients'] = fallback_ingredients
+        return recipe
 
 
 async def _label_recipe_ingredients(recipe: Dict, api_key: str) -> Dict:
@@ -342,17 +517,29 @@ async def _parse_simple_ingredients(ingredients: List[str]) -> List[Dict]:
     }
     
     for ingredient in ingredients:
+        # Extract ingredient text and preserve original/spaced_formatted fields
+        if isinstance(ingredient, dict):
+            original_text = ingredient.get('original', '')
+            spaced_text = ingredient.get('spaced_formatted', ingredient.get('ingredient', ''))
+            processed = spaced_text.strip()  # Use the LLM-spaced version for parsing
+        else:
+            # Fallback for string format
+            original_text = str(ingredient)
+            spaced_text = str(ingredient)
+            processed = ingredient.strip()
+        
         # Initialize with simplified Instacart-compatible structure
         result = {
             "quantity": None,
             "unit": None, 
-            "ingredient": ingredient,
+            "ingredient": processed,  # Will be updated with clean ingredient name
             "disqualified": False,
-            "original": ingredient
+            "original": original_text,
+            "spaced_formatted": spaced_text
         }
         
-        # Preprocess: Convert unicode fractions and fix missing spaces
-        processed = ingredient.strip()
+        # SIMPLIFIED PREPROCESSING (since LLM handles spacing)
+        # Only need: unicode fractions, mixed numbers, dot cleanup
         
         # Convert unicode fractions
         for unicode_frac, decimal in fraction_map.items():
@@ -381,92 +568,38 @@ async def _parse_simple_ingredients(ingredients: List[str]) -> List[Dict]:
         for abbrev in unit_abbreviations:
             processed = re.sub(f'({abbrev})\\.', r'\1', processed, flags=re.IGNORECASE)
         
-        # Add spaces between numbers and letters (handles "1tablespoon" → "1 tablespoon")
-        # Handle remaining fractions: "1/2cup" → "1/2 cup" (for fractions not converted to mixed numbers)
-        processed = re.sub(r'(\d+/\d+)([a-zA-Z])', r'\1 \2', processed)
-        # Handle decimals and whole numbers: "1.5cup" → "1.5 cup", "1tablespoon" → "1 tablespoon" 
-        processed = re.sub(r'(\d+(?:\.\d+)?)([a-zA-Z])', r'\1 \2', processed)
+        # SIMPLE PARSING (since LLM pre-handled spacing)
+        # Now we can use simple regex on clean, properly spaced ingredients
         
-        # Add spaces after common units when they're mashed with ingredient names  
-        # "cupsour cream" → "cup sour cream", "tablespoonsalt" → "tablespoon salt"
-        # Use more precise patterns to avoid partial word matches
-        specific_fixes = [
-            ('cupsour', 'cup sour'),           # Handle specific known case
-            ('cupflour', 'cup flour'),
-            ('cupmilk', 'cup milk'),
-            ('cupoil', 'cup oil'),
-            ('tablespoonsalt', 'tablespoon salt'),
-            ('tablespoonoil', 'tablespoon oil'),
-            ('teaspoonsalt', 'teaspoon salt'),
-            ('teaspoonvanilla', 'teaspoon vanilla')
-        ]
-        
-        # Apply specific fixes first
-        for old_pattern, new_pattern in specific_fixes:
-            processed = processed.replace(old_pattern, new_pattern)
-            
-        # Then apply general pattern for remaining cases
-        general_units = ['tablespoons', 'tablespoon', 'teaspoons', 'teaspoon', 
-                        'ounces', 'pounds', 'cups', 'ounce', 'pound', 'cup']
-        for unit in general_units:
-            # Only match if followed by a lowercase consonant (to avoid vowel splits)
-            pattern = f'({unit})([bcdfghjklmnpqrstvwxyz])'
-            processed = re.sub(pattern, r'\1 \2', processed, flags=re.IGNORECASE)
-        
-        # Handle mixed patterns like "1 0.5cupsgraham" → "1.5cupsgraham" or "1 0.5 cupswhite" → "1.5 cupswhite"
-        # Combine adjacent numbers separated by space
-        processed = re.sub(r'(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)(\s*)([a-zA-Z])', 
-                          lambda m: str(float(m.group(1)) + float(m.group(2))) + m.group(3) + m.group(4), processed)
-        
-        # Extract valid Instacart unit from potentially mashed text
-        def extract_valid_unit(text_after_quantity):
-            """Extract the first valid Instacart unit from text, return (unit, remaining_text)"""
-            # All accepted Instacart units (including variants)
+        # Simple unit extraction (since spacing is clean)
+        def extract_clean_unit(text):
+            """Extract unit from clean, spaced text"""
             valid_units = [
-                'cup', 'cups', 'c',
-                'tablespoon', 'tablespoons', 'tbsp', 'tb', 'tbs', 
-                'teaspoon', 'teaspoons', 'tsp', 'ts', 'tspn',
-                'gallon', 'gallons', 'gal', 'gals',
-                'pint', 'pints', 'pt', 'pts',
-                'quart', 'quarts', 'qt', 'qts', 
-                'liter', 'liters', 'litres', 'l',
-                'milliliter', 'milliliters', 'millilitres', 'ml', 'mls',
-                'ounce', 'ounces', 'oz',
-                'pound', 'pounds', 'lb', 'lbs',
-                'gram', 'grams', 'g', 'gs',
-                'kilogram', 'kilograms', 'kg', 'kgs',
+                'cup', 'cups', 'c', 'tablespoon', 'tablespoons', 'tbsp', 'tb', 'tbs', 
+                'teaspoon', 'teaspoons', 'tsp', 'ts', 'tspn', 'gallon', 'gallons', 'gal', 'gals',
+                'pint', 'pints', 'pt', 'pts', 'quart', 'quarts', 'qt', 'qts', 
+                'liter', 'liters', 'litres', 'l', 'milliliter', 'milliliters', 'millilitres', 'ml', 'mls',
+                'ounce', 'ounces', 'oz', 'pound', 'pounds', 'lb', 'lbs',
+                'gram', 'grams', 'g', 'gs', 'kilogram', 'kilograms', 'kg', 'kgs',
                 'can', 'cans', 'bunch', 'bunches', 'head', 'heads',
-                'large', 'medium', 'small', 'each',
-                'package', 'packages', 'packet', 'packets'
+                'large', 'medium', 'small', 'each', 'package', 'packages', 'packet', 'packets'
             ]
             
-            text_lower = text_after_quantity.lower()
+            words = text.split()
+            if words:
+                first_word = words[0].lower()
+                if first_word in valid_units:
+                    return first_word, ' '.join(words[1:])
             
-            # Find the longest matching unit at the start with proper word boundaries
-            best_match = None
-            for unit in sorted(valid_units, key=len, reverse=True):  # Check longer units first
-                if text_lower.startswith(unit):
-                    # Check word boundary: next char must be space, end of string, or non-alphabetic
-                    next_char_index = len(unit)
-                    if (next_char_index >= len(text_after_quantity) or  # End of string
-                        text_after_quantity[next_char_index].isspace() or  # Space
-                        not text_after_quantity[next_char_index].isalpha()):  # Non-alphabetic
-                        best_match = unit
-                        break
-            
-            if best_match:
-                remaining = text_after_quantity[len(best_match):].strip()
-                return best_match, remaining
-            
-            return None, text_after_quantity
+            return None, text
         
         # Try to extract quantity and parse remaining text for valid unit
         quantity_match = re.match(r'(\d+(?:\.\d+)?(?:/\d+)?)\s+(.+)', processed)
         if quantity_match:
             quantity_str, remainder = quantity_match.groups()
             
-            # Extract valid unit from remainder
-            unit, remaining_ingredient = extract_valid_unit(remainder)
+            # Extract valid unit from remainder  
+            unit, remaining_ingredient = extract_clean_unit(remainder)
             
             if unit:
                 # Normalize to Instacart accepted units (use first variant)
@@ -483,8 +616,8 @@ async def _parse_simple_ingredients(ingredients: List[str]) -> List[Dict]:
             match = re.match(r'(\d+)\s*\([^)]+\)\s*(\w+)\s+(.+)', processed)
             quantity, unit, ingredient_name = match.groups()
             
-            # Validate and normalize package-type units
-            valid_unit, _ = extract_valid_unit(unit)
+            # Validate and normalize package-type units  
+            valid_unit, _ = extract_clean_unit(unit)
             if valid_unit:
                 normalized_unit = _normalize_to_instacart_unit(valid_unit)
                 
@@ -495,7 +628,7 @@ async def _parse_simple_ingredients(ingredients: List[str]) -> List[Dict]:
                 })
         
         # Check for subjective/optional items that should be disqualified
-        ingredient_lower = ingredient.lower()
+        ingredient_lower = original_text.lower()  # Check against original text
         if any(phrase in ingredient_lower for phrase in ["to taste", "as needed", "optional", "if desired"]):
             result["disqualified"] = True
             

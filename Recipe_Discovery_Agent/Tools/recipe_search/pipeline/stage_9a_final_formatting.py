@@ -98,7 +98,7 @@ async def format_recipes_for_ios_async(recipes: List[Dict], max_recipes: int = 5
     Async version of format_recipes_for_ios with parallel ingredient processing.
     """
     # Import stage_9b function dynamically to avoid circular imports
-    from .stage_9b_ingredient_parsing import process_all_recipe_ingredients
+    from Tools.recipe_search.pipeline.stage_9b_ingredient_parsing import process_all_recipe_ingredients
     
     # STAGE 9B: Process ingredients in parallel before final formatting
     limited_recipes = recipes[:max_recipes]
