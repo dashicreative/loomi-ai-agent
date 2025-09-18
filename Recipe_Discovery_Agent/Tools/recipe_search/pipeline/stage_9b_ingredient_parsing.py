@@ -358,16 +358,65 @@ async def _parse_simple_ingredients(ingredients: List[str]) -> List[Dict]:
         for unicode_frac, decimal in fraction_map.items():
             processed = processed.replace(unicode_frac, decimal)
         
+        # Convert mixed numbers written as improper fractions (e.g., "11/2" → "1.5", "21/4" → "2.25")
+        def convert_mixed_fraction(match):
+            numerator = int(match.group(1))
+            denominator = int(match.group(2))
+            
+            # Only convert if it looks like a mixed number (numerator > denominator and common denominators)
+            if numerator > denominator and denominator in [2, 3, 4, 8]:
+                whole_part = numerator // denominator
+                fraction_part = numerator % denominator
+                decimal_value = whole_part + (fraction_part / denominator)
+                return str(decimal_value)
+            else:
+                # Keep as fraction if it doesn't look like a mixed number
+                return f"{numerator}/{denominator}"
+        
+        # Apply mixed number conversion
+        processed = re.sub(r'(\d+)/(\d+)', convert_mixed_fraction, processed)
+        
+        # Remove dots after common unit abbreviations: "tsp." → "tsp", "oz." → "oz"
+        unit_abbreviations = ['tsp', 'tbsp', 'oz', 'lb', 'lbs', 'pt', 'qt', 'gal', 'ml', 'kg', 'g']
+        for abbrev in unit_abbreviations:
+            processed = re.sub(f'({abbrev})\\.', r'\1', processed, flags=re.IGNORECASE)
+        
         # Add spaces between numbers and letters (handles "1tablespoon" → "1 tablespoon")
-        # Special case for text fractions first: "1/2cup" → "1/2 cup"
+        # Handle remaining fractions: "1/2cup" → "1/2 cup" (for fractions not converted to mixed numbers)
         processed = re.sub(r'(\d+/\d+)([a-zA-Z])', r'\1 \2', processed)
-        # General case: "1tablespoon" → "1 tablespoon" 
+        # Handle decimals and whole numbers: "1.5cup" → "1.5 cup", "1tablespoon" → "1 tablespoon" 
         processed = re.sub(r'(\d+(?:\.\d+)?)([a-zA-Z])', r'\1 \2', processed)
         
-        # Handle mixed patterns like "1 0.5cupsgraham" → "1.5 cupsgraham"
+        # Add spaces after common units when they're mashed with ingredient names  
+        # "cupsour cream" → "cup sour cream", "tablespoonsalt" → "tablespoon salt"
+        # Use more precise patterns to avoid partial word matches
+        specific_fixes = [
+            ('cupsour', 'cup sour'),           # Handle specific known case
+            ('cupflour', 'cup flour'),
+            ('cupmilk', 'cup milk'),
+            ('cupoil', 'cup oil'),
+            ('tablespoonsalt', 'tablespoon salt'),
+            ('tablespoonoil', 'tablespoon oil'),
+            ('teaspoonsalt', 'teaspoon salt'),
+            ('teaspoonvanilla', 'teaspoon vanilla')
+        ]
+        
+        # Apply specific fixes first
+        for old_pattern, new_pattern in specific_fixes:
+            processed = processed.replace(old_pattern, new_pattern)
+            
+        # Then apply general pattern for remaining cases
+        general_units = ['tablespoons', 'tablespoon', 'teaspoons', 'teaspoon', 
+                        'ounces', 'pounds', 'cups', 'ounce', 'pound', 'cup']
+        for unit in general_units:
+            # Only match if followed by a lowercase consonant (to avoid vowel splits)
+            pattern = f'({unit})([bcdfghjklmnpqrstvwxyz])'
+            processed = re.sub(pattern, r'\1 \2', processed, flags=re.IGNORECASE)
+        
+        # Handle mixed patterns like "1 0.5cupsgraham" → "1.5cupsgraham" or "1 0.5 cupswhite" → "1.5 cupswhite"
         # Combine adjacent numbers separated by space
-        processed = re.sub(r'(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)([a-zA-Z])', 
-                          lambda m: str(float(m.group(1)) + float(m.group(2))) + m.group(3), processed)
+        processed = re.sub(r'(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)(\s*)([a-zA-Z])', 
+                          lambda m: str(float(m.group(1)) + float(m.group(2))) + m.group(3) + m.group(4), processed)
         
         # Extract valid Instacart unit from potentially mashed text
         def extract_valid_unit(text_after_quantity):
@@ -393,17 +442,17 @@ async def _parse_simple_ingredients(ingredients: List[str]) -> List[Dict]:
             
             text_lower = text_after_quantity.lower()
             
-            # Find the longest matching unit at the start
+            # Find the longest matching unit at the start with proper word boundaries
             best_match = None
             for unit in sorted(valid_units, key=len, reverse=True):  # Check longer units first
                 if text_lower.startswith(unit):
-                    # Only apply word boundary check for "gram" to avoid "graham" confusion
-                    if unit == "gram":
-                        # For "gram" specifically, ensure next char isn't 'h' (to avoid "graham")
-                        if len(text_after_quantity) > 4 and text_after_quantity[4] == 'h':
-                            continue  # Skip "gram" if it's actually "graham"
-                    best_match = unit
-                    break
+                    # Check word boundary: next char must be space, end of string, or non-alphabetic
+                    next_char_index = len(unit)
+                    if (next_char_index >= len(text_after_quantity) or  # End of string
+                        text_after_quantity[next_char_index].isspace() or  # Space
+                        not text_after_quantity[next_char_index].isalpha()):  # Non-alphabetic
+                        best_match = unit
+                        break
             
             if best_match:
                 remaining = text_after_quantity[len(best_match):].strip()

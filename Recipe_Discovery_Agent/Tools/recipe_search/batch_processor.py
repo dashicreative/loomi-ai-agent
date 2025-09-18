@@ -26,6 +26,12 @@ from .pipeline.stage_5_nutrition_normalization import normalize_nutrition_data
 from .pipeline.stage_6_requirements_verification import verify_recipes_meet_requirements
 from .pipeline.stage_7_relevance_ranking import rank_qualified_recipes_by_relevance
 from .pipeline.stage_8_list_processing import expand_urls_with_lists, ListParser
+# STAGE 8B IMPORTS (TEMPORARILY DISABLED - reverting to 9a/9b)
+# from .pipeline.stage_8b_unified_formatting import (
+#     format_recipes_unified_async, 
+#     create_minimal_recipes_for_agent, 
+#     create_failed_parse_report
+# )
 from .pipeline.stage_9a_final_formatting import (
     format_recipes_for_ios, 
     create_minimal_recipes_for_agent, 
@@ -632,7 +638,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     stage6_start = time.time()
     
     
-    # Stage 9b: Advanced ingredient parsing (run in async context)
+    # STAGE 9B: Advanced ingredient parsing (BACK TO ORIGINAL IMPLEMENTATION)
     try:
         from .pipeline.stage_9b_ingredient_parsing import process_all_recipe_ingredients
         print("\n🔧 STAGE 9B: Advanced Ingredient Processing")
@@ -651,6 +657,23 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         print(f"⚠️  Stage 9b failed, using basic formatting: {e}")
         # Fallback to basic formatting
         formatted_recipes = format_recipes_for_ios(final_ranked_recipes, needed_count, fallback_used, exact_match_count)
+    
+    # STAGE 8B: Unified Formatting and Ingredient Processing (TEMPORARILY DISABLED - reverted to 9a/9b)
+    # try:
+    #     from .pipeline.stage_8b_unified_formatting import format_recipes_unified_async
+    #     print("\n🔧 STAGE 8B: Unified Formatting and Ingredient Processing")
+    #     stage8b_start = time.time()
+    #     
+    #     # Process ingredients and format in unified approach
+    #     formatted_recipes = await format_recipes_unified_async(final_ranked_recipes[:needed_count], needed_count, fallback_used, exact_match_count)
+    #     
+    #     stage8b_time = time.time() - stage8b_start
+    #     print(f"   ✅ Unified processing completed: {stage8b_time:.2f}s")
+    #     
+    # except Exception as e:
+    #     print(f"⚠️  Stage 8b failed, using basic formatting: {e}")
+    #     # Fallback to basic formatting using Stage 9a
+    #     formatted_recipes = format_recipes_for_ios(final_ranked_recipes, needed_count, fallback_used, exact_match_count)
     
     # Print FINAL formatted output after Stage 9 completion
     import json
