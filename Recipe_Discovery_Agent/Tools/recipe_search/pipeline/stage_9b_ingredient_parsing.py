@@ -195,8 +195,16 @@ TARGET PATTERN: [quantity] [unit] [ingredient name]
 SPACING PRINCIPLES:
 - Separate numbers from units with space
 - Separate units from ingredient names with space  
-- Remove dots after unit abbreviations
+- Remove dots after unit abbreviations AND add space after
+- Split compound words where unit+ingredient are stuck together
 - Keep properly spaced ingredients unchanged
+
+CRITICAL PATTERNS TO FIX:
+"12oz.storebought" → "12 oz storebought" (remove dot, add spaces)
+"1/2cupchopped" → "1/2 cup chopped" (fraction+unit+ingredient)
+"6Tbsp.butter" → "6 Tbsp butter" (number+unit.+ingredient)
+"½cupbutter" → "½ cup butter" (fraction+unit+ingredient)
+"2tablespoonssugar" → "2 tablespoons sugar" (number+unit+ingredient)
 
 BEFORE → AFTER EXAMPLES:
 "12oz.storebought gingersnaps" → "12 oz storebought gingersnaps"
@@ -211,6 +219,13 @@ BEFORE → AFTER EXAMPLES:
 "1teaspoonvanilla extract" → "1 teaspoon vanilla extract"
 "1cupheavy whipping cream" → "1 cup heavy whipping cream"
 "3largeeggs, slightly beaten" → "3 large eggs, slightly beaten"
+
+MORE CRITICAL EXAMPLES:
+"1teaspoonvanilla" → "1 teaspoon vanilla"
+"3largeeggs" → "3 large eggs"
+"¾cupwhite" → "¾ cup white"
+"2oz.cream" → "2 oz cream"
+"1tbsp.olive" → "1 tbsp olive"
 
 ALREADY CORRECT (no changes needed):
 "4 (8 ounce) packages cream cheese"
@@ -235,7 +250,7 @@ Return the corrected ingredients, one per line, same order:"""
                     "max_tokens": 500,
                     "temperature": 0.0,  # More deterministic
                     "messages": [
-                        {"role": "system", "content": "You are an expert at fixing spacing in ingredient text. Use the examples as guides to understand the spacing patterns and principles. Apply your reasoning to fix similar spacing issues. Only fix spacing - don't change words, quantities, or units."},
+                        {"role": "system", "content": "You are an expert at fixing spacing in ingredient text. Pay special attention to: 1) removing dots after units AND adding spaces, 2) separating fractions from units, 3) splitting compound unit+ingredient words. Use the examples as guides and apply reasoning to similar patterns. Only fix spacing - don't change words, quantities, or units."},
                         {"role": "user", "content": prompt}
                     ]
                 }
@@ -337,18 +352,19 @@ SIMPLE ingredients use accepted Instacart units:
 - Examples: "2 cups flour", "1 pound chicken", "3 each eggs", "1 tablespoon salt", "2 cans tomatoes"
 - Must have EXACT unit match - no ingredient names as units
 
-COMPLEX ingredients need conversion or are subjective:
+COMPLEX ingredients need conversion:
+- **Single items without quantity**: "Crust", "Topping", "Glaze" (needs default: "1 each" or "1 package")
 - **Multiple unit patterns**: "4(8 ounce) packages cream cheese" (parenthetical + unit combo)
+- **Multiple measurements in parentheses**: "2 1/2 ounces butter (about 5 tablespoons; 70 g)" (choose best unit)
+- **Subjective amounts**: "salt to taste", "Kosher salt, to taste", "pepper as needed" (convert to "1 each")
 - **Countable items with names as units**: "15 graham crackers", "12 cookies", "6 slices bread" (convert to packages/each)  
 - **Multiple measurements**: "12 ounces fresh fruit (about 2 cups)" (needs unit selection)
-- **Subjective amounts**: "salt to taste", "pepper as needed" (mark disqualified)
-- **Descriptive quantities**: "juice from 1 lemon" (convert to "each")
-- **Non-standard units**: "1 dash salt", "splash of vinegar", "pinch of salt" (convert or disqualify)
+- **Descriptive quantities**: "juice from 1 lemon", "half a lime" (convert to "1 each")
+- **Non-standard units**: "1 dash salt", "splash of vinegar", "pinch of salt" (convert to "1 each")
 - **Compound ingredients**: "salt and pepper to taste" (split and process)
 - **Ranges**: "1-2 pounds beef" (convert to average)
-- **Cross-references**: "see recipe notes" (mark disqualified)
 
-CRITICAL: If unit NOT in accepted list OR has parenthetical measurements, mark as COMPLEX!
+CRITICAL: If unit NOT in accepted list OR has parenthetical measurements OR contains "to taste", mark as COMPLEX!
 
 Return JSON array: ["simple", "complex", "simple", ...]
 Order must match ingredient list exactly."""
@@ -528,6 +544,10 @@ async def _parse_simple_ingredients(ingredients: List[str]) -> List[Dict]:
             spaced_text = str(ingredient)
             processed = ingredient.strip()
         
+        # Detect pantry staples
+        pantry_staples = ['salt', 'pepper', 'butter', 'oil', 'olive oil', 'sugar', 'flour', 'vanilla', 'baking powder', 'baking soda']
+        is_pantry_staple = any(staple in processed.lower() for staple in pantry_staples)
+        
         # Initialize with simplified Instacart-compatible structure
         result = {
             "quantity": None,
@@ -535,7 +555,8 @@ async def _parse_simple_ingredients(ingredients: List[str]) -> List[Dict]:
             "ingredient": processed,  # Will be updated with clean ingredient name
             "disqualified": False,
             "original": original_text,
-            "spaced_formatted": spaced_text
+            "spaced_formatted": spaced_text,
+            "pantry_staple": is_pantry_staple
         }
         
         # SIMPLIFIED PREPROCESSING (since LLM handles spacing)
@@ -593,10 +614,32 @@ async def _parse_simple_ingredients(ingredients: List[str]) -> List[Dict]:
             
             return None, text
         
-        # Try to extract quantity and parse remaining text for valid unit
-        quantity_match = re.match(r'(\d+(?:\.\d+)?(?:/\d+)?)\s+(.+)', processed)
+        # Try to extract quantity (including mixed numbers like "1 1/2")
+        quantity_match = re.match(r'(\d+\s+\d+/\d+|\d+/\d+|\d+(?:\.\d+)?)\s+(.+)', processed)
         if quantity_match:
             quantity_str, remainder = quantity_match.groups()
+            
+            # Convert mixed numbers to decimals
+            def convert_mixed_to_decimal(qty_str):
+                # Handle mixed numbers like "1 1/2"
+                if ' ' in qty_str and '/' in qty_str:
+                    parts = qty_str.split(' ')
+                    whole = int(parts[0])
+                    frac_parts = parts[1].split('/')
+                    numerator = int(frac_parts[0])
+                    denominator = int(frac_parts[1])
+                    return str(whole + (numerator / denominator))
+                # Handle simple fractions like "1/2"
+                elif '/' in qty_str:
+                    frac_parts = qty_str.split('/')
+                    numerator = int(frac_parts[0])
+                    denominator = int(frac_parts[1])
+                    return str(numerator / denominator)
+                # Handle whole numbers and decimals
+                else:
+                    return qty_str
+            
+            converted_quantity = convert_mixed_to_decimal(quantity_str)
             
             # Extract valid unit from remainder  
             unit, remaining_ingredient = extract_clean_unit(remainder)
@@ -606,7 +649,7 @@ async def _parse_simple_ingredients(ingredients: List[str]) -> List[Dict]:
                 normalized_unit = _normalize_to_instacart_unit(unit)
                 
                 result.update({
-                    "quantity": quantity_str,
+                    "quantity": converted_quantity,
                     "unit": normalized_unit,
                     "ingredient": remaining_ingredient.strip()
                 })
@@ -627,11 +670,6 @@ async def _parse_simple_ingredients(ingredients: List[str]) -> List[Dict]:
                     "ingredient": ingredient_name.strip()
                 })
         
-        # Check for subjective/optional items that should be disqualified
-        ingredient_lower = original_text.lower()  # Check against original text
-        if any(phrase in ingredient_lower for phrase in ["to taste", "as needed", "optional", "if desired"]):
-            result["disqualified"] = True
-            
         parsed.append(result)
     
     return parsed
@@ -655,21 +693,28 @@ INGREDIENTS TO PROCESS:
 
 CONVERSION RULES:
 - Convert to accepted Instacart units: cup, tablespoon, teaspoon, ounce, pound, gram, can, each, bunch, head, package
-- For multiple measurements, choose the most practical Instacart unit
-- For subjective amounts ("to taste"), set disqualified: true
+- For multiple measurements, choose the most practical Instacart unit (tablespoon for butter, ounce for most others)
+- For subjective amounts ("to taste", "half a lime"), use default quantity: "1", unit: "each" 
 - Use first variant only (cup not cups, ounce not ounces)
+- Add pantry_staple: true for common items (salt, butter, olive oil, pepper, sugar, flour, etc.)
+- Never set disqualified: true - all items should be orderable
 
 CONVERSION EXAMPLES:
-- "12 ounces fruit (about 2 cups)" → quantity: "12", unit: "ounce" 
-- "juice from 1 lemon" → quantity: "1", unit: "each", ingredient: "lemon"
-- "salt to taste" → disqualified: true
-- "2 (8-oz) packages cream cheese" → quantity: "2", unit: "package"
-- "15 graham crackers" → quantity: "1", unit: "package", ingredient: "graham crackers" (crackers sold in packages)
-- "12 cookies" → quantity: "1", unit: "package", ingredient: "cookies" (cookies sold in packages)  
-- "6 slices bread" → quantity: "1", unit: "each", ingredient: "loaf bread" (buy whole loaf)
+- "Crust" → quantity: "1", unit: "each", ingredient: "pie crust", pantry_staple: false
+- "Topping" → quantity: "1", unit: "package", ingredient: "topping", pantry_staple: false
+- "2 1/2 ounces unsalted butter (about 5 tablespoons; 70 g)" → quantity: "5", unit: "tablespoon", ingredient: "unsalted butter", pantry_staple: true
+- "Kosher salt, to taste" → quantity: "1", unit: "each", ingredient: "kosher salt", pantry_staple: true
+- "12 ounces fruit (about 2 cups)" → quantity: "12", unit: "ounce", pantry_staple: false
+- "juice from 1 lemon" → quantity: "1", unit: "each", ingredient: "lemon", pantry_staple: false
+- "salt to taste" → quantity: "1", unit: "each", ingredient: "salt", pantry_staple: true
+- "half a lime" → quantity: "1", unit: "each", ingredient: "lime", pantry_staple: false
+- "2 (8-oz) packages cream cheese" → quantity: "2", unit: "package", pantry_staple: false
+- "15 graham crackers" → quantity: "1", unit: "package", ingredient: "graham crackers", pantry_staple: false
+- "12 cookies" → quantity: "1", unit: "package", ingredient: "cookies", pantry_staple: false
+- "6 slices bread" → quantity: "1", unit: "each", ingredient: "loaf bread", pantry_staple: false
 
 JSON FORMAT:
-[{{"quantity": "amount", "unit": "instacart_unit", "ingredient": "name", "disqualified": boolean, "original": "text"}}]"""
+[{{"quantity": "amount", "unit": "instacart_unit", "ingredient": "name", "pantry_staple": boolean, "original": "text"}}]"""
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -684,6 +729,7 @@ JSON FORMAT:
                     "max_tokens": 800,       # Reduced tokens for simpler output
                     "temperature": 0.1,
                     "messages": [
+                        {"role": "system", "content": "You convert complex ingredients to Instacart-compatible format. For single items without quantities (like 'Crust', 'Topping'), always add quantity: '1' and unit: 'each' or 'package'. For subjective amounts ('to taste', 'half a lime'), use quantity: '1' and unit: 'each'. For multiple units, choose the most practical one (tablespoon for butter). Mark common pantry items (salt, butter, oil, etc.) as pantry_staple: true. Never disqualify items - all should be orderable."},
                         {"role": "user", "content": prompt}
                     ]
                 }
@@ -728,12 +774,16 @@ def _fallback_basic_parsing(recipes: List[Dict]) -> List[Dict]:
         
         for ingredient in ingredients:
             ingredient_text = ingredient.get('ingredient', '') if isinstance(ingredient, dict) else str(ingredient)
+            # Detect pantry staples for fallback
+            pantry_staples = ['salt', 'pepper', 'butter', 'oil', 'olive oil', 'sugar', 'flour', 'vanilla', 'baking powder', 'baking soda']
+            is_pantry_staple = any(staple in ingredient_text.lower() for staple in pantry_staples)
+            
             parsed_ingredients.append({
                 "quantity": "1",
                 "unit": "each",
                 "ingredient": ingredient_text,
-                "disqualified": False,
                 "original": ingredient_text,
+                "pantry_staple": is_pantry_staple,
                 "type": "fallback"
             })
         
@@ -767,9 +817,6 @@ def _fallback_complex_parsing(ingredients: List[str]) -> List[Dict]:
         pantry_items = ["salt", "pepper", "oil", "flour", "sugar", "vanilla", "butter"]
         is_pantry = any(item in ingredient.lower() for item in pantry_items)
         
-        # Determine if optional
-        is_optional = any(phrase in ingredient.lower() for phrase in ["to taste", "optional", "if desired", "for garnish"])
-        
         # Normalize unit to Instacart format
         normalized_unit = _normalize_to_instacart_unit(unit) if unit else "each"
         
@@ -777,7 +824,7 @@ def _fallback_complex_parsing(ingredients: List[str]) -> List[Dict]:
             "quantity": quantity or "1",
             "unit": normalized_unit,
             "ingredient": clean_ingredient,
-            "disqualified": is_optional,  # Disqualify optional items
+            "pantry_staple": is_pantry,
             "original": ingredient,
             "type": "complex-fallback"
         })
