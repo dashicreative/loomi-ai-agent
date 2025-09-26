@@ -291,7 +291,8 @@ async def _label_all_ingredients_parallel(recipes: List[Dict], api_key: str) -> 
     """
     labeling_tasks = []
     
-    for recipe in recipes:
+    for i, recipe in enumerate(recipes):
+        print(f"   📝 Starting labeling for recipe {i+1}: {recipe.get('title', 'Unknown')}")
         task = _label_recipe_ingredients(recipe, api_key)
         labeling_tasks.append(task)
     
@@ -302,10 +303,13 @@ async def _label_all_ingredients_parallel(recipes: List[Dict], api_key: str) -> 
     results = []
     for i, result in enumerate(labeled_recipes):
         if isinstance(result, Exception):
-            print(f"⚠️  Labeling failed for recipe {i+1}: {result}")
+            recipe_title = recipes[i].get('title', 'Unknown')
+            print(f"💥 PARALLEL EXCEPTION for recipe {i+1} ({recipe_title}): {result}")
+            print(f"      Exception type: {type(result).__name__}")
             # Keep original recipe with basic labeling
             results.append(_fallback_ingredient_labeling(recipes[i]))
         else:
+            print(f"   ✅ Recipe {i+1} labeling completed successfully")
             results.append(result)
     
     return results
@@ -330,41 +334,88 @@ async def _label_recipe_ingredients(recipe: Dict, api_key: str) -> Dict:
         else:
             ingredient_strings.append(str(ing))
     
-    # Create focused labeling prompt based on original processor logic
+    print(f"   🔍 Extracted {len(ingredient_strings)} ingredient strings:")
+    for i, ing_str in enumerate(ingredient_strings):
+        print(f"      {i+1}. '{ing_str}'")
+    
+    # Create robust labeling prompt with few-shot examples and validation
     ingredients_text = "\n".join([f"- {ing}" for ing in ingredient_strings])
     
-    prompt = f"""Label each ingredient as either "simple" or "complex" for parsing difficulty.
+    prompt = f"""Label each ingredient as "simple" or "complex" for parsing difficulty.
 
-INGREDIENTS:
+CRITICAL TRAINING EXAMPLES (learn these patterns):
+
+Example 1:
+Input ingredients:
+- 2 cups flour
+- 4 whole eggs  
+- 1 box graham crackers
+Expected output: ["simple", "complex", "complex"]
+Reasoning: "cups" is accepted unit = simple, "whole eggs" has descriptor = complex, "box" not accepted unit = complex
+
+Example 2:
+Input ingredients:
+- 3 each eggs
+- 1 pound butter
+- one box of graham crackers
+Expected output: ["simple", "simple", "complex"] 
+Reasoning: "each" accepted = simple, "pound" accepted = simple, "box" not accepted = complex
+
+Example 3:
+Input ingredients:
+- 15 graham crackers
+- salt to taste
+- 2 tablespoons olive oil
+Expected output: ["complex", "complex", "simple"]
+Reasoning: no unit specified = complex, "to taste" = complex, "tablespoons" accepted = simple
+
+NOW LABEL THESE {len(ingredient_strings)} INGREDIENTS (return exactly {len(ingredient_strings)} labels):
 {ingredients_text}
 
-LABELING RULES (Instacart unit compatibility):
-SIMPLE ingredients use accepted Instacart units:
-- Accepted units: cup, tablespoon, teaspoon, ounce, pound, gram, kilogram, gallon, liter, pint, quart, can, each, bunch, head, large, medium, small, package
-- Examples: "2 cups flour", "1 pound chicken", "3 each eggs", "1 tablespoon salt", "2 cans tomatoes"
-- Must have EXACT unit match - no ingredient names as units
+ACCEPTED INSTACART UNITS ONLY:
+cup, tablespoon, teaspoon, ounce, pound, gram, kilogram, gallon, liter, pint, quart, can, each, bunch, head, large, medium, small, package
 
-COMPLEX ingredients need conversion:
-- **Single items without quantity**: "Crust", "Topping", "Glaze" (needs default: "1 each" or "1 package")
-- **Container units**: "1 box crackers", "1 jar sauce", "1 bottle oil", "1 container yogurt" (convert to "package")
-- **Count with descriptors but no unit**: "4 whole eggs", "3 large tomatoes", "2 medium onions" (convert to "each")
-- **Multiple unit patterns**: "4(8 ounce) packages cream cheese" (parenthetical + unit combo)
-- **Multiple measurements in parentheses**: "2 1/2 ounces butter (about 5 tablespoons; 70 g)" (choose best unit)
-- **Subjective amounts**: "salt to taste", "Kosher salt, to taste", "pepper as needed" (convert to "1 each")
-- **Countable items with names as units**: "15 graham crackers", "12 cookies", "6 slices bread" (convert to packages/each)  
-- **Multiple measurements**: "12 ounces fresh fruit (about 2 cups)" (needs unit selection)
-- **Descriptive quantities**: "juice from 1 lemon", "half a lime" (convert to "1 each")
-- **Non-standard units**: "1 dash salt", "splash of vinegar", "pinch of salt" (convert to "1 each")
-- **Compound ingredients**: "salt and pepper to taste" (split and process)
-- **Ranges**: "1-2 pounds beef" (convert to average)
+SIMPLE PATTERN: [number] [accepted_unit] [ingredient_name]
+✓ "2 cups flour" ✓ "3 each eggs" ✓ "1 pound chicken" ✓ "1 tablespoon salt" ✓ "2 cans tomatoes"
 
-CRITICAL: If unit NOT in accepted list OR has parenthetical measurements OR contains "to taste", mark as COMPLEX!
+COMPLEX PATTERNS (mark as complex):
+✗ "4 whole eggs" → has "whole" descriptor, needs "each"
+✗ "1 box graham crackers" → "box" not in accepted units  
+✗ "one box of graham crackers" → "box" not in accepted units
+✗ "15 graham crackers" → no unit specified
+✗ "salt to taste" → subjective amount
+✗ "juice from 1 lemon" → descriptive quantity
+✗ "Crust" → single item without quantity
+✗ "1 jar sauce" → "jar" not accepted unit
+✗ "1 bottle oil" → "bottle" not accepted unit
+✗ "1 container yogurt" → "container" not accepted unit
+✗ "4(8 ounce) packages cream cheese" → parenthetical + unit combo
+✗ "2 1/2 ounces butter (about 5 tablespoons; 70 g)" → multiple measurements
+✗ "12 cookies" → no unit, item count
+✗ "6 slices bread" → no standard unit
+✗ "12 ounces fresh fruit (about 2 cups)" → multiple measurements
+✗ "half a lime" → descriptive quantity
+✗ "1 dash salt" → non-standard unit
+✗ "splash of vinegar" → non-standard unit
+✗ "pinch of salt" → non-standard unit
+✗ "salt and pepper to taste" → compound + subjective
+✗ "1-2 pounds beef" → range
 
-Return JSON array: ["simple", "complex", "simple", ...]
+CRITICAL DETECTION RULES:
+- If you see "box", "jar", "bottle", "container", "whole", "dash", "pinch", "splash" → COMPLEX
+- If you see "to taste", "as needed", "if desired" → COMPLEX  
+- If no unit specified (just count + ingredient) → COMPLEX
+- If parentheses with measurements → COMPLEX
+- If descriptive words before ingredient → COMPLEX
+
+Return JSON object with labels array: {{"labels": ["simple", "complex", "simple", ...]}}
 Order must match ingredient list exactly."""
 
     try:
+        print(f"   🔄 Labeling {len(ingredient_strings)} ingredients...")
+        
         async with httpx.AsyncClient(timeout=15.0) as client:
+            request_start = time.time()
             response = await client.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers={
@@ -373,36 +424,128 @@ Order must match ingredient list exactly."""
                 },
                 json={
                     "model": "gpt-4o-mini",  # Fast model for labeling
-                    "max_tokens": 200,
-                    "temperature": 0.1,
+                    "max_tokens": 1000,  # Doubled for recipes with 20+ ingredients
+                    "temperature": 0.3,  # Higher for better pattern recognition
+                    "response_format": {"type": "json_object"},  # Force JSON output
                     "messages": [
+                        {"role": "system", "content": "You are a precise ingredient labeling system. Follow the rules EXACTLY as specified. Return only valid JSON with exactly the requested number of labels."},
                         {"role": "user", "content": prompt}
                     ]
                 }
             )
+            request_time = time.time() - request_start
+            print(f"   ⏱️  API call took {request_time:.2f}s, status: {response.status_code}")
         
         if response.status_code == 200:
             data = response.json()
             llm_response = data['choices'][0]['message']['content'].strip()
             
-            # Extract JSON array
-            if '[' in llm_response and ']' in llm_response:
-                start = llm_response.find('[')
-                end = llm_response.rfind(']') + 1
-                json_str = llm_response[start:end]
-                labels = json.loads(json_str)
+            # Parse JSON object response
+            try:
+                response_obj = json.loads(llm_response)
+                labels = response_obj.get('labels', [])
                 
                 # Validate labels match ingredient count
                 if len(labels) == len(ingredient_strings):
-                    # Add labels to recipe
-                    recipe['ingredient_labels'] = labels
+                    # Response validation - catch obvious mistakes
+                    validated_labels = []
+                    corrections_made = 0
+                    
+                    for i, (ingredient, label) in enumerate(zip(ingredient_strings, labels)):
+                        ingredient_lower = ingredient.lower()
+                        corrected_label = label
+                        
+                        # Force complex for known problematic patterns
+                        if (('whole' in ingredient_lower or 
+                             'box' in ingredient_lower or
+                             'jar' in ingredient_lower or
+                             'bottle' in ingredient_lower or
+                             'container' in ingredient_lower or
+                             'stick' in ingredient_lower or  # "1 stick butter"
+                             'sticks' in ingredient_lower or
+                             'clove' in ingredient_lower or  # "2 cloves garlic"
+                             'cloves' in ingredient_lower or
+                             'one' in ingredient_lower or
+                             'two' in ingredient_lower or
+                             'dash' in ingredient_lower or
+                             'pinch' in ingredient_lower or
+                             'splash' in ingredient_lower or
+                             'to taste' in ingredient_lower or
+                             'as needed' in ingredient_lower) and label == "simple"):
+                            
+                            corrected_label = "complex"
+                            print(f"   🔧 CORRECTED: '{ingredient}' → complex (pattern)")
+                            corrections_made += 1
+                        
+                        # Force complex for single words without quantities (Crust, Filling, etc.)
+                        import re
+                        if (re.match(r'^[A-Za-z]+$', ingredient.strip()) and label == "simple"):
+                            corrected_label = "complex" 
+                            print(f"   🔧 CORRECTED: '{ingredient}' → complex (single-word)")
+                            corrections_made += 1
+                        
+                        # Force complex for parenthetical measurements
+                        if ('(' in ingredient_lower and ')' in ingredient_lower and label == "simple"):
+                            corrected_label = "complex"
+                            print(f"   🔧 CORRECTED: '{ingredient}' → complex (parentheses)")
+                            corrections_made += 1
+                        
+                        # Force complex for count-only patterns (no units)
+                        if (re.match(r'^\d+\s+\w+', ingredient_lower) and 
+                            not any(unit in ingredient_lower for unit in ['cup', 'tablespoon', 'teaspoon', 'ounce', 'pound', 'gram', 'gallon', 'liter', 'pint', 'quart', 'can', 'each', 'bunch', 'head', 'package']) and 
+                            label == "simple"):
+                            
+                            corrected_label = "complex"
+                            print(f"   🔧 CORRECTED: '{ingredient}' → complex (count-only)")
+                            corrections_made += 1
+                        
+                        validated_labels.append(corrected_label)
+                    
+                    if corrections_made > 0:
+                        print(f"   ✅ Validation fixed {corrections_made} mislabels")
+                    
+                    # Add validated labels to recipe
+                    recipe['ingredient_labels'] = validated_labels
                     return recipe
+                else:
+                    print(f"   💥 VALIDATION FAILED:")
+                    print(f"      Expected {len(ingredient_strings)} labels, got {len(labels)}")
+                    print(f"      Labels: {labels}")
+                    print(f"   🔍 DEBUGGING MISMATCH:")
+                    print(f"      Raw LLM response: {llm_response}")
+                    print(f"   🔍 INGREDIENT vs LABEL MAPPING:")
+                    for i, ingredient in enumerate(ingredient_strings):
+                        if i < len(labels):
+                            print(f"      {i+1:2d}. '{ingredient}' → {labels[i]}")
+                        else:
+                            print(f"      {i+1:2d}. '{ingredient}' → *** MISSING LABEL ***")
+                    
+                    # Don't mask the problem - let it fall through to actual debugging
+            except json.JSONDecodeError as json_err:
+                print(f"   💥 JSON DECODE FAILED:")
+                print(f"      Error: {json_err}")
+                print(f"      Raw response: {llm_response[:200]}...")
+                print(f"      Response length: {len(llm_response)} chars")
+                pass
+        else:
+            # Non-200 status code
+            print(f"   💥 API ERROR:")
+            print(f"      Status: {response.status_code}")
+            try:
+                error_data = response.json()
+                print(f"      Error: {error_data}")
+            except:
+                print(f"      Raw response: {response.text[:200]}...")
         
         # Fallback if labeling fails
+        print(f"   🔄 FALLING BACK TO SIMPLE LABELING for recipe: {recipe.get('title', 'Unknown')}")
         return _fallback_ingredient_labeling(recipe)
         
     except Exception as e:
-        print(f"   ⚠️  Ingredient labeling failed: {e}")
+        print(f"   💥 EXCEPTION in ingredient labeling:")
+        print(f"      Error type: {type(e).__name__}")
+        print(f"      Error message: {str(e)}")
+        print(f"      Recipe: {recipe.get('title', 'Unknown')}")
         return _fallback_ingredient_labeling(recipe)
 
 
@@ -757,9 +900,13 @@ JSON FORMAT:
 
 
 def _fallback_ingredient_labeling(recipe: Dict) -> Dict:
-    """Fallback: Label all ingredients as simple for regex processing."""
+    """Fallback: Label all ingredients as complex (safer than simple)."""
     ingredients = recipe.get('ingredients', [])
-    recipe['ingredient_labels'] = ["simple"] * len(ingredients)
+    
+    print(f"   🔧 FALLBACK: Marking all {len(ingredients)} ingredients as COMPLEX")
+    
+    # Mark everything as complex - LLM parsing handles all cases better than regex
+    recipe['ingredient_labels'] = ["complex"] * len(ingredients)
     return recipe
 
 
