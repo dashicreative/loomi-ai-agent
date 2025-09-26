@@ -1,13 +1,14 @@
 """
-Stage 9b: Parallel Ingredient Parsing
+Stage 9A: Parallel Ingredient Parsing
 Advanced hybrid parsing system that combines speed and accuracy.
 
 Architecture:
-1. Parallel Labeling: 5 concurrent LLM calls to label ingredients as "simple" or "complex"
-2. Hybrid Processing: Simple ingredients → regex parsing, Complex ingredients → focused LLM parsing
-3. Parallel Execution: All 5 recipes processed simultaneously for maximum speed
+1. LLM Spacing: 5 parallel calls to fix spacing issues from HTML parsing
+2. Parallel Labeling: 5 concurrent LLM calls to label ingredients as "simple" or "complex"
+3. Hybrid Processing: Simple ingredients → regex parsing, Complex ingredients → focused LLM parsing
+4. Parallel Execution: All 5 recipes processed simultaneously for maximum speed
 
-Performance: ~3-4 seconds total (vs 40+ seconds with old approach)
+Performance: ~3-4 seconds total for ingredient processing
 """
 
 import asyncio
@@ -79,11 +80,11 @@ async def process_all_recipe_ingredients(recipes: List[Dict], openai_key: str = 
     
     total_start = time.time()
     
-    # STAGE 1: Regex spacing fixes (instant processing)
-    print("✂️  Stage 1: Regex spacing fixes...")
+    # STAGE 1: LLM spacing fixes (5 parallel calls)
+    print("🔧 Stage 1: LLM spacing fixes...")
     spacing_start = time.time()
     
-    spaced_recipes = process_all_spacing_regex(recipes)
+    spaced_recipes = await process_all_spacing_llm_parallel(recipes, api_key)
     
     spacing_time = time.time() - spacing_start
     print(f"   ✅ Spacing fixes completed: {spacing_time:.2f}s")
@@ -113,83 +114,87 @@ async def process_all_recipe_ingredients(recipes: List[Dict], openai_key: str = 
     return parsed_recipes
 
 
-def fix_ingredient_spacing_regex(ingredient: str) -> str:
+async def fix_ingredient_spacing_llm(ingredients: List[str], api_key: str) -> List[str]:
     """
-    Fix spacing issues using regex patterns.
-    Replaces LLM spacing calls with deterministic regex processing.
-    Handles all patterns from current LLM examples plus edge cases.
+    Fix spacing issues for a list of ingredients using LLM.
+    Singular focus: correct spacing in ingredient strings from HTML parsing.
     """
-    import re
+    if not ingredients or not api_key:
+        return ingredients
     
-    # Common units (ordered by length, longest first to avoid conflicts)
-    units = [
-        'tablespoons', 'tablespoon', 'teaspoons', 'teaspoon', 
-        'packages', 'package', 'ounces', 'ounce', 'pounds', 'pound',
-        'kilograms', 'kilogram', 'grams', 'gram', 'cups', 'cup',
-        'gallons', 'gallon', 'quarts', 'quart', 'pints', 'pint',
-        'liters', 'liter', 'milliliters', 'milliliter',
-        'tbsp', 'tsp', 'oz', 'lb', 'lbs', 'kg', 'ml', 'g',
-        'can', 'cans', 'jar', 'jars', 'box', 'boxes',
-        'each', 'large', 'medium', 'small', 'whole', 'dash'
-    ]
+    # Create simple prompt focused ONLY on spacing
+    ingredients_text = "\n".join([f"- {ing}" for ing in ingredients])
     
-    # Size/descriptor words
-    descriptors = ['large', 'medium', 'small', 'whole', 'extra', 'jumbo']
-    
-    # Unicode fractions pattern
-    unicode_fractions = '[½¼¾⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞]'
-    
-    result = ingredient.strip()
-    
-    # 1. Remove dots after units: "Tbsp." → "Tbsp", "oz." → "oz"
-    for unit in units:
-        result = re.sub(f'({unit})\\.', r'\1', result, flags=re.IGNORECASE)
-    
-    # 2. Add space between number and unit: "6Tbsp" → "6 Tbsp"
-    for unit in units:
-        result = re.sub(f'(\\d+)({unit})', r'\1 \2', result, flags=re.IGNORECASE)
-    
-    # 3. Add space between unicode fraction and unit: "½cup" → "½ cup"
-    for unit in units:
-        result = re.sub(f'({unicode_fractions})({unit})', r'\1 \2', result, flags=re.IGNORECASE)
-    
-    # 4. Add space between text fraction and unit: "1/2cup" → "1/2 cup"
-    for unit in units:
-        result = re.sub(f'(\\d+/\\d+)({unit})', r'\1 \2', result, flags=re.IGNORECASE)
-    
-    # 5. Add space between mixed number and unit: "1 ½cups" → "1 ½ cups"
-    for unit in units:
-        result = re.sub(f'(\\d+\\s+{unicode_fractions})({unit})', r'\1 \2', result, flags=re.IGNORECASE)
-    
-    # 6. Add space between unit and ingredient: "Tbspheavy" → "Tbsp heavy"  
-    for unit in units:
-        # Only match when unit is followed by capital letter (ingredient names)
-        result = re.sub(f'\\b({unit})([A-Z][a-z]*)', r'\1 \2', result, flags=re.IGNORECASE)
-        # Match specific common ingredient words after units
-        common_ingredients = ['heavy', 'nutmeg', 'storebought', 'vanilla', 'butter', 'cream', 'sugar', 'flour', 'salt', 'pepper']
-        for ingredient in common_ingredients:
-            result = re.sub(f'\\b({unit})({ingredient})', r'\1 \2', result, flags=re.IGNORECASE)
-    
-    # 7. Add space between number and descriptors: "3large" → "3 large"
-    for desc in descriptors:
-        result = re.sub(f'(\\d+)({desc})', r'\1 \2', result, flags=re.IGNORECASE)
-    
-    # 8. Handle parenthetical + unit combinations: "packagescream" → "packages cream"
-    result = re.sub(r'(\w+)(\))([a-z])', r'\1\2 \3', result)
-    
-    # 9. Clean up multiple spaces
-    result = re.sub(r'\s+', ' ', result)
-    
-    # 10. Handle edge case: "11/2cups" (improper fraction) → "1 1/2 cups"
-    result = re.sub(r'\b(\d)(\d)/(\d+)', r'\1 \2/\3', result)
-    
-    return result.strip()
+    prompt = f"""Fix spacing issues in these ingredient strings. Return the exact same strings with corrected spacing.
+
+INGREDIENTS:
+{ingredients_text}
+
+COMMON ISSUES TO FIX:
+- Missing spaces: "2Tbsp" → "2 Tbsp", "1/2cup" → "1/2 cup" 
+- Missing spaces: "1tsp" → "1 tsp", "3large" → "3 large"
+- Missing spaces: "cupbutter" → "cup butter", "ozheavy" → "oz heavy"
+
+IMPORTANT: 
+- Only fix spacing issues
+- Keep all text exactly the same, just add missing spaces
+- Don't change quantities, units, or ingredient names
+- Don't remove or add any words
+
+Return the corrected ingredients in the same order, one per line with dashes:
+- [corrected ingredient 1]
+- [corrected ingredient 2]
+- [etc...]"""
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "gpt-4o-mini",  # Fast model for simple spacing
+                    "max_tokens": 400,
+                    "temperature": 0.1,
+                    "messages": [
+                        {
+                            "role": "system", 
+                            "content": "You fix spacing issues in ingredient strings. Only add missing spaces, don't change anything else."
+                        },
+                        {"role": "user", "content": prompt}
+                    ]
+                }
+            )
+        
+        if response.status_code == 200:
+            data = response.json()
+            llm_response = data['choices'][0]['message']['content'].strip()
+            
+            # Parse response - extract ingredients after dashes
+            corrected = []
+            for line in llm_response.split('\n'):
+                line = line.strip()
+                if line.startswith('- '):
+                    corrected.append(line[2:])  # Remove "- " prefix
+            
+            # Validate we got the same number back
+            if len(corrected) == len(ingredients):
+                return corrected
+        
+        # Fallback: return original ingredients if LLM fails
+        return ingredients
+        
+    except Exception as e:
+        print(f"   ⚠️  LLM spacing failed: {e}")
+        return ingredients
 
 
-def process_recipe_spacing_regex(recipe: Dict) -> Dict:
+async def process_recipe_spacing_llm(recipe: Dict, api_key: str) -> Dict:
     """
-    Process spacing for all ingredients in a recipe using regex.
-    Replaces the LLM spacing stage entirely.
+    Process spacing for all ingredients in a single recipe using LLM.
+    Focus: fix spacing issues only.
     """
     ingredients = recipe.get('ingredients', [])
     if not ingredients:
@@ -197,46 +202,66 @@ def process_recipe_spacing_regex(recipe: Dict) -> Dict:
     
     # Extract ingredient strings and preserve true originals
     ingredient_data = []
+    ingredient_strings = []
+    
     for ing in ingredients:
         if isinstance(ing, dict):
             # Preserve existing original if it exists, otherwise use ingredient
             true_original = ing.get('original', ing.get('ingredient', ''))
             current_ingredient = ing.get('ingredient', '')
             ingredient_data.append((true_original, current_ingredient))
+            ingredient_strings.append(current_ingredient)
         else:
             ingredient_text = str(ing)
             ingredient_data.append((ingredient_text, ingredient_text))
+            ingredient_strings.append(ingredient_text)
     
-    # Apply regex spacing fixes
+    # Fix spacing using LLM
+    spaced_ingredient_strings = await fix_ingredient_spacing_llm(ingredient_strings, api_key)
+    
+    # Rebuild ingredients with corrected spacing
     spaced_ingredients = []
-    for true_original, current_ingredient in ingredient_data:
-        spaced_ingredient = fix_ingredient_spacing_regex(current_ingredient)
+    for i, (true_original, _) in enumerate(ingredient_data):
+        spaced_text = spaced_ingredient_strings[i] if i < len(spaced_ingredient_strings) else ingredient_strings[i]
         
         spaced_ingredients.append({
             'original': true_original,  # Preserve the TRUE original
-            'spaced_formatted': spaced_ingredient,
-            'ingredient': spaced_ingredient  # Will be parsed later
+            'spaced_formatted': spaced_text,
+            'ingredient': spaced_text  # Will be parsed later
         })
     
     recipe['ingredients'] = spaced_ingredients
     return recipe
 
 
-def process_all_spacing_regex(recipes: List[Dict]) -> List[Dict]:
+async def process_all_spacing_llm_parallel(recipes: List[Dict], api_key: str) -> List[Dict]:
     """
-    Process spacing for all recipes using regex.
-    Replaces _fix_spacing_all_recipes_parallel entirely.
+    Process spacing for all recipes using 5 parallel LLM calls.
+    Each recipe gets one LLM call to fix spacing for all its ingredients.
     """
-    results = []
+    if not api_key:
+        print("⚠️  No OpenAI API key - skipping LLM spacing")
+        return recipes
+    
+    # Create tasks for parallel processing (one per recipe)
+    spacing_tasks = []
     for recipe in recipes:
-        try:
-            processed_recipe = process_recipe_spacing_regex(recipe)
-            results.append(processed_recipe)
-        except Exception as e:
-            print(f"⚠️  Regex spacing failed for recipe {recipe.get('title', 'Unknown')}: {e}")
-            # Fallback: keep original format and preserve true originals
-            ingredients = recipe.get('ingredients', [])
+        task = process_recipe_spacing_llm(recipe, api_key)
+        spacing_tasks.append(task)
+    
+    # Execute all spacing fixes in parallel
+    results = await asyncio.gather(*spacing_tasks, return_exceptions=True)
+    
+    # Handle exceptions
+    final_results = []
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            print(f"⚠️  LLM spacing failed for recipe {i+1}: {result}")
+            # Fallback: preserve originals without spacing fixes
+            original_recipe = recipes[i]
+            ingredients = original_recipe.get('ingredients', [])
             fallback_ingredients = []
+            
             for ing in ingredients:
                 if isinstance(ing, dict):
                     true_original = ing.get('original', ing.get('ingredient', ''))
@@ -250,10 +275,13 @@ def process_all_spacing_regex(recipes: List[Dict]) -> List[Dict]:
                     'spaced_formatted': ingredient_text,  # Same as current on error
                     'ingredient': ingredient_text
                 })
-            recipe['ingredients'] = fallback_ingredients
-            results.append(recipe)
+            
+            original_recipe['ingredients'] = fallback_ingredients
+            final_results.append(original_recipe)
+        else:
+            final_results.append(result)
     
-    return results
+    return final_results
 
 
 async def _label_all_ingredients_parallel(recipes: List[Dict], api_key: str) -> List[Dict]:
@@ -318,6 +346,8 @@ SIMPLE ingredients use accepted Instacart units:
 
 COMPLEX ingredients need conversion:
 - **Single items without quantity**: "Crust", "Topping", "Glaze" (needs default: "1 each" or "1 package")
+- **Container units**: "1 box crackers", "1 jar sauce", "1 bottle oil", "1 container yogurt" (convert to "package")
+- **Count with descriptors but no unit**: "4 whole eggs", "3 large tomatoes", "2 medium onions" (convert to "each")
 - **Multiple unit patterns**: "4(8 ounce) packages cream cheese" (parenthetical + unit combo)
 - **Multiple measurements in parentheses**: "2 1/2 ounces butter (about 5 tablespoons; 70 g)" (choose best unit)
 - **Subjective amounts**: "salt to taste", "Kosher salt, to taste", "pepper as needed" (convert to "1 each")
@@ -677,6 +707,8 @@ CONVERSION EXAMPLES:
 - "15 graham crackers" → quantity: "1", unit: "package", ingredient: "graham crackers", pantry_staple: false
 - "12 cookies" → quantity: "1", unit: "package", ingredient: "cookies", pantry_staple: false
 - "6 slices bread" → quantity: "1", unit: "each", ingredient: "loaf bread", pantry_staple: false
+- "1 box crackers" → quantity: "1", unit: "package", ingredient: "crackers", pantry_staple: false
+- "4 whole eggs" → quantity: "4", unit: "each", ingredient: "eggs", pantry_staple: false
 
 JSON FORMAT:
 [{{"quantity": "amount", "unit": "instacart_unit", "ingredient": "name", "pantry_staple": boolean, "original": "text"}}]"""

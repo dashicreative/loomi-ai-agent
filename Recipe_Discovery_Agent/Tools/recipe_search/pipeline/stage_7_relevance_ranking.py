@@ -7,6 +7,7 @@ This module ranks pre-qualified recipes by relevance using LLM.
 
 import httpx
 from typing import Dict, List
+from urllib.parse import urlparse
 
 
 async def rank_qualified_recipes_by_relevance(qualified_recipes: List[Dict], query: str, openai_key: str) -> List[Dict]:
@@ -97,6 +98,24 @@ Example: "3,1,2" (if recipe 3 is most relevant, then 1, then 2)"""
                     reranked.append(recipe)
             
             print(f"   ✅ Phase 2 Ranking: Ranked {len(qualified_recipes)} qualified recipes by relevance")
+            
+            # Debug: Show domain distribution of all qualified recipes before domain diversity filter
+            domain_counts = {}
+            for recipe in qualified_recipes:
+                source_url = recipe.get('source_url', '')
+                if source_url:
+                    try:
+                        domain = urlparse(source_url).netloc.lower().replace('www.', '')
+                        domain_counts[domain] = domain_counts.get(domain, 0) + 1
+                    except:
+                        domain_counts['unknown'] = domain_counts.get('unknown', 0) + 1
+                else:
+                    domain_counts['no_url'] = domain_counts.get('no_url', 0) + 1
+            
+            print(f"   📊 DOMAIN BREAKDOWN OF {len(qualified_recipes)} QUALIFIED RECIPES (before diversity filter):")
+            for domain, count in sorted(domain_counts.items(), key=lambda x: x[1], reverse=True):
+                print(f"      {domain}: {count} recipes")
+            
             return reranked
             
         except (ValueError, IndexError):

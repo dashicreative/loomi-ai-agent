@@ -642,6 +642,24 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     # STAGE 9A: Advanced ingredient parsing
     try:
         from Tools.recipe_search.pipeline.stage_9a_ingredient_parsing import process_all_recipe_ingredients
+        
+        # Debug: Show domain distribution before Stage 9
+        domain_counts = {}
+        for recipe in final_ranked_recipes[:needed_count]:
+            source_url = recipe.get('source_url', '')
+            if source_url:
+                try:
+                    domain = urlparse(source_url).netloc.lower().replace('www.', '')
+                    domain_counts[domain] = domain_counts.get(domain, 0) + 1
+                except:
+                    domain_counts['unknown'] = domain_counts.get('unknown', 0) + 1
+            else:
+                domain_counts['no_url'] = domain_counts.get('no_url', 0) + 1
+        
+        print(f"\n📊 DOMAIN DISTRIBUTION ENTERING STAGE 9 ({len(final_ranked_recipes[:needed_count])} recipes):")
+        for domain, count in sorted(domain_counts.items(), key=lambda x: x[1], reverse=True):
+            print(f"   {domain}: {count} recipes")
+        
         print("\n🔧 STAGE 9A: Advanced Ingredient Processing")
         stage9a_start = time.time()
         

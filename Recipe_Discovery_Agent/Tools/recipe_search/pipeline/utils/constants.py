@@ -11,7 +11,7 @@ PRIORITY_SITES = [
     "eatingwell.com",
     "foodnetwork.com",
     "delish.com",
-    "tasteofhome.com"
+    "tasteofhome.com",
     "seriouseats.com",
     "foodandwine.com",
     "thepioneerwoman.com",

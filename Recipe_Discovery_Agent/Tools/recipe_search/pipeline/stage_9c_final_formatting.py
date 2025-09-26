@@ -30,6 +30,10 @@ def clean_nutrition_for_final_formatting(unified_nutrition: List[str]) -> Dict[s
     # Step 1: Combine and preprocess all nutrition text
     full_text = " ".join(unified_nutrition).lower()
     
+    # DEBUG: Show raw nutrition data
+    print(f"🔍 DEBUG RAW NUTRITION: {unified_nutrition}")
+    print(f"🔍 DEBUG FULL TEXT: {full_text}")
+    
     # Step 2: Split mashed-together strings using common delimiters
     # Handle cases like "Calories300Protein25gFat10g" or "calories: 300 protein: 25g fat: 10g"
     delimited_text = re.sub(r'([a-z])(\d)', r'\1 \2', full_text)  # Add space before numbers
@@ -40,6 +44,9 @@ def clean_nutrition_for_final_formatting(unified_nutrition: List[str]) -> Dict[s
     clean_text = delimited_text.replace('per serving', '').replace('per portion', '')
     clean_text = clean_text.replace('amount per serving', '').replace('nutrition facts', '')
     
+    print(f"🔍 DEBUG CLEAN TEXT: {clean_text}")
+    print(f"🔍 DEBUG DELIMITED TEXT: {delimited_text}")
+    
     # Step 4: Enhanced patterns with validation - FIXED ORDER
     nutrition_patterns = {
         "calories": [
@@ -49,9 +56,12 @@ def clean_nutrition_for_final_formatting(unified_nutrition: List[str]) -> Dict[s
             r'energy[:\s]*(\d{2,4})\b',             # "Energy: 334"
         ],
         "protein": [
-            r'(\d+(?:\.\d+)?)\s*g\s*protein\b',         # "19g protein" - PRIORITIZE NUMBER FIRST
-            r'(\d+(?:\.\d+)?)\s*grams?\s*protein\b',    # "19 grams protein"  
-            r'protein[:\s]*(\d+(?:\.\d+)?)\s*g?\b',     # "Protein: 19g" - SECONDARY
+            # PRIORITY 1: "protein: 7g" or "protein 7g" format (safest)
+            r'protein[:\s]+(\d+(?:\.\d+)?)\s*g?\b',                    # "protein: 7g" or "protein 7g"
+            # PRIORITY 2: "7g protein" but NOT if preceded by other nutrients
+            r'(?<!sugars?\s)(?<!carbs?\s)(?<!fat\s)(?<!fiber\s)(\d+(?:\.\d+)?)\s*g\s+protein\b',  # "7g protein" with negative lookbehind
+            # PRIORITY 3: "7 grams protein" but NOT if preceded by other nutrients  
+            r'(?<!sugars?\s)(?<!carbs?\s)(?<!fat\s)(?<!fiber\s)(\d+(?:\.\d+)?)\s*grams?\s+protein\b',  # "7 grams protein" with negative lookbehind
         ],
         "carbs": [
             r'(\d+(?:\.\d+)?)\s*g\s*carbohydrates?\b',      # "26g carbohydrates" - PRIORITIZE NUMBER FIRST
