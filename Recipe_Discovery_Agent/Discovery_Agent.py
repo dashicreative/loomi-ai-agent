@@ -2,18 +2,23 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.models import KnownModelName
 from pathlib import Path
 from typing import Optional, Dict
-from Structured_Output import AgentOutput
-from Tools import search_and_process_recipes_tool
-from Dependencies import RecipeDeps, SessionContext
+from .Structured_Output import AgentOutput
+from .Tools import search_and_process_recipes_tool
+from .Dependencies import RecipeDeps, SessionContext
 import os
 import time
 from dotenv import load_dotenv
 import logfire
 
 
-#Setting up logfire for tracing
-logfire.configure(scrubbing=False)  # Disable scrubbing to allow system prompt
-logfire.instrument_pydantic_ai()
+# Setting up logfire for tracing (skip if no credentials for Railway compatibility)
+try:
+    logfire.configure(scrubbing=False)  # Disable scrubbing to allow system prompt
+    logfire.instrument_pydantic_ai()
+    print("✅ Logfire configured successfully")
+except Exception as e:
+    print(f"⚠️  Logfire setup skipped: {e}")
+    # Continue without logfire for Railway deployment
 
 # Load environment variables
 load_dotenv()
@@ -112,13 +117,13 @@ def dynamic_system_prompt(ctx: RunContext[RecipeDeps]) -> str:
 @recipe_discovery_agent.tool
 async def save_meal(ctx: RunContext[RecipeDeps], meal_number: int) -> Dict:
     """Save a meal from current batch to saved meals."""
-    from Tools.session_tools_refactored import save_meal_tool
+    from .Tools.session_tools_refactored import save_meal_tool
     return await save_meal_tool(ctx, meal_number)
 
 @recipe_discovery_agent.tool  
 async def analyze_saved_meals(ctx: RunContext[RecipeDeps], query: str, daily_goals: Optional[Dict] = None) -> Dict:
     """Analyze saved meals based on user query."""
-    from Tools.session_tools_refactored import analyze_saved_meals_tool
+    from .Tools.session_tools_refactored import analyze_saved_meals_tool
     return await analyze_saved_meals_tool(ctx, query, daily_goals)
 
 @recipe_discovery_agent.tool
