@@ -259,6 +259,31 @@ def main():
     print("🍳 Recipe Discovery Agent - Refactored with Proper Pydantic AI Patterns")
     print("Type 'quit' to exit\n")
     
+    # Debug: Show what environment variables are available
+    print("🔍 Environment variables check:")
+    all_env_vars = {k: v for k, v in os.environ.items() if any(key in k.upper() for key in ['API', 'KEY', 'OPENAI', 'SERPAPI', 'FIRECRAWL'])}
+    for var, value in all_env_vars.items():
+        masked_value = f"{value[:8]}..." if value and len(value) > 8 else "None" if not value else value
+        print(f"  {var}: {masked_value}")
+    
+    # Validate required environment variables
+    required_vars = {
+        'OPENAI_API_KEY': os.getenv("OPENAI_API_KEY"),
+        'SERPAPI_KEY': os.getenv("SERPAPI_KEY"), 
+        'FIRECRAWL_API_KEY': os.getenv("FIRECRAWL_API_KEY")
+    }
+    
+    missing_vars = [var for var, value in required_vars.items() if not value]
+    if missing_vars:
+        print(f"❌ Missing required environment variables: {', '.join(missing_vars)}")
+        print("Please set these environment variables in Railway dashboard:")
+        for var in missing_vars:
+            print(f"  - {var}")
+        print("\nDeployment cannot continue without these API keys.")
+        return
+    
+    print("✅ All required environment variables found")
+    
     # TODO: UI INTEGRATION - Frontend should provide existing session or create new one
     # TEMPORARY: Create session in deps for this conversation
     session = SessionContext()
@@ -267,16 +292,22 @@ def main():
     
     # Create deps with session - Proper Pydantic AI Pattern
     deps_with_session = RecipeDeps(
-        serpapi_key=os.getenv("SERPAPI_KEY"),
-        firecrawl_key=os.getenv("FIRECRAWL_API_KEY"),
-        openai_key=os.getenv("OPENAI_API_KEY"),
+        serpapi_key=required_vars['SERPAPI_KEY'],
+        firecrawl_key=required_vars['FIRECRAWL_API_KEY'],
+        openai_key=required_vars['OPENAI_API_KEY'],
         google_search_key=os.getenv("GOOGLE_SEARCH_KEY"),
         google_search_engine_id=os.getenv("GOOGLE_SEARCH_ENGINE_ID"),
         session=session  # Session context in dependencies
     )
     
-    # Create agent after environment variables are loaded
-    recipe_discovery_agent = create_recipe_discovery_agent()
+    # Create agent after environment variables are validated
+    try:
+        recipe_discovery_agent = create_recipe_discovery_agent()
+        print("✅ Recipe Discovery Agent initialized successfully")
+    except Exception as e:
+        print(f"❌ Failed to initialize agent: {e}")
+        print("This usually means an API key is invalid or a service is unavailable.")
+        return
     
     # Track message history for conversation continuity
     message_history = []
