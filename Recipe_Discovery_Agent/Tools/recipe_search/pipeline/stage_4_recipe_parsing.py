@@ -1,13 +1,8 @@
 """
-Custom recipe parsers for specific websites.
-Each parser extracts: title, ingredients, instructions, cook_time, servings, image_url, source_url
+Stage 4: Recipe Parsing
+Handles all recipe parsing operations including HTML scraping, JSON-LD extraction, and LLM-based parsing.
 
-COMPLIANCE NOTICE:
-- All parsers check robots.txt before scraping
-- We respect crawl delays and disallowed paths
-- Instructions are extracted ONLY for analysis, never displayed to users
-- We always link back to the original source
-- We do not cache or store scraped content
+This module contains all recipe parsing logic for different website formats.
 """
 
 import httpx
@@ -19,7 +14,8 @@ from urllib.parse import urlparse
 import asyncio
 import time
 import os
-from .ingredient_parser import parse_ingredients_list
+from firecrawl import FirecrawlApp
+from Tools.Detailed_Recipe_Parsers.ingredient_parser import parse_ingredients_list
 
 
 # Cache for robots.txt to avoid repeated fetches
@@ -68,6 +64,7 @@ async def check_robots_txt(url: str, user_agent: str = "RecipeDiscoveryBot") -> 
     
     return is_allowed, crawl_delay
 
+
 def extract_nutrition_from_json_ld(nutrition_info: dict) -> list:
     """
     Extract ONLY the 4 required nutrition values from JSON-LD nutrition object.
@@ -94,6 +91,7 @@ def extract_nutrition_from_json_ld(nutrition_info: dict) -> list:
         nutrition.append(f"{nutrition_info.get('carbohydrateContent')} carbs")
     
     return nutrition
+
 
 def extract_from_json_ld(soup: BeautifulSoup, url: str) -> Dict:
     """

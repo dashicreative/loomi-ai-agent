@@ -21,6 +21,7 @@ from bs4 import BeautifulSoup
 from typing import List, Dict, Optional
 from urllib.parse import urljoin, urlparse
 import json
+import httpx
 
 
 class ListParser:
@@ -30,7 +31,8 @@ class ListParser:
     Handles modern food blog structures with recipe cards, previews, and galleries.
     """
     
-    def __init__(self):
+    def __init__(self, openai_key: str = None):
+        self.openai_key = openai_key
         # Common recipe card selectors used by food blogs
         self.recipe_card_selectors = [
             'article[class*="recipe"]',
@@ -109,6 +111,11 @@ class ListParser:
             # Combine and deduplicate results
             all_recipes = json_recipes + card_recipes + link_recipes
             unique_recipes = self._deduplicate_recipes(all_recipes)
+            
+            # Final step: Intelligent URL filtering with LLM
+            if unique_recipes and self.openai_key:
+                filtered_recipes = await self._batch_filter_recipe_urls(unique_recipes)
+                return filtered_recipes[:max_urls]
             
             return unique_recipes[:max_urls]
             
@@ -275,13 +282,41 @@ class ListParser:
         """Check if URL matches recipe patterns."""
         url_lower = url.lower()
         
-        # Exclude non-recipe patterns first
+        # ENHANCED: First exclude collection/list URLs that look like recipes
+        collection_patterns = [
+            r'/recipes/collection/',
+            r'/recipes/category/',
+            r'/recipes/tag/',
+            r'/collection/',
+            r'/category/',
+            r'roundup',
+            r'best-.*-recipes',
+            r'top-.*-recipes',
+            r'-recipes/?$',  # URLs ending in '-recipes' are usually lists
+            r'guide/',
+            r'howto/'
+        ]
+        
+        for collection_pattern in collection_patterns:
+            if re.search(collection_pattern, url_lower):
+                return False  # This is a collection/list URL, not individual recipe
+        
+        # Exclude non-recipe patterns
         for pattern in self.exclude_patterns:
             if re.search(pattern, url_lower):
                 return False
         
-        # Check for recipe patterns
-        for pattern in self.recipe_link_patterns:
+        # Check for individual recipe patterns (more specific now)
+        individual_recipe_patterns = [
+            r'/recipe/[^/]+/?$',  # /recipe/specific-recipe-name
+            r'/recipes/[^/]+/?$',  # /recipes/specific-recipe-name (not followed by collection/category)
+            r'-recipe/?$',
+            r'-recipe\.',
+            r'recipe\?',
+            r'/\d{4}/\d{2}/.+',  # Date-based URLs common in food blogs
+        ]
+        
+        for pattern in individual_recipe_patterns:
             if re.search(pattern, url_lower):
                 return True
         
@@ -324,6 +359,155 @@ class ListParser:
             confidence_score += 1
         
         return confidence_score >= 3
+    
+    async def _batch_filter_recipe_urls(self, recipe_urls: List[Dict]) -> List[Dict]:
+        """
+        Batch filter recipe URLs using LLM to remove category/navigation pages.
+        
+        Uses single LLM call to classify all URLs as either "keep" or "discard".
+        """
+        if not recipe_urls or not self.openai_key:
+            return recipe_urls
+        
+        # Step 1: First pass - Remove obvious non-recipe URLs with hardcoded patterns
+        pre_filtered = []
+        for recipe in recipe_urls:
+            url = recipe.get('url', '').lower()
+            
+            # Apply existing exclude patterns
+            should_exclude = any(re.search(pattern, url) for pattern in self.exclude_patterns)
+            
+            # Additional category/navigation patterns
+            category_patterns = [
+                r'/recipes/$',  # Just /recipes/
+                r'/account/',  # Account pages
+                r'/add-recipe',  # Add recipe forms
+                r'/recipes/\d+/$',  # Category IDs like /recipes/17562/
+                r'/recipes/\d+/[^/]+/$',  # Categories like /recipes/17562/dinner/
+                r'/(dinner|lunch|breakfast|dessert|appetizer|snack)/$',  # Category endings
+                r'/meal-ideas/',  # Meal categories
+                r'/(main-dishes|side-dishes|salads|soups|beverages)/$',  # Dish categories
+                r'/cooking/',  # General cooking sections
+                r'/5-ingredients/',  # Special categories
+                r'/everyday-cooking/',  # Lifestyle categories
+                r'/more-meal-ideas/'  # More categories
+            ]
+            
+            if not should_exclude:
+                should_exclude = any(re.search(pattern, url) for pattern in category_patterns)
+            
+            if not should_exclude:
+                pre_filtered.append(recipe)
+        
+        # Step 2: Batch LLM filtering for remaining URLs
+        if not pre_filtered:
+            return []
+        
+        # Limit to prevent JSON parsing issues with very long responses
+        max_llm_urls = min(20, len(pre_filtered))
+        urls_for_llm = pre_filtered[:max_llm_urls]
+        
+        # Prepare data for LLM classification
+        url_data = []
+        for i, recipe in enumerate(urls_for_llm):
+            url_data.append({
+                'index': i,
+                'url': recipe['url'],
+                'title': recipe.get('title', ''),
+                'snippet': recipe.get('snippet', '')
+            })
+        
+        prompt = f"""You are filtering recipe URLs to remove category pages, navigation pages, and non-recipe content.
+
+KEEP URLs that are:
+- Individual recipe pages with specific recipe names
+- URLs ending with specific recipe titles (e.g., "chocolate-chip-cookies")
+- URLs with recipe IDs followed by recipe names
+- Direct links to cooking instructions for specific dishes
+
+DISCARD URLs that are:
+- Category/listing pages (e.g., /recipes/, /dinner/, /main-dishes/)
+- Navigation pages (e.g., /account/, /add-recipe/, /search/)
+- General cooking sections or meal planning pages
+- URLs ending with generic categories instead of specific recipes
+- Account or user-generated content pages
+
+Analyze each URL and return classifications in this exact JSON format:
+{{
+  "classifications": [
+    {{
+      "index": 0,
+      "action": "keep|discard",
+      "reason": "specific recipe page|category page|navigation|etc"
+    }}
+  ]
+}}
+
+URLs to classify:
+{json.dumps(url_data, indent=2)}"""
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.openai_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": "gpt-3.5-turbo",
+                        "messages": [
+                            {"role": "system", "content": "You are a URL classification expert. Return only valid JSON."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        "temperature": 0.1,
+                        "max_tokens": 1000
+                    }
+                )
+                
+                if response.status_code != 200:
+                    # If LLM fails, return pre-filtered results
+                    return pre_filtered
+                
+                data = response.json()
+                llm_response = data['choices'][0]['message']['content'].strip()
+                
+                # Parse JSON response
+                if '```json' in llm_response:
+                    llm_response = llm_response.split('```json')[1].split('```')[0]
+                elif '```' in llm_response:
+                    llm_response = llm_response.split('```')[1]
+                
+                # Clean up response
+                llm_response = llm_response.strip()
+                
+                result = json.loads(llm_response)
+                classifications = result.get('classifications', [])
+                
+                # Filter based on LLM classifications
+                filtered_urls = []
+                for classification in classifications:
+                    idx = classification.get('index', -1)
+                    action = classification.get('action', 'discard')
+                    
+                    if action == 'keep' and 0 <= idx < len(urls_for_llm):
+                        filtered_urls.append(urls_for_llm[idx])
+                
+                # Add any remaining URLs that weren't sent to LLM (if we had more than max_llm_urls)
+                if len(pre_filtered) > max_llm_urls:
+                    filtered_urls.extend(pre_filtered[max_llm_urls:])
+                
+                return filtered_urls
+                
+        except json.JSONDecodeError as e:
+            print(f"URL filtering JSON parsing failed: {e}")
+            print(f"LLM response: {llm_response[:200]}...")
+            # Return pre-filtered results if JSON parsing fails
+            return pre_filtered
+        except Exception as e:
+            print(f"URL filtering failed: {e}")
+            # Return pre-filtered results if LLM fails
+            return pre_filtered
     
     def _deduplicate_recipes(self, recipes: List[Dict]) -> List[Dict]:
         """Remove duplicate recipes based on URL."""

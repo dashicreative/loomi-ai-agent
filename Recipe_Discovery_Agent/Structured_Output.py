@@ -1,4 +1,5 @@
-from typing import TypedDict, List, Optional, Dict
+from typing_extensions import TypedDict
+from typing import List, Optional, Dict
 
 
 #Structure of Nutritional info
@@ -11,10 +12,19 @@ class NutritionInfo(TypedDict):
 
 #Structure of parsed ingredient info
 class IngredientInfo(TypedDict):
-    quantity: Optional[str]  # "2", "1/2", "2-3", None for "salt to taste"
-    unit: Optional[str]      # "cups", "teaspoon", "large", None for no unit
-    ingredient: str          # "all-purpose flour", "salt", "eggs"
-    original: str           # Original string for fallback display
+    quantity: Optional[str]  # Recipe quantity as written (e.g., "4", "1 1/2 to 2", "half")
+    unit: Optional[str]      # Recipe unit as written (e.g., "cloves", "pounds", None for "half lime")
+    ingredient: str          # Clean ingredient name without prep instructions
+    store_quantity: Optional[str]  # Shopping quantity (rounded up for whole items, averaged for ranges)
+    store_unit: Optional[str]      # Shopping unit ("count" for whole items, actual units for weight/volume)
+    amount: Optional[str]    # Recipe amount if different from shopping (e.g., "0.5" for half lime, "4 cloves")
+    size: Optional[str]      # Size descriptor (large, small, medium)
+    additional_context: Optional[str]  # Prep state (melted, minced, softened, store-bought)
+    alternatives: List[str]  # List of alternative ingredients (e.g., ["almond milk", "oat milk"])
+    pantry_staple: bool      # True ONLY for salt, pepper, oil, flour, sugar, basic spices/seasonings
+    optional: bool           # True for garnish, "to taste" items
+    disqualified: bool       # True for cross-references, homemade items that can't be bought
+    original: str            # Original ingredient string for reference
 
 
 #Structure of Recipe info
