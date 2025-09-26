@@ -32,11 +32,12 @@ from Tools.recipe_search.pipeline.stage_8_list_processing import expand_urls_wit
 #     create_minimal_recipes_for_agent, 
 #     create_failed_parse_report
 # )
-from Tools.recipe_search.pipeline.stage_9a_final_formatting import (
+from Tools.recipe_search.pipeline.stage_9c_final_formatting import (
     format_recipes_for_ios, 
     create_minimal_recipes_for_agent, 
     create_failed_parse_report
 )
+from Tools.recipe_search.pipeline.stage_9b_ingredient_categorization import categorize_uncategorized_ingredients_parallel
 from urllib.parse import urlparse
 from Tools.recipe_search.pipeline.utils.constants import PRIORITY_SITES, BLOCKED_SITES
 
@@ -638,24 +639,43 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     stage6_start = time.time()
     
     
-    # STAGE 9B: Advanced ingredient parsing (BACK TO ORIGINAL IMPLEMENTATION)
+    # STAGE 9A: Advanced ingredient parsing
     try:
-        from Tools.recipe_search.pipeline.stage_9b_ingredient_parsing import process_all_recipe_ingredients
-        print("\n🔧 STAGE 9B: Advanced Ingredient Processing")
-        stage9b_start = time.time()
+        from Tools.recipe_search.pipeline.stage_9a_ingredient_parsing import process_all_recipe_ingredients
+        print("\n🔧 STAGE 9A: Advanced Ingredient Processing")
+        stage9a_start = time.time()
         
         # Process ingredients in parallel for final recipes
         final_recipes_with_ingredients = await process_all_recipe_ingredients(final_ranked_recipes[:needed_count])
         
-        stage9b_time = time.time() - stage9b_start
-        print(f"   ✅ Advanced ingredient parsing completed: {stage9b_time:.2f}s")
+        stage9a_time = time.time() - stage9a_start
+        print(f"   ✅ Advanced ingredient parsing completed: {stage9a_time:.2f}s")
         
-        # Stage 9a: Final formatting (with pre-processed ingredients)
-        formatted_recipes = format_recipes_for_ios(final_recipes_with_ingredients, needed_count, fallback_used, exact_match_count)
+        # STAGE 9B: Ingredient categorization
+        print("\n🏷️ STAGE 9B: Ingredient Categorization")
+        stage9b_start = time.time()
+        
+        # Categorize ingredients using hybrid keyword + LLM approach
+        final_recipes_with_categories = await categorize_uncategorized_ingredients_parallel(
+            final_recipes_with_ingredients, 
+            ctx.deps.openai_key
+        )
+        
+        stage9b_time = time.time() - stage9b_start
+        print(f"   ✅ Ingredient categorization completed: {stage9b_time:.2f}s")
+        
+        # STAGE 9C: Final formatting (with categorized ingredients)
+        print("\n📱 STAGE 9C: Final iOS Formatting")
+        stage9c_start = time.time()
+        
+        formatted_recipes = format_recipes_for_ios(final_recipes_with_categories, needed_count, fallback_used, exact_match_count)
+        
+        stage9c_time = time.time() - stage9c_start
+        print(f"   ✅ Final formatting completed: {stage9c_time:.2f}s")
         
     except Exception as e:
-        print(f"⚠️  Stage 9b failed, using basic formatting: {e}")
-        # Fallback to basic formatting
+        print(f"⚠️  Stage 9A-C pipeline failed, using basic formatting: {e}")
+        # Fallback to basic formatting without categorization
         formatted_recipes = format_recipes_for_ios(final_ranked_recipes, needed_count, fallback_used, exact_match_count)
     
     # STAGE 8B: Unified Formatting and Ingredient Processing (TEMPORARILY DISABLED - reverted to 9a/9b)
