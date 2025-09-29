@@ -130,9 +130,16 @@ async def root():
 async def search_recipes(request: SearchRequest):
     """Search for recipes and return structured results"""
     try:
+        # Debug: Log exactly what query we received from iOS app
+        print(f"🔍 DEBUG: API RECEIVED QUERY: '{request.query}'")
+        print(f"🔍 DEBUG: API RECEIVED SESSION_ID: '{request.session_id}'")
+        
         # Get or create session
         session = get_or_create_session(request.session_id)
         deps = create_deps_with_session(session)
+        
+        # Debug: Confirm what we're sending to agent
+        print(f"🔍 DEBUG: SENDING TO AGENT: '{request.query}'")
         
         # Run agent with search query
         result = await agent.run(request.query, deps=deps)
