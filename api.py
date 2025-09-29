@@ -137,27 +137,62 @@ async def search_recipes(request: SearchRequest):
         # Run agent with search query
         result = await agent.run(request.query, deps=deps)
         
+        # Debug: Log the actual agent response structure
+        print(f"🔍 DEBUG: Agent result type: {type(result)}")
+        print(f"🔍 DEBUG: Agent result data: {getattr(result, 'data', 'No data attr')}")
+        print(f"🔍 DEBUG: Agent result messages count: {len(result.all_messages())}")
+        
         # Extract structured data from agent response
         all_recipes = []
         search_query = request.query
         
-        for message in result.all_messages():
-            if hasattr(message, 'content') and isinstance(message.content, list):
-                for item in message.content:
-                    if hasattr(item, 'output') and isinstance(item.output, dict):
-                        output = item.output
-                        if 'full_recipes' in output:
-                            batch_recipes = output.get('full_recipes', [])
-                            all_recipes.extend(batch_recipes)
-                            search_query = output.get('searchQuery', search_query)
+        for i, message in enumerate(result.all_messages()):
+            print(f"🔍 DEBUG: Message {i} type: {type(message)}")
+            print(f"🔍 DEBUG: Message {i} content type: {type(getattr(message, 'content', None))}")
+            
+            if hasattr(message, 'content'):
+                content = message.content
+                if isinstance(content, list):
+                    for j, item in enumerate(content):
+                        print(f"🔍 DEBUG: Message {i}, Item {j} type: {type(item)}")
+                        if hasattr(item, 'output'):
+                            output = item.output
+                            print(f"🔍 DEBUG: Tool output keys: {list(output.keys()) if isinstance(output, dict) else 'Not dict'}")
+                            if isinstance(output, dict) and 'full_recipes' in output:
+                                batch_recipes = output.get('full_recipes', [])
+                                print(f"🔍 DEBUG: Found {len(batch_recipes)} recipes in tool output")
+                                all_recipes.extend(batch_recipes)
+                                search_query = output.get('searchQuery', search_query)
+                            elif isinstance(output, dict):
+                                # Check for other possible recipe data structures
+                                for key in output.keys():
+                                    if 'recipe' in key.lower():
+                                        print(f"🔍 DEBUG: Found recipe-related key: {key}")
+        
+        # Also check if session has recipes (agent might have updated it directly)
+        if not all_recipes and session.current_batch_recipes:
+            print(f"🔍 DEBUG: No recipes in tool outputs, but session has {len(session.current_batch_recipes)} recipes")
+            all_recipes = session.current_batch_recipes
+        
+        print(f"🔍 DEBUG: Final recipe count: {len(all_recipes)}")
         
         # Update session with new recipes
         session.current_batch_recipes = all_recipes
         
+        # Clean agent response text
+        agent_response = str(result.data) if hasattr(result, 'data') else str(result)
+        if 'AgentRunResult' in agent_response:
+            # Extract clean text from AgentRunResult
+            if 'output=' in agent_response:
+                start = agent_response.find("output='") + 8
+                end = agent_response.find("')", start)
+                if start > 7 and end > start:
+                    agent_response = agent_response[start:end]
+        
         return SearchResponse(
             session_id=session.session_id,
             recipes=all_recipes,
-            agent_response=str(result.data) if hasattr(result, 'data') else str(result),
+            agent_response=agent_response,
             total_results=len(all_recipes),
             search_query=search_query
         )
