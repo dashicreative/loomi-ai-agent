@@ -153,10 +153,29 @@ async def search_recipes(request: SearchRequest):
         all_recipes = []
         search_query = request.query
         
+        # Debug: Let's examine the entire result structure
+        print(f"🔍 DEBUG: Examining all messages for recipes...")
+        
         for i, message in enumerate(result.all_messages()):
             print(f"🔍 DEBUG: Message {i} type: {type(message)}")
-            print(f"🔍 DEBUG: Message {i} content type: {type(getattr(message, 'content', None))}")
             
+            # Check for tool call responses
+            if hasattr(message, 'parts'):
+                for part in message.parts:
+                    if hasattr(part, 'tool_name'):
+                        print(f"🔍 DEBUG: Found tool call: {part.tool_name}")
+                    if hasattr(part, 'tool_result'):
+                        tool_result = part.tool_result
+                        print(f"🔍 DEBUG: Tool result type: {type(tool_result)}")
+                        if isinstance(tool_result, dict):
+                            print(f"🔍 DEBUG: Tool result keys: {list(tool_result.keys())[:10]}")  # First 10 keys
+                            if 'full_recipes' in tool_result:
+                                batch_recipes = tool_result.get('full_recipes', [])
+                                print(f"🔍 DEBUG: Found {len(batch_recipes)} recipes via parts.tool_result")
+                                all_recipes.extend(batch_recipes)
+                                search_query = tool_result.get('searchQuery', search_query)
+            
+            # Original extraction logic as fallback
             if hasattr(message, 'content'):
                 content = message.content
                 if isinstance(content, list):
@@ -167,14 +186,9 @@ async def search_recipes(request: SearchRequest):
                             print(f"🔍 DEBUG: Tool output keys: {list(output.keys()) if isinstance(output, dict) else 'Not dict'}")
                             if isinstance(output, dict) and 'full_recipes' in output:
                                 batch_recipes = output.get('full_recipes', [])
-                                print(f"🔍 DEBUG: Found {len(batch_recipes)} recipes in tool output")
+                                print(f"🔍 DEBUG: Found {len(batch_recipes)} recipes via content.output")
                                 all_recipes.extend(batch_recipes)
                                 search_query = output.get('searchQuery', search_query)
-                            elif isinstance(output, dict):
-                                # Check for other possible recipe data structures
-                                for key in output.keys():
-                                    if 'recipe' in key.lower():
-                                        print(f"🔍 DEBUG: Found recipe-related key: {key}")
         
         # Also check if session has recipes (agent might have updated it directly)
         if not all_recipes and session.current_batch_recipes:
