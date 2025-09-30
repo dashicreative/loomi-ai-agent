@@ -67,6 +67,13 @@ async def process_all_recipe_ingredients(recipes: List[Dict], openai_key: str = 
     Returns:
         List of recipes with parsed ingredients in structured format
     """
+    # DEBUG: Track input to Stage 9A main function
+    print(f"🔍 DEBUG STAGE 9A MAIN: Received {len(recipes)} recipes")
+    for i, recipe in enumerate(recipes):
+        url = recipe.get('source_url', 'NO_URL')
+        title = recipe.get('title', 'NO_TITLE')[:50]
+        print(f"🔍 DEBUG STAGE 9A MAIN INPUT {i+1}: {url} - {title}")
+    
     if not recipes:
         return recipes
         
@@ -86,6 +93,13 @@ async def process_all_recipe_ingredients(recipes: List[Dict], openai_key: str = 
     
     spaced_recipes = await process_all_spacing_llm_parallel(recipes, api_key)
     
+    # DEBUG: Check after spacing
+    print(f"🔍 DEBUG STAGE 9A SPACING: After spacing - {len(spaced_recipes)} recipes")
+    for i, recipe in enumerate(spaced_recipes):
+        url = recipe.get('source_url', 'NO_URL')
+        title = recipe.get('title', 'NO_TITLE')[:50]
+        print(f"🔍 DEBUG STAGE 9A SPACING {i+1}: {url} - {title}")
+    
     spacing_time = time.time() - spacing_start
     print(f"   ✅ Spacing fixes completed: {spacing_time:.2f}s")
     
@@ -94,6 +108,13 @@ async def process_all_recipe_ingredients(recipes: List[Dict], openai_key: str = 
     labeling_start = time.time()
     
     labeled_recipes = await _label_all_ingredients_parallel(spaced_recipes, api_key)
+    
+    # DEBUG: Check after labeling
+    print(f"🔍 DEBUG STAGE 9A LABELING: After labeling - {len(labeled_recipes)} recipes")
+    for i, recipe in enumerate(labeled_recipes):
+        url = recipe.get('source_url', 'NO_URL')
+        title = recipe.get('title', 'NO_TITLE')[:50]
+        print(f"🔍 DEBUG STAGE 9A LABELING {i+1}: {url} - {title}")
     
     labeling_time = time.time() - labeling_start
     print(f"   ✅ Labeling completed: {labeling_time:.2f}s")
@@ -104,12 +125,26 @@ async def process_all_recipe_ingredients(recipes: List[Dict], openai_key: str = 
     
     parsed_recipes = await _parse_all_ingredients_parallel(labeled_recipes, api_key)
     
+    # DEBUG: Check after parsing
+    print(f"🔍 DEBUG STAGE 9A PARSING: After parsing - {len(parsed_recipes)} recipes")
+    for i, recipe in enumerate(parsed_recipes):
+        url = recipe.get('source_url', 'NO_URL')
+        title = recipe.get('title', 'NO_TITLE')[:50]
+        print(f"🔍 DEBUG STAGE 9A PARSING {i+1}: {url} - {title}")
+    
     parsing_time = time.time() - parsing_start
     total_time = time.time() - total_start
     
     print(f"   ✅ Parsing completed: {parsing_time:.2f}s")
     print(f"🎉 Total ingredient processing: {total_time:.2f}s")
     print("=" * 60)
+    
+    # DEBUG: Final Stage 9A output check
+    print(f"🔍 DEBUG STAGE 9A FINAL: Returning {len(parsed_recipes)} recipes")
+    for i, recipe in enumerate(parsed_recipes):
+        url = recipe.get('source_url', 'NO_URL')
+        title = recipe.get('title', 'NO_TITLE')[:50]
+        print(f"🔍 DEBUG STAGE 9A FINAL {i+1}: {url} - {title}")
     
     return parsed_recipes
 
@@ -564,13 +599,39 @@ async def _parse_all_ingredients_parallel(labeled_recipes: List[Dict], api_key: 
     
     # Handle any exceptions
     results = []
+    
+    # DEBUG: Check what we're working with
+    print(f"🔍 DEBUG PARSE EXCEPTION HANDLING: Processing {len(parsed_recipes)} results")
+    print(f"🔍 DEBUG PARSE EXCEPTION HANDLING: Have {len(labeled_recipes)} labeled recipes")
+    
     for i, result in enumerate(parsed_recipes):
         if isinstance(result, Exception):
             print(f"⚠️  Parsing failed for recipe {i+1}: {result}")
+            
+            # DEBUG: Show what we're substituting
+            original_recipe = labeled_recipes[i]
+            original_url = original_recipe.get('source_url', 'NO_URL')
+            original_title = original_recipe.get('title', 'NO_TITLE')[:50]
+            print(f"🔍 DEBUG SUBSTITUTION: Recipe {i+1} failed, substituting with: {original_url} - {original_title}")
+            
             # Keep original recipe with basic ingredients
             results.append(labeled_recipes[i])
         else:
+            # DEBUG: Show successful parse
+            if isinstance(result, dict):
+                result_url = result.get('source_url', 'NO_URL')
+                result_title = result.get('title', 'NO_TITLE')[:50]
+                print(f"🔍 DEBUG SUCCESS: Recipe {i+1} parsed successfully: {result_url} - {result_title}")
+            
             results.append(result)
+    
+    # DEBUG: Final results check
+    print(f"🔍 DEBUG PARSE FINAL: Returning {len(results)} results")
+    for i, recipe in enumerate(results):
+        if isinstance(recipe, dict):
+            url = recipe.get('source_url', 'NO_URL')
+            title = recipe.get('title', 'NO_TITLE')[:50]
+            print(f"🔍 DEBUG PARSE RESULT {i+1}: {url} - {title}")
     
     return results
 
@@ -896,6 +957,8 @@ JSON FORMAT:
         
     except Exception as e:
         print(f"   ⚠️  Complex ingredient parsing failed: {e}")
+        print(f"   ⚠️  Error type: {type(e).__name__}")
+        print(f"   ⚠️  Error details: {str(e)[:200]}")
         return _fallback_complex_parsing(ingredients)
 
 

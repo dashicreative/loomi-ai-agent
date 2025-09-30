@@ -188,25 +188,86 @@ def extract_from_structured_html(soup: BeautifulSoup, url: str) -> Optional[Dict
     # Extract nutrition using existing function
     recipe_data['nutrition'] = extract_nutrition_from_html(soup)
     
-    # Extract image - try multiple selectors
-    image_selectors = [
-        '.recipe-image img',
-        '.recipe-hero img',
-        '[class*="recipe"] img',
-        'img[class*="recipe"]'
+    # Extract image with improved selectors and validation
+    def is_valid_recipe_image(src_url: str, img_elem) -> bool:
+        """Validate if image is appropriate for recipe display."""
+        if not src_url:
+            return False
+            
+        # Reject SVG icons and UI elements
+        if '.svg' in src_url.lower() or 'icon' in src_url.lower():
+            return False
+            
+        # Reject clearly non-food images
+        reject_keywords = ['arrow', 'button', 'nav', 'menu', 'logo', 'social', 'pinterest', 'facebook']
+        if any(keyword in src_url.lower() for keyword in reject_keywords):
+            return False
+            
+        # Check image dimensions if available
+        width = img_elem.get('width')
+        height = img_elem.get('height')
+        if width and height:
+            try:
+                w, h = int(width), int(height)
+                # Reject very small images (likely icons)
+                if w < 100 or h < 100:
+                    return False
+            except (ValueError, TypeError):
+                pass
+                
+        return True
+    
+    # Priority selectors for main recipe images
+    hero_selectors = [
+        'meta[property="og:image"]',  # Open Graph image (most reliable)
+        '.recipe-hero img[src*="1200"]',  # Large hero images
+        '.recipe-hero img[src*="750"]',   # Medium hero images  
+        '.recipe-image img[src*="1200"]',
+        '.recipe-image img[src*="750"]',
+        'img[class*="hero"][src*="1200"]',
+        'img[class*="hero"][src*="750"]',
     ]
     
-    for selector in image_selectors:
-        img_elem = soup.select_one(selector)
-        if img_elem:
-            src = img_elem.get('src') or img_elem.get('data-src')
-            if src:
-                # Convert relative URLs to absolute
-                if src.startswith('/'):
-                    parsed = urlparse(url)
-                    src = f"{parsed.scheme}://{parsed.netloc}{src}"
-                recipe_data['image_url'] = src
-                break
+    # Try Open Graph and large images first
+    for selector in hero_selectors:
+        if 'meta[property="og:image"]' in selector:
+            meta_elem = soup.select_one(selector)
+            if meta_elem:
+                src = meta_elem.get('content')
+                if src and is_valid_recipe_image(src, meta_elem):
+                    # Convert relative URLs to absolute
+                    if src.startswith('/'):
+                        parsed = urlparse(url)
+                        src = f"{parsed.scheme}://{parsed.netloc}{src}"
+                    recipe_data['image_url'] = src
+                    break
+        else:
+            img_elem = soup.select_one(selector)
+            if img_elem:
+                src = img_elem.get('src') or img_elem.get('data-src')
+                if src and is_valid_recipe_image(src, img_elem):
+                    # Convert relative URLs to absolute
+                    if src.startswith('/'):
+                        parsed = urlparse(url)
+                        src = f"{parsed.scheme}://{parsed.netloc}{src}"
+                    recipe_data['image_url'] = src
+                    break
+    
+    # Fallback: try to find any large image if hero search failed
+    if not recipe_data.get('image_url'):
+        all_images = soup.find_all('img')
+        for img in all_images:
+            src = img.get('src') or img.get('data-src')
+            if src and is_valid_recipe_image(src, img):
+                # Prioritize images with food-related keywords or large sizes
+                src_lower = src.lower()
+                if any(food_word in src_lower for food_word in ['recipe', 'food', 'cook', 'dish', 'meal']):
+                    # Convert relative URLs to absolute
+                    if src.startswith('/'):
+                        parsed = urlparse(url)
+                        src = f"{parsed.scheme}://{parsed.netloc}{src}"
+                    recipe_data['image_url'] = src
+                    break
     
     # Extract timing and servings - basic patterns
     timing_text = soup.get_text().lower()

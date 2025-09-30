@@ -142,6 +142,13 @@ async def categorize_uncategorized_ingredients_parallel(recipes: List[Dict], api
     Returns:
         List of recipes with categorized ingredients
     """
+    # DEBUG: Track input to Stage 9B main function
+    print(f"🔍 DEBUG STAGE 9B MAIN: Received {len(recipes)} recipes")
+    for i, recipe in enumerate(recipes):
+        url = recipe.get('source_url', 'NO_URL')
+        title = recipe.get('title', 'NO_TITLE')[:50]
+        print(f"🔍 DEBUG STAGE 9B MAIN INPUT {i+1}: {url} - {title}")
+    
     if not recipes:
         return recipes
         
@@ -162,10 +169,15 @@ async def categorize_uncategorized_ingredients_parallel(recipes: List[Dict], api
     recipes_with_keywords = []
     uncategorized_counts = []
     
-    for recipe in recipes:
+    for i, recipe in enumerate(recipes):
         ingredients = recipe.get('ingredients', [])
         categorized_ingredients = []
         uncategorized_count = 0
+        
+        # DEBUG: Track per-recipe processing
+        url = recipe.get('source_url', 'NO_URL')
+        title = recipe.get('title', 'NO_TITLE')[:30]
+        print(f"🔍 DEBUG STAGE 9B KEYWORD: Processing recipe {i+1} - {title}")
         
         for ingredient in ingredients:
             if isinstance(ingredient, dict):
@@ -194,6 +206,9 @@ async def categorize_uncategorized_ingredients_parallel(recipes: List[Dict], api
         recipe_copy['ingredients'] = categorized_ingredients
         recipes_with_keywords.append(recipe_copy)
         uncategorized_counts.append(uncategorized_count)
+        
+        # DEBUG: Confirm recipe preserved
+        print(f"🔍 DEBUG STAGE 9B KEYWORD: Recipe {i+1} processed - {recipe_copy.get('source_url', 'NO_URL')[:50]}")
     
     keyword_time = time.time() - keyword_start
     total_uncategorized = sum(uncategorized_counts)
@@ -208,28 +223,61 @@ async def categorize_uncategorized_ingredients_parallel(recipes: List[Dict], api
         
         # Create tasks for parallel processing (one per recipe)
         llm_tasks = []
+        print(f"🔍 DEBUG LLM TASKS: Creating tasks for {len(recipes_with_keywords)} recipes")
+        
         for i, recipe in enumerate(recipes_with_keywords):
+            recipe_url = recipe.get('source_url', 'NO_URL')
+            recipe_title = recipe.get('title', 'NO_TITLE')[:30]
+            
             if uncategorized_counts[i] > 0:
+                print(f"🔍 DEBUG LLM TASK {i+1}: Creating LLM task for {recipe_title} ({uncategorized_counts[i]} uncategorized)")
                 task = _categorize_recipe_ingredients_llm(recipe, api_key)
                 llm_tasks.append(task)
             else:
+                print(f"🔍 DEBUG LLM TASK {i+1}: No LLM needed for {recipe_title} (all categorized)")
                 # No uncategorized ingredients, return as-is
-                async def return_recipe():
-                    return recipe
+                async def return_recipe(r=recipe):  # Capture recipe in closure
+                    return r
                 llm_tasks.append(return_recipe())
         
         # Execute all LLM calls in parallel
         llm_results = await asyncio.gather(*llm_tasks, return_exceptions=True)
+        
+        # DEBUG: Track LLM results processing
+        print(f"🔍 DEBUG LLM RESULTS: Processing {len(llm_results)} LLM results")
+        print(f"🔍 DEBUG LLM RESULTS: Have {len(recipes_with_keywords)} keyword recipes")
         
         # Process results and handle exceptions
         final_recipes = []
         for i, result in enumerate(llm_results):
             if isinstance(result, Exception):
                 print(f"   ⚠️  LLM categorization failed for recipe {i+1}: {result}")
+                print(f"   ⚠️  Exception type: {type(result).__name__}")
+                
+                # DEBUG: Show what we're substituting
+                original_recipe = recipes_with_keywords[i]
+                original_url = original_recipe.get('source_url', 'NO_URL')
+                original_title = original_recipe.get('title', 'NO_TITLE')[:50]
+                print(f"🔍 DEBUG LLM SUBSTITUTION: Recipe {i+1} failed, substituting with: {original_url} - {original_title}")
+                
                 # Keep keyword-only results
                 final_recipes.append(recipes_with_keywords[i])
             else:
+                # DEBUG: Show successful LLM result
+                if isinstance(result, dict):
+                    result_url = result.get('source_url', 'NO_URL')
+                    result_title = result.get('title', 'NO_TITLE')[:50]
+                    print(f"🔍 DEBUG LLM SUCCESS: Recipe {i+1} categorized successfully: {result_url} - {result_title}")
+                
                 final_recipes.append(result)
+        
+        # DEBUG: Check final LLM results array
+        print(f"🔍 DEBUG LLM FINAL: Processed into {len(final_recipes)} final recipes")
+        for i, recipe in enumerate(final_recipes):
+            if isinstance(recipe, dict):
+                url = recipe.get('source_url', 'NO_URL')
+                title = recipe.get('title', 'NO_TITLE')[:50]
+                print(f"🔍 DEBUG LLM FINAL {i+1}: {url} - {title}")
         
         llm_time = time.time() - llm_start
         print(f"   ✅ LLM categorization completed: {llm_time:.2f}s")
@@ -241,6 +289,13 @@ async def categorize_uncategorized_ingredients_parallel(recipes: List[Dict], api
     total_time = time.time() - total_start
     print(f"🎉 Total categorization time: {total_time:.2f}s")
     print("=" * 60)
+    
+    # DEBUG: Final Stage 9B output check
+    print(f"🔍 DEBUG STAGE 9B FINAL: Returning {len(final_recipes)} recipes")
+    for i, recipe in enumerate(final_recipes):
+        url = recipe.get('source_url', 'NO_URL')
+        title = recipe.get('title', 'NO_TITLE')[:50]
+        print(f"🔍 DEBUG STAGE 9B FINAL {i+1}: {url} - {title}")
     
     return final_recipes
 

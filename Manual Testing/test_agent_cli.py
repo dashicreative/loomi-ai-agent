@@ -11,6 +11,7 @@ import os
 import time
 import sys
 from pathlib import Path
+from datetime import datetime
 
 # Add current directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -20,20 +21,49 @@ from Recipe_Discovery_Agent.Dependencies import RecipeDeps, SessionContext
 from dotenv import load_dotenv
 import logfire
 
+
+class TeeOutput:
+    """Redirect output to both terminal and file"""
+    def __init__(self, file_path):
+        self.terminal = sys.stdout
+        self.file = open(file_path, 'w', encoding='utf-8')
+        
+    def write(self, message):
+        self.terminal.write(message)
+        self.file.write(message)
+        self.file.flush()  # Ensure immediate write
+        
+    def flush(self):
+        self.terminal.flush()
+        self.file.flush()
+        
+    def close(self):
+        self.file.close()
+
 # Load environment variables
 load_dotenv()
 
 def main():
-    print("🧪 Recipe Discovery Agent - LOCAL CLI TEST MODE")
-    print("🔧 This is for testing/debugging - same agent as Railway API")
+    # Create debug output file with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    debug_file = f"debug_output_{timestamp}.txt"
+    
+    # Redirect stdout to both terminal and file
+    tee = TeeOutput(debug_file)
+    sys.stdout = tee
+    
+    print(f"🧪 Recipe Discovery Agent - LOCAL CLI TEST MODE")
+    print(f"🔧 This is for testing/debugging - same agent as Railway API")
+    print(f"📄 Debug output being saved to: {debug_file}")
     print("Type 'quit' to exit\n")
     
-    # Validate required environment variables
-    required_vars = {
-        'OPENAI_API_KEY': os.getenv("OPENAI_API_KEY"),
-        'SERPAPI_KEY': os.getenv("SERPAPI_KEY"), 
-        'FIRECRAWL_API_KEY': os.getenv("FIRECRAWL_API_KEY")
-    }
+    try:
+        # Validate required environment variables
+        required_vars = {
+            'OPENAI_API_KEY': os.getenv("OPENAI_API_KEY"),
+            'SERPAPI_KEY': os.getenv("SERPAPI_KEY"), 
+            'FIRECRAWL_API_KEY': os.getenv("FIRECRAWL_API_KEY")
+        }
     
     missing_vars = [var for var, value in required_vars.items() if not value]
     if missing_vars:
@@ -146,6 +176,12 @@ def main():
             print(f"❌ Error: {e}")
             import traceback
             traceback.print_exc()
+    
+    finally:
+        # Restore stdout and close file
+        sys.stdout = tee.terminal
+        tee.close()
+        print(f"\n📄 Debug output saved to: {debug_file}")
 
 if __name__ == "__main__":
     main()

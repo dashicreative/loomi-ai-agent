@@ -134,6 +134,13 @@ def _format_recipes_sync(processed_recipes: List[Dict], max_recipes: int = 5, fa
     """
     Synchronous recipe formatting logic (shared by both async and sync versions).
     """
+    # DEBUG: Log input data to formatting function
+    print(f"🔍 DEBUG FORMAT FUNCTION: Received {len(processed_recipes)} recipes")
+    for i, recipe in enumerate(processed_recipes):
+        url = recipe.get('source_url', 'NO_URL')
+        title = recipe.get('title', 'NO_TITLE')[:50]
+        print(f"🔍 DEBUG FORMAT INPUT {i+1}: {url} - {title}")
+    
     formatted_recipes = []
     
     for recipe in processed_recipes:
@@ -184,6 +191,20 @@ def _format_recipes_sync(processed_recipes: List[Dict], max_recipes: int = 5, fa
             formatted_recipe["_nutrition_match_percentage"] = nutrition_percentage
         
         formatted_recipes.append(formatted_recipe)
+        
+        # DEBUG: Log each formatted recipe as it's created
+        print(f"🔍 DEBUG FORMAT OUTPUT {len(formatted_recipes)}: ID={formatted_recipe['id']}, URL={formatted_recipe['sourceUrl']}, Title={formatted_recipe['title'][:50]}")
+    
+    # DEBUG: Final output summary
+    print(f"🔍 DEBUG FORMAT FUNCTION: Returning {len(formatted_recipes)} formatted recipes")
+    output_urls = [r.get('sourceUrl', 'NO_URL') for r in formatted_recipes]
+    unique_output_urls = set(output_urls)
+    if len(output_urls) != len(unique_output_urls):
+        print(f"🚨 DEBUG FORMAT FUNCTION: DUPLICATE URLS IN OUTPUT! {len(output_urls)} total vs {len(unique_output_urls)} unique")
+        from collections import Counter
+        url_counts = Counter(output_urls)
+        duplicates = {url: count for url, count in url_counts.items() if count > 1}
+        print(f"🚨 DEBUG FORMAT DUPLICATES: {duplicates}")
     
     return formatted_recipes
 

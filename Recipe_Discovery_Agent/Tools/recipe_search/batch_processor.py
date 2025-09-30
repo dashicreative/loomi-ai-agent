@@ -41,6 +41,32 @@ from Tools.recipe_search.pipeline.stage_9b_ingredient_categorization import cate
 from urllib.parse import urlparse
 from Tools.recipe_search.pipeline.utils.constants import PRIORITY_SITES, BLOCKED_SITES
 
+
+def merge_recipes_with_deduplication(existing_recipes: List[Dict], new_recipes: List[Dict]) -> List[Dict]:
+    """Merge new recipes with existing ones, deduplicating by source_url."""
+    existing_urls = {recipe.get('source_url', '') for recipe in existing_recipes}
+    merged = existing_recipes.copy()
+    
+    # DEBUG: Track merge details
+    print(f"🔍 DEBUG MERGE FUNCTION: Existing URLs: {list(existing_urls)[:5]}{'...' if len(existing_urls) > 5 else ''}")
+    
+    added_count = 0
+    skipped_count = 0
+    
+    for recipe in new_recipes:
+        recipe_url = recipe.get('source_url', '')
+        if recipe_url and recipe_url not in existing_urls:
+            merged.append(recipe)
+            existing_urls.add(recipe_url)
+            added_count += 1
+            print(f"🔍 DEBUG MERGE: ADDED {recipe_url}")
+        else:
+            skipped_count += 1
+            print(f"🔍 DEBUG MERGE: SKIPPED {recipe_url} (duplicate or empty)")
+    
+    print(f"🔍 DEBUG MERGE RESULT: Added {added_count}, Skipped {skipped_count}, Total: {len(merged)}")
+    return merged
+
 # Import parsers for nutrition processing
 from Tools.Detailed_Recipe_Parsers.nutrition_parser import parse_nutrition_list
 
@@ -97,11 +123,20 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     search_results = await search_recipes_parallel_priority(ctx, query)
     raw_results = search_results.get("results", [])
     
+    # DEBUG: Track search results
+    print(f"🔍 DEBUG: Raw search results: {len(raw_results)} total")
+    unique_search_urls = set(r.get('url', '') for r in raw_results)
+    print(f"🔍 DEBUG: Unique search URLs: {len(unique_search_urls)}")
+    
     # Filter out excluded URLs
     if urls_to_exclude:
         filtered_results = [r for r in raw_results if r.get('url') not in urls_to_exclude]
         print(f"   Filtered: {len(raw_results)} → {len(filtered_results)} URLs (excluded {len(raw_results) - len(filtered_results)})")
         raw_results = filtered_results
+        
+        # DEBUG: Track after filtering
+        unique_filtered_urls = set(r.get('url', '') for r in filtered_results)
+        print(f"🔍 DEBUG: Unique filtered URLs: {len(unique_filtered_urls)}")
     
     stage1_time = time.time() - stage1_start
     stage_logger.complete_stage(1, 
@@ -189,6 +224,7 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         all_failed_parses = []
         qualified_recipes = []
         all_processed_recipes = []  # Track all recipes with percentage data for fallback
+        final_ranked_recipes = []  # Initialize early to prevent overwrites
         batch_count = 0
         url_backlog = []
         
@@ -429,6 +465,14 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         # Accumulate stage timing
         total_stage4_time += stage4_time
         
+        # DEBUG: Track batch parsing results
+        print(f"🔍 DEBUG BATCH {batch_count}: Parsed {len(successful_parses)} recipes")
+        if successful_parses:
+            batch_urls = [r.get('source_url', 'NO_URL') for r in successful_parses]
+            print(f"🔍 DEBUG BATCH {batch_count}: URLs parsed: {batch_urls}")
+            batch_titles = [r.get('title', 'NO_TITLE')[:30] for r in successful_parses]
+            print(f"🔍 DEBUG BATCH {batch_count}: Titles: {batch_titles}")
+        
         # Add batch results to overall collections
         all_recipes.extend(successful_parses)
         all_fp1_failures.extend(fp1_failures)
@@ -443,8 +487,20 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
             qualified_recipes.extend(batch_qualified)
             all_processed_recipes.extend(batch_processed)  # Accumulate all processed recipes
             
-            # Phase 2: Apply domain diversity to accumulated qualified recipes
-            final_ranked_recipes = apply_domain_diversity_filter(qualified_recipes, max_per_domain=2)
+            # Phase 2: Apply domain diversity to accumulated qualified recipes and merge with existing
+            newly_diversified = apply_domain_diversity_filter(qualified_recipes, max_per_domain=2)
+            
+            # DEBUG: Track merge operation
+            print(f"🔍 DEBUG MERGE BATCH {batch_count}: Before merge - existing: {len(final_ranked_recipes)}, new: {len(newly_diversified)}")
+            if newly_diversified:
+                new_urls = [r.get('source_url', 'NO_URL') for r in newly_diversified]
+                print(f"🔍 DEBUG MERGE BATCH {batch_count}: New URLs to merge: {new_urls}")
+            
+            final_ranked_recipes = merge_recipes_with_deduplication(final_ranked_recipes, newly_diversified)
+            
+            print(f"🔍 DEBUG MERGE BATCH {batch_count}: After merge - total: {len(final_ranked_recipes)}")
+            merged_urls = [r.get('source_url', 'NO_URL') for r in final_ranked_recipes]
+            print(f"🔍 DEBUG MERGE BATCH {batch_count}: Final URLs: {merged_urls}")
         else:
             final_ranked_recipes = all_recipes
         stage5_time = time.time() - stage5_start
@@ -559,16 +615,33 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         # Stage 5: Final Ranking after backlog processing
         stage5_start = time.time()
         if len(qualified_recipes) > 0:
-            # Phase 2: Rank qualified recipes by relevance with domain diversity
+            # Phase 2: Rank qualified recipes by relevance with domain diversity and merge with existing
             relevance_ranked = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
-            final_ranked_recipes = apply_domain_diversity_filter(relevance_ranked, max_per_domain=2)
+            newly_diversified = apply_domain_diversity_filter(relevance_ranked, max_per_domain=2)
+            
+            # DEBUG: Track backlog merge
+            print(f"🔍 DEBUG BACKLOG MERGE: Before merge - existing: {len(final_ranked_recipes)}, new: {len(newly_diversified)}")
+            if newly_diversified:
+                new_urls = [r.get('source_url', 'NO_URL') for r in newly_diversified]
+                print(f"🔍 DEBUG BACKLOG MERGE: New URLs to merge: {new_urls}")
+            
+            final_ranked_recipes = merge_recipes_with_deduplication(final_ranked_recipes, newly_diversified)
+            
+            print(f"🔍 DEBUG BACKLOG MERGE: After merge - total: {len(final_ranked_recipes)}")
         elif len(all_recipes) > 1:
             # Fallback: verify all recipes if no qualified recipes found yet
             fallback_qualified, fallback_processed = await verify_recipes_meet_requirements(all_recipes, requirements, ctx.deps.openai_key, user_query)
             qualified_recipes = fallback_qualified
             all_processed_recipes.extend(fallback_processed)  # Accumulate processed recipes
             relevance_ranked = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
-            final_ranked_recipes = apply_domain_diversity_filter(relevance_ranked, max_per_domain=2)
+            newly_diversified = apply_domain_diversity_filter(relevance_ranked, max_per_domain=2)
+            
+            # DEBUG: Track fallback merge
+            print(f"🔍 DEBUG FALLBACK MERGE: Before merge - existing: {len(final_ranked_recipes)}, new: {len(newly_diversified)}")
+            
+            final_ranked_recipes = merge_recipes_with_deduplication(final_ranked_recipes, newly_diversified)
+            
+            print(f"🔍 DEBUG FALLBACK MERGE: After merge - total: {len(final_ranked_recipes)}")
         else:
             final_ranked_recipes = all_recipes
         stage5_time = time.time() - stage5_start
@@ -626,7 +699,16 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         
         # Add top diversified closest matches to fill remaining slots
         closest_matches = diversified_closest[:remaining_slots]
+        
+        # DEBUG: Track closest matches addition
+        print(f"🔍 DEBUG CLOSEST MATCHES: Adding {len(closest_matches)} closest matches")
+        if closest_matches:
+            closest_urls = [r.get('source_url', 'NO_URL') for r in closest_matches]
+            print(f"🔍 DEBUG CLOSEST MATCHES: URLs being added: {closest_urls}")
+        
         final_ranked_recipes.extend(closest_matches)
+        
+        print(f"🔍 DEBUG CLOSEST MATCHES: Final count after extend: {len(final_ranked_recipes)}")
         
         
         logfire.info("fallback_applied",
@@ -663,8 +745,43 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         print("\n🔧 STAGE 9A: Advanced Ingredient Processing")
         stage9a_start = time.time()
         
+        # DEBUG: Check what we're about to pass to Stage 9A
+        recipes_for_stage9 = final_ranked_recipes[:needed_count]
+        print(f"🔍 DEBUG STAGE 9A INPUT: Slicing {len(final_ranked_recipes)} recipes to {len(recipes_for_stage9)} for Stage 9A")
+        for i, recipe in enumerate(recipes_for_stage9):
+            url = recipe.get('source_url', 'NO_URL')
+            title = recipe.get('title', 'NO_TITLE')[:50]
+            print(f"🔍 DEBUG STAGE 9A INPUT {i+1}: {url} - {title}")
+        
+        # Check for duplicates in Stage 9A input
+        stage9a_urls = [r.get('source_url', '') for r in recipes_for_stage9]
+        unique_stage9a_urls = set(stage9a_urls)
+        if len(stage9a_urls) != len(unique_stage9a_urls):
+            print(f"🚨 DEBUG STAGE 9A INPUT: DUPLICATE URLS! {len(stage9a_urls)} total vs {len(unique_stage9a_urls)} unique")
+            from collections import Counter
+            url_counts = Counter(stage9a_urls)
+            duplicates = {url: count for url, count in url_counts.items() if count > 1}
+            print(f"🚨 DEBUG STAGE 9A DUPLICATES: {duplicates}")
+        
         # Process ingredients in parallel for final recipes
-        final_recipes_with_ingredients = await process_all_recipe_ingredients(final_ranked_recipes[:needed_count])
+        final_recipes_with_ingredients = await process_all_recipe_ingredients(recipes_for_stage9)
+        
+        # DEBUG: Check Stage 9A output
+        print(f"🔍 DEBUG STAGE 9A OUTPUT: Received {len(final_recipes_with_ingredients)} recipes from Stage 9A")
+        for i, recipe in enumerate(final_recipes_with_ingredients):
+            url = recipe.get('source_url', 'NO_URL')
+            title = recipe.get('title', 'NO_TITLE')[:50]
+            print(f"🔍 DEBUG STAGE 9A OUTPUT {i+1}: {url} - {title}")
+        
+        # Check for duplicates in Stage 9A output
+        stage9a_output_urls = [r.get('source_url', '') for r in final_recipes_with_ingredients]
+        unique_stage9a_output_urls = set(stage9a_output_urls)
+        if len(stage9a_output_urls) != len(unique_stage9a_output_urls):
+            print(f"🚨 DEBUG STAGE 9A OUTPUT: CORRUPTION DETECTED! {len(stage9a_output_urls)} total vs {len(unique_stage9a_output_urls)} unique")
+            from collections import Counter
+            url_counts = Counter(stage9a_output_urls)
+            duplicates = {url: count for url, count in url_counts.items() if count > 1}
+            print(f"🚨 DEBUG STAGE 9A CORRUPTION: {duplicates}")
         
         stage9a_time = time.time() - stage9a_start
         print(f"   ✅ Advanced ingredient parsing completed: {stage9a_time:.2f}s")
@@ -673,11 +790,35 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         print("\n🏷️ STAGE 9B: Ingredient Categorization")
         stage9b_start = time.time()
         
+        # DEBUG: Check Stage 9B input
+        print(f"🔍 DEBUG STAGE 9B INPUT: Sending {len(final_recipes_with_ingredients)} recipes to Stage 9B")
+        for i, recipe in enumerate(final_recipes_with_ingredients):
+            url = recipe.get('source_url', 'NO_URL')
+            title = recipe.get('title', 'NO_TITLE')[:50]
+            print(f"🔍 DEBUG STAGE 9B INPUT {i+1}: {url} - {title}")
+        
         # Categorize ingredients using hybrid keyword + LLM approach
         final_recipes_with_categories = await categorize_uncategorized_ingredients_parallel(
             final_recipes_with_ingredients, 
             ctx.deps.openai_key
         )
+        
+        # DEBUG: Check Stage 9B output
+        print(f"🔍 DEBUG STAGE 9B OUTPUT: Received {len(final_recipes_with_categories)} recipes from Stage 9B")
+        for i, recipe in enumerate(final_recipes_with_categories):
+            url = recipe.get('source_url', 'NO_URL')
+            title = recipe.get('title', 'NO_TITLE')[:50]
+            print(f"🔍 DEBUG STAGE 9B OUTPUT {i+1}: {url} - {title}")
+        
+        # Check for duplicates in Stage 9B output
+        stage9b_output_urls = [r.get('source_url', '') for r in final_recipes_with_categories]
+        unique_stage9b_output_urls = set(stage9b_output_urls)
+        if len(stage9b_output_urls) != len(unique_stage9b_output_urls):
+            print(f"🚨 DEBUG STAGE 9B OUTPUT: CORRUPTION DETECTED! {len(stage9b_output_urls)} total vs {len(unique_stage9b_output_urls)} unique")
+            from collections import Counter
+            url_counts = Counter(stage9b_output_urls)
+            duplicates = {url: count for url, count in url_counts.items() if count > 1}
+            print(f"🚨 DEBUG STAGE 9B CORRUPTION: {duplicates}")
         
         stage9b_time = time.time() - stage9b_start
         print(f"   ✅ Ingredient categorization completed: {stage9b_time:.2f}s")
@@ -685,6 +826,13 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         # STAGE 9C: Final formatting (with categorized ingredients)
         print("\n📱 STAGE 9C: Final iOS Formatting")
         stage9c_start = time.time()
+        
+        # DEBUG: Check what goes into formatting
+        print(f"🔍 DEBUG STAGE 9C INPUT: Sending {len(final_recipes_with_categories)} recipes to formatting")
+        for i, recipe in enumerate(final_recipes_with_categories):
+            url = recipe.get('source_url', 'NO_URL')
+            title = recipe.get('title', 'NO_TITLE')[:50]
+            print(f"🔍 DEBUG STAGE 9C INPUT {i+1}: {url} - {title}")
         
         formatted_recipes = format_recipes_for_ios(final_recipes_with_categories, needed_count, fallback_used, exact_match_count)
         
@@ -713,11 +861,38 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
     #     # Fallback to basic formatting using Stage 9a
     #     formatted_recipes = format_recipes_for_ios(final_ranked_recipes, needed_count, fallback_used, exact_match_count)
     
+    # DEBUG: Track final recipes before formatting
+    print(f"\n🔍 DEBUG FINAL PRE-FORMAT: {len(final_ranked_recipes)} recipes entering formatting")
+    for i, recipe in enumerate(final_ranked_recipes):
+        url = recipe.get('source_url', 'NO_URL')
+        title = recipe.get('title', 'NO_TITLE')[:50]
+        print(f"🔍 DEBUG PRE-FORMAT {i+1}: {url} - {title}")
+    
+    # Check for duplicate URLs before formatting
+    pre_format_urls = [r.get('source_url', '') for r in final_ranked_recipes]
+    unique_pre_format_urls = set(pre_format_urls)
+    if len(pre_format_urls) != len(unique_pre_format_urls):
+        print(f"🚨 DEBUG DUPLICATE ALERT: {len(pre_format_urls)} total vs {len(unique_pre_format_urls)} unique URLs before formatting!")
+        from collections import Counter
+        url_counts = Counter(pre_format_urls)
+        duplicates = {url: count for url, count in url_counts.items() if count > 1}
+        print(f"🚨 DEBUG DUPLICATES: {duplicates}")
+    
     # Print FINAL formatted output after Stage 9 completion
     import json
     print(f"\n🎯 FINAL FORMATTED OUTPUT (Post-Stage 9):")
     print("=" * 60)
     print(f"Number of formatted recipes: {len(formatted_recipes)}")
+    
+    # DEBUG: Check for duplicates in formatted output
+    formatted_urls = [r.get('sourceUrl', 'NO_URL') for r in formatted_recipes]
+    unique_formatted_urls = set(formatted_urls)
+    if len(formatted_urls) != len(unique_formatted_urls):
+        print(f"🚨 DEBUG DUPLICATE ALERT: {len(formatted_urls)} total vs {len(unique_formatted_urls)} unique URLs in formatted output!")
+        from collections import Counter
+        url_counts = Counter(formatted_urls)
+        duplicates = {url: count for url, count in url_counts.items() if count > 1}
+        print(f"🚨 DEBUG FORMATTED DUPLICATES: {duplicates}")
     
     # Print all recipes for verification
     for i, recipe in enumerate(formatted_recipes):
