@@ -13,8 +13,8 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-# Add current directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent))
+# Add parent directory to path for imports (where Recipe_Discovery_Agent is located)
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from Recipe_Discovery_Agent.Discovery_Agent import create_recipe_discovery_agent
 from Recipe_Discovery_Agent.Dependencies import RecipeDeps, SessionContext
@@ -46,10 +46,15 @@ load_dotenv()
 def main():
     # Create debug output file with timestamp in Logs folder
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    debug_file = f"Logs/debug_output_{timestamp}.txt"
+    
+    # Create Logs folder if it doesn't exist
+    logs_dir = Path(__file__).parent / "Logs"
+    logs_dir.mkdir(exist_ok=True)
+    
+    debug_file = logs_dir / f"debug_output_{timestamp}.txt"
     
     # Redirect stdout to both terminal and file
-    tee = TeeOutput(debug_file)
+    tee = TeeOutput(str(debug_file))
     sys.stdout = tee
     
     print(f"🧪 Recipe Discovery Agent - LOCAL CLI TEST MODE")
