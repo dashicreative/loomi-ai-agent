@@ -71,7 +71,6 @@ def merge_recipes_with_deduplication(existing_recipes: List[Dict], new_recipes: 
 from Tools.Detailed_Recipe_Parsers.nutrition_parser import parse_nutrition_list
 
 # Import modular components
-from Tools.recipe_search.domain_filtering import apply_domain_diversity_filter, apply_domain_diversity_filter_with_existing
 from Tools.recipe_search.stage_logger import PipelineStageLogger
 
 
@@ -487,16 +486,15 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
             qualified_recipes.extend(batch_qualified)
             all_processed_recipes.extend(batch_processed)  # Accumulate all processed recipes
             
-            # Phase 2: Apply domain diversity to accumulated qualified recipes and merge with existing
-            newly_diversified = apply_domain_diversity_filter(qualified_recipes, max_per_domain=2)
+            # Phase 2: Merge accumulated qualified recipes with existing (no diversity filter)
             
             # DEBUG: Track merge operation
-            print(f"🔍 DEBUG MERGE BATCH {batch_count}: Before merge - existing: {len(final_ranked_recipes)}, new: {len(newly_diversified)}")
-            if newly_diversified:
-                new_urls = [r.get('source_url', 'NO_URL') for r in newly_diversified]
+            print(f"🔍 DEBUG MERGE BATCH {batch_count}: Before merge - existing: {len(final_ranked_recipes)}, new: {len(qualified_recipes)}")
+            if qualified_recipes:
+                new_urls = [r.get('source_url', 'NO_URL') for r in qualified_recipes]
                 print(f"🔍 DEBUG MERGE BATCH {batch_count}: New URLs to merge: {new_urls}")
             
-            final_ranked_recipes = merge_recipes_with_deduplication(final_ranked_recipes, newly_diversified)
+            final_ranked_recipes = merge_recipes_with_deduplication(final_ranked_recipes, qualified_recipes)
             
             print(f"🔍 DEBUG MERGE BATCH {batch_count}: After merge - total: {len(final_ranked_recipes)}")
             merged_urls = [r.get('source_url', 'NO_URL') for r in final_ranked_recipes]
@@ -530,13 +528,11 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         # Process backlog URLs (these are primarily list URLs)
         backlog_copy = url_backlog.copy()
         for backlog_idx, backlog_url_dict in enumerate(backlog_copy):
-            # Check if we have enough DIVERSE recipes (not just qualified recipes)
+            # Check if we have enough recipes (no diversity requirement)
             if len(qualified_recipes) >= needed_count:
                 temp_relevance_ranked = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
-                temp_final_recipes = apply_domain_diversity_filter(temp_relevance_ranked, max_per_domain=2)
-                unique_domains = len(set(recipe.get('source_url', '').split('/')[2] for recipe in temp_final_recipes if recipe.get('source_url')))
                 
-                if len(temp_final_recipes) >= needed_count and unique_domains >= 3:
+                if len(temp_relevance_ranked) >= needed_count:
                     break
                 
             url = backlog_url_dict.get('url', '')
@@ -593,11 +589,10 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
                                 qualified_recipes.extend(newly_qualified)
                                 all_processed_recipes.extend(newly_processed)  # Accumulate processed recipes
                                 
-                                # Apply domain diversity and check if we have enough FINAL recipes to stop
+                                # Check if we have enough FINAL recipes to stop (no diversity filter)
                                 temp_relevance_ranked = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
-                                temp_final_recipes = apply_domain_diversity_filter(temp_relevance_ranked, max_per_domain=2)
                                 
-                                if len(temp_final_recipes) >= needed_count:
+                                if len(temp_relevance_ranked) >= needed_count:
                                     logfire.debug("backlog_early_exit", recipes_found=len(temp_final_recipes), session_id=session.session_id)
                                     break
                     
@@ -615,17 +610,16 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         # Stage 5: Final Ranking after backlog processing
         stage5_start = time.time()
         if len(qualified_recipes) > 0:
-            # Phase 2: Rank qualified recipes by relevance with domain diversity and merge with existing
+            # Phase 2: Rank qualified recipes by relevance and merge with existing (no diversity filter)
             relevance_ranked = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
-            newly_diversified = apply_domain_diversity_filter(relevance_ranked, max_per_domain=2)
             
             # DEBUG: Track backlog merge
-            print(f"🔍 DEBUG BACKLOG MERGE: Before merge - existing: {len(final_ranked_recipes)}, new: {len(newly_diversified)}")
-            if newly_diversified:
-                new_urls = [r.get('source_url', 'NO_URL') for r in newly_diversified]
+            print(f"🔍 DEBUG BACKLOG MERGE: Before merge - existing: {len(final_ranked_recipes)}, new: {len(relevance_ranked)}")
+            if relevance_ranked:
+                new_urls = [r.get('source_url', 'NO_URL') for r in relevance_ranked]
                 print(f"🔍 DEBUG BACKLOG MERGE: New URLs to merge: {new_urls}")
             
-            final_ranked_recipes = merge_recipes_with_deduplication(final_ranked_recipes, newly_diversified)
+            final_ranked_recipes = merge_recipes_with_deduplication(final_ranked_recipes, relevance_ranked)
             
             print(f"🔍 DEBUG BACKLOG MERGE: After merge - total: {len(final_ranked_recipes)}")
         elif len(all_recipes) > 1:
@@ -634,12 +628,11 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
             qualified_recipes = fallback_qualified
             all_processed_recipes.extend(fallback_processed)  # Accumulate processed recipes
             relevance_ranked = await rank_qualified_recipes_by_relevance(qualified_recipes, user_query, ctx.deps.openai_key)
-            newly_diversified = apply_domain_diversity_filter(relevance_ranked, max_per_domain=2)
             
             # DEBUG: Track fallback merge
-            print(f"🔍 DEBUG FALLBACK MERGE: Before merge - existing: {len(final_ranked_recipes)}, new: {len(newly_diversified)}")
+            print(f"🔍 DEBUG FALLBACK MERGE: Before merge - existing: {len(final_ranked_recipes)}, new: {len(relevance_ranked)}")
             
-            final_ranked_recipes = merge_recipes_with_deduplication(final_ranked_recipes, newly_diversified)
+            final_ranked_recipes = merge_recipes_with_deduplication(final_ranked_recipes, relevance_ranked)
             
             print(f"🔍 DEBUG FALLBACK MERGE: After merge - total: {len(final_ranked_recipes)}")
         else:
@@ -683,22 +676,8 @@ async def search_and_process_recipes_tool(ctx: RunContext[RecipeDeps], query: st
         # Sort by percentage match (highest first)
         available_closest.sort(key=lambda r: r.get('nutrition_match_percentage', 0), reverse=True)
         
-        # Apply domain diversity to closest matches, considering existing domains
-        existing_domains = {}
-        for recipe in final_ranked_recipes:
-            source_url = recipe.get('source_url', '')
-            if source_url:
-                try:
-                    domain = urlparse(source_url).netloc.lower().replace('www.', '')
-                    existing_domains[domain] = existing_domains.get(domain, 0) + 1
-                except:
-                    pass
-        
-        # Apply domain diversity filter with existing domain awareness
-        diversified_closest = apply_domain_diversity_filter_with_existing(available_closest, existing_domains, max_per_domain=2)
-        
-        # Add top diversified closest matches to fill remaining slots
-        closest_matches = diversified_closest[:remaining_slots]
+        # Add top closest matches to fill remaining slots (no diversity filter)
+        closest_matches = available_closest[:remaining_slots]
         
         # DEBUG: Track closest matches addition
         print(f"🔍 DEBUG CLOSEST MATCHES: Adding {len(closest_matches)} closest matches")
