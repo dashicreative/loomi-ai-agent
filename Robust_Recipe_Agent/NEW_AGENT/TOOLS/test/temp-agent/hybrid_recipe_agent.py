@@ -107,6 +107,11 @@ hybrid_agent = Agent(
 async def search_and_parse_recipes(
     ctx: RunContext[HybridAgentDeps],
     query: str,
+    subject: str = None,
+    dietary_constraints: List[str] = [],
+    allergy_constraints: List[str] = [],
+    nutrition_requirements: List[str] = [],
+    time_constraints: str = None,
     url_count: int = 25,
     search_strategy: str = "priority_only"
 ) -> Dict:
@@ -121,9 +126,19 @@ async def search_and_parse_recipes(
     """
     tool_start = time.time()
     print(f"🔍 [TOOL] Starting search_and_parse_recipes: {url_count} URLs, {search_strategy} strategy")
+    print(f"🎯 [CONSTRAINTS] Agent passed: subject='{subject}', dietary={dietary_constraints}, allergies={allergy_constraints}, nutrition={nutrition_requirements}, time={time_constraints}")
     
     if not ctx.deps.query_start_time:
         ctx.deps.query_start_time = time.time()
+    
+    # Create constraint object from agent parameters
+    agent_constraints = {
+        "subject": subject,
+        "dietary_constraints": dietary_constraints,
+        "allergy_constraints": allergy_constraints, 
+        "nutrition_requirements": nutrition_requirements,
+        "time_constraints": time_constraints
+    }
     
     try:
         # STEP 1: Search for URLs (existing WebSearchTool code)
@@ -236,8 +251,8 @@ async def search_and_parse_recipes(
         print(f"💾 [MEMORY] Stored {len(recipe_summaries)} recipes in session memory (IDs: {ctx.deps.recipe_counter-len(recipe_summaries)+1:03d}-{ctx.deps.recipe_counter:03d})")
         
         result = {
-            "parsed_recipes": parsed_recipes,
-            "backlog_list_urls": list_urls,  # For potential Tool 2 usage
+            "recipe_summaries": recipe_summaries,  # Return summaries, not full recipes
+            "backlog_list_urls": list_urls,
             "timing_info": {
                 "elapsed_seconds": round(elapsed, 1),
                 "recipes_per_second": round(len(parsed_recipes) / elapsed, 2) if elapsed > 0 else 0,
@@ -245,12 +260,50 @@ async def search_and_parse_recipes(
             },
             "quality_assessment": quality_assessment,
             "source_distribution": search_result.get("source_distribution", {}),
-            "recipes_with_constraints": _check_recipes_against_intent(parsed_recipes, ctx.deps.user_intent)
+            "recipes_with_constraints": _check_recipes_against_constraints(parsed_recipes, agent_constraints)
         }
         
         tool_elapsed = time.time() - tool_start
         print(f"✅ [TOOL] search_and_parse_recipes completed in {elapsed:.1f}s: {len(parsed_recipes)} recipes, {len(list_urls)} backlog URLs")
         print(f"⏱️ [TOOL] Total tool execution time: {tool_elapsed:.2f}s")
+        
+        # DEBUG: Show complete search tool output that agent receives
+        print(f"\n🔍 [DEBUG] COMPLETE SEARCH TOOL OUTPUT TO AGENT:")
+        print("=" * 80)
+        
+        # Print high-level data
+        print(f"📊 Quality Assessment: {result['quality_assessment']}")
+        print(f"📊 Source Distribution: {result['source_distribution']}")
+        print(f"📊 Timing Info: {result['timing_info']}")
+        print(f"📋 Recipe Summaries: {len(result['recipe_summaries'])} items")
+        print(f"📋 Constraint Analysis: {len(result['recipes_with_constraints'])} items")
+        print(f"📋 Backlog URLs: {len(result['backlog_list_urls'])} items")
+        
+        # Print ALL recipe summaries (what agent uses for decisions)
+        print(f"\n📝 ALL RECIPE SUMMARIES (Agent Decision Data):")
+        for i, summary in enumerate(result['recipe_summaries'], 1):
+            print(f"\\n   Recipe {i}:")
+            print(f"      ID: {summary.get('recipe_id', 'Unknown')}")
+            print(f"      Title: {summary.get('title', 'Unknown')}")
+            print(f"      URL: {summary.get('url', 'Unknown')}")
+            print(f"      Simple Scores: {summary.get('simple_scores', {})}")
+            print(f"      Constraint Details: {summary.get('constraint_details', {})}")
+            print(f"      Domain: {summary.get('source_domain', 'Unknown')}")
+            print(f"      Has Image: {summary.get('has_image', False)}")
+            print(f"      Cook Time: {summary.get('cook_time_minutes', 'Unknown')} minutes")
+            print(f"      Ingredients: {summary.get('ingredients_summary', 'Unknown')}")
+            print(f"      Instructions: {summary.get('instructions_summary', 'Unknown')}")
+        
+        # Print constraint verification details
+        print(f"\\n📊 CONSTRAINT VERIFICATION DETAILS:")
+        for i, constraint in enumerate(result['recipes_with_constraints'], 1):
+            print(f"\\n   Recipe {i} Constraints:")
+            print(f"      Title: {constraint.get('recipe_title', 'Unknown')}")
+            print(f"      Simple Scores: {constraint.get('simple_scores', {})}")
+            print(f"      Constraint Details: {constraint.get('constraint_details', {})}")
+        
+        print("=" * 80)
+        
         return result
         
     except Exception as e:
@@ -398,187 +451,11 @@ async def parse_backlog_recipes(
         }
 
 
-# TODO: DELETE LATER - Testing agent reasoning vs keyword matching
-    
-    # COMMENTED OUT: Current keyword matching implementation
-    """
-    # Simple intent analysis (can be enhanced later)
-    query_lower = user_query.lower()
-    
-    # Extract subject (main dish/food item)
-    food_terms = [
-        'cake', 'cheesecake', 'bread', 'pizza', 'pasta', 'soup', 'salad',
-        'chicken', 'beef', 'fish', 'dessert', 'cookies', 'pie', 'muffins',
-        'steak', 'curry', 'tacos', 'burgers', 'sandwich', 'smoothie'
-    ]
-    
-    subject = None
-    for term in food_terms:
-        if term in query_lower:
-            subject = term
-            break
-    
-    # Extract ALL constraint types (comprehensive)
-    ingredient_constraints = []
-    allergy_constraints = []
-    nutritional_constraints = []
-    execution_constraints = []
-    
-    # Ingredient/dietary constraints
-    if 'gluten-free' in query_lower:
-        ingredient_constraints.append('gluten-free')
-    if 'vegan' in query_lower:
-        ingredient_constraints.append('vegan')
-    if 'dairy-free' in query_lower:
-        ingredient_constraints.append('dairy-free')
-    if 'keto' in query_lower or 'ketogenic' in query_lower:
-        ingredient_constraints.append('keto')
-    if 'paleo' in query_lower:
-        ingredient_constraints.append('paleo')
-    
-    # Allergy constraints (critical!)
-    if 'nut-free' in query_lower or 'no nuts' in query_lower:
-        allergy_constraints.append('nuts')
-    if 'shellfish-free' in query_lower or 'no shellfish' in query_lower:
-        allergy_constraints.append('shellfish')
-    if 'egg-free' in query_lower or 'no eggs' in query_lower:
-        allergy_constraints.append('eggs')
-    
-    # Nutritional constraints with amounts
-    import re
-    protein_match = re.search(r'(\d+)\s*g?\s*protein', query_lower)
-    if protein_match:
-        nutritional_constraints.append(f"min_protein_{protein_match.group(1)}g")
-    
-    calorie_match = re.search(r'under\s*(\d+)\s*calories?|(\d+)\s*calories?\s*or\s*less', query_lower)
-    if calorie_match:
-        calories = calorie_match.group(1) or calorie_match.group(2)
-        nutritional_constraints.append(f"max_calories_{calories}")
-    
-    # Time/execution constraints
-    time_constraints = None
-    time_match = re.search(r'under\s*(\d+)\s*minutes?', query_lower)
-    if time_match:
-        time_constraints = f"under_{time_match.group(1)}_minutes"
-    elif 'quick' in query_lower or 'fast' in query_lower:
-        time_constraints = 'quick'
-    elif 'easy' in query_lower:
-        execution_constraints.append('easy')
-    
-    print(f"🧠 [INTENT] Extracted constraints: ingredients={ingredient_constraints}, allergies={allergy_constraints}, nutrition={nutritional_constraints}, time={time_constraints}")
-    
-    # Enhance query with "recipe" if needed
-    enhanced_query = user_query
-    recipe_terms = ['recipe', 'recipes', 'how to make', 'cooking', 'baking']
-    has_recipe_term = any(term in query_lower for term in recipe_terms)
-    
-    if subject and not has_recipe_term:
-        enhanced_query = f"{user_query} recipe"
-        print(f"🧠 [INTENT] Enhanced query: '{enhanced_query}'")
-    
-    # Store intent in session memory
-    ctx.deps.user_intent = UserIntent(
-        original_query=user_query,
-        enhanced_query=enhanced_query,
-        subject=subject,
-        ingredient_constraints=ingredient_constraints if ingredient_constraints else None,
-        allergy_constraints=allergy_constraints if allergy_constraints else None,
-        time_constraints=time_constraints,
-        nutritional_constraints=nutritional_constraints if nutritional_constraints else None,
-        execution_constraints=execution_constraints if execution_constraints else None
-    )
-    """
-    
-    # Simple intent analysis (can be enhanced later)
-    query_lower = user_query.lower()
-    
-    # Extract subject (main dish/food item)
-    food_terms = [
-        'cake', 'cheesecake', 'bread', 'pizza', 'pasta', 'soup', 'salad',
-        'chicken', 'beef', 'fish', 'dessert', 'cookies', 'pie', 'muffins',
-        'steak', 'curry', 'tacos', 'burgers', 'sandwich', 'smoothie'
-    ]
-    
-    subject = None
-    for term in food_terms:
-        if term in query_lower:
-            subject = term
-            break
-    
-    # Extract ALL constraint types (comprehensive)
-    ingredient_constraints = []
-    allergy_constraints = []
-    nutritional_constraints = []
-    execution_constraints = []
-    
-    # Ingredient/dietary constraints
-    if 'gluten-free' in query_lower:
-        ingredient_constraints.append('gluten-free')
-    if 'vegan' in query_lower:
-        ingredient_constraints.append('vegan')
-    if 'dairy-free' in query_lower:
-        ingredient_constraints.append('dairy-free')
-    if 'keto' in query_lower or 'ketogenic' in query_lower:
-        ingredient_constraints.append('keto')
-    if 'paleo' in query_lower:
-        ingredient_constraints.append('paleo')
-    
-    # Allergy constraints (critical!)
-    if 'nut-free' in query_lower or 'no nuts' in query_lower:
-        allergy_constraints.append('nuts')
-    if 'shellfish-free' in query_lower or 'no shellfish' in query_lower:
-        allergy_constraints.append('shellfish')
-    if 'egg-free' in query_lower or 'no eggs' in query_lower:
-        allergy_constraints.append('eggs')
-    
-    # Nutritional constraints with amounts
-    import re
-    protein_match = re.search(r'(\d+)\s*g?\s*protein', query_lower)
-    if protein_match:
-        nutritional_constraints.append(f"min_protein_{protein_match.group(1)}g")
-    
-    calorie_match = re.search(r'under\s*(\d+)\s*calories?|(\d+)\s*calories?\s*or\s*less', query_lower)
-    if calorie_match:
-        calories = calorie_match.group(1) or calorie_match.group(2)
-        nutritional_constraints.append(f"max_calories_{calories}")
-    
-    # Time/execution constraints
-    time_constraints = None
-    time_match = re.search(r'under\s*(\d+)\s*minutes?', query_lower)
-    if time_match:
-        time_constraints = f"under_{time_match.group(1)}_minutes"
-    elif 'quick' in query_lower or 'fast' in query_lower:
-        time_constraints = 'quick'
-    elif 'easy' in query_lower:
-        execution_constraints.append('easy')
-    
-    print(f"🧠 [INTENT] Extracted constraints: ingredients={ingredient_constraints}, allergies={allergy_constraints}, nutrition={nutritional_constraints}, time={time_constraints}")
-    
-    # Enhance query with "recipe" if needed
-    enhanced_query = user_query
-    recipe_terms = ['recipe', 'recipes', 'how to make', 'cooking', 'baking']
-    has_recipe_term = any(term in query_lower for term in recipe_terms)
-    
-    if subject and not has_recipe_term:
-        enhanced_query = f"{user_query} recipe"
-        print(f"🧠 [INTENT] Enhanced query: '{enhanced_query}'")
-    
-    # Store intent in session memory
-    ctx.deps.user_intent = UserIntent(
-        original_query=user_query,
-        enhanced_query=enhanced_query,
-        subject=subject,
-        ingredient_constraints=ingredient_constraints if ingredient_constraints else None,
-        allergy_constraints=allergy_constraints if allergy_constraints else None,
-        time_constraints=time_constraints,
-        nutritional_constraints=nutritional_constraints if nutritional_constraints else None,
-        execution_constraints=execution_constraints if execution_constraints else None
-    )
-    
+    # Agent handles intent internally - no tool needed!
     intent_elapsed = time.time() - intent_start
     print(f"⏱️ [INTENT] Intent analysis completed in {intent_elapsed:.2f}s")
     
-    return f"Intent analyzed: subject='{subject}', enhanced_query='{enhanced_query}'"
+    return f"Agent should extract constraints internally and pass to search tool"
 
 
 @hybrid_agent.tool
@@ -732,13 +609,23 @@ Return only the JSON with true/false for each constraint:"""
         }
 
 
-# Helper functions
-def _check_recipes_against_intent(recipes: List[Dict], user_intent: Optional[UserIntent]) -> List[Dict]:
-    """Check each recipe against user constraints and return detailed constraint satisfaction."""
+# Helper functions  
+def _check_recipes_against_constraints(recipes: List[Dict], agent_constraints: Dict) -> List[Dict]:
+    """Check each recipe against agent-provided constraints and return detailed constraint satisfaction."""
     if not recipes:
         return []
     
-    if not user_intent:
+    # Extract constraint parameters from agent
+    subject = agent_constraints.get("subject")
+    dietary_constraints = agent_constraints.get("dietary_constraints", [])
+    allergy_constraints = agent_constraints.get("allergy_constraints", [])
+    nutrition_requirements = agent_constraints.get("nutrition_requirements", [])
+    time_constraints = agent_constraints.get("time_constraints")
+    
+    # Check if agent provided any constraints (including subject)
+    has_constraints = any([subject, dietary_constraints, allergy_constraints, nutrition_requirements, time_constraints])
+    
+    if not has_constraints:
         # No constraints - return recipes with basic scoring
         return [{"recipe_title": r.get("title"), "recipe_url": r.get("source_url"), "constraint_details": {"no_constraints": True}} for r in recipes]
     
@@ -753,9 +640,29 @@ def _check_recipes_against_intent(recipes: List[Dict], user_intent: Optional[Use
         # Detailed constraint checking per recipe
         constraint_details = {}
         
-        # Check ingredient constraints
-        if user_intent.ingredient_constraints:
-            for constraint in user_intent.ingredient_constraints:
+        # Check subject match (critical for relevance)
+        if subject:
+            title_lower = title.lower()
+            ingredients_lower = ingredients_text
+            
+            # Basic subject matching - is this actually the requested dish?
+            if subject == 'cheesecake':
+                constraint_details['subject_match'] = 'cheesecake' in title_lower
+            elif subject == 'chocolate cake' or subject == 'cake':
+                constraint_details['subject_match'] = any(term in title_lower for term in ['cake', 'chocolate'])
+            elif subject == 'chicken':
+                constraint_details['subject_match'] = 'chicken' in title_lower or 'chicken' in ingredients_lower
+            elif subject == 'pizza':
+                constraint_details['subject_match'] = 'pizza' in title_lower
+            elif subject == 'pasta':
+                constraint_details['subject_match'] = 'pasta' in title_lower or 'pasta' in ingredients_lower
+            else:
+                # Generic match for other subjects
+                constraint_details['subject_match'] = subject.lower() in title_lower or subject.lower() in ingredients_lower
+        
+        # Check dietary constraints from agent
+        if dietary_constraints:
+            for constraint in dietary_constraints:
                 if constraint == 'gluten-free':
                     constraint_details['gluten_free'] = not any(gluten_term in ingredients_text for gluten_term in ['flour', 'wheat', 'bread', 'pasta'])
                 elif constraint == 'vegan':
@@ -765,9 +672,9 @@ def _check_recipes_against_intent(recipes: List[Dict], user_intent: Optional[Use
                 elif constraint == 'keto':
                     constraint_details['keto'] = not any(high_carb in ingredients_text for high_carb in ['flour', 'sugar', 'bread', 'pasta', 'rice'])
         
-        # Check allergy constraints (CRITICAL)
-        if user_intent.allergy_constraints:
-            for allergy in user_intent.allergy_constraints:
+        # Check allergy constraints from agent (CRITICAL)
+        if allergy_constraints:
+            for allergy in allergy_constraints:
                 if allergy == 'nuts':
                     constraint_details['nuts_excluded'] = not any(nut in ingredients_text for nut in ['nut', 'almond', 'walnut', 'pecan', 'cashew', 'peanut'])
                 elif allergy == 'shellfish':
@@ -775,27 +682,39 @@ def _check_recipes_against_intent(recipes: List[Dict], user_intent: Optional[Use
                 elif allergy == 'eggs':
                     constraint_details['eggs_excluded'] = 'egg' not in ingredients_text
         
-        # Check nutritional constraints  
-        if user_intent.nutritional_constraints:
-            for constraint in user_intent.nutritional_constraints:
-                if constraint.startswith('min_protein_'):
-                    target_protein = int(constraint.split('_')[2].replace('g', ''))
-                    recipe_protein = _extract_protein_from_nutrition(nutrition)
-                    constraint_details[f'min_{target_protein}g_protein'] = recipe_protein >= target_protein if recipe_protein is not None else False
-                elif constraint.startswith('max_calories_'):
-                    target_calories = int(constraint.split('_')[2])
-                    recipe_calories = _extract_calories_from_nutrition(nutrition)
-                    constraint_details[f'max_{target_calories}_calories'] = recipe_calories <= target_calories if recipe_calories is not None else False
+        # Check nutritional requirements from agent
+        if nutrition_requirements:
+            for requirement in nutrition_requirements:
+                if 'protein' in requirement:
+                    # Extract amount (e.g., "min_protein_20g" or "20g protein")
+                    import re
+                    match = re.search(r'(\d+)', requirement)
+                    if match:
+                        target_protein = int(match.group(1))
+                        recipe_protein = _extract_protein_from_nutrition(nutrition)
+                        constraint_details[f'min_{target_protein}g_protein'] = recipe_protein >= target_protein if recipe_protein is not None else False
+                elif 'calorie' in requirement:
+                    # Extract amount (e.g., "max_calories_300")
+                    import re
+                    match = re.search(r'(\d+)', requirement)
+                    if match:
+                        target_calories = int(match.group(1))
+                        recipe_calories = _extract_calories_from_nutrition(nutrition)
+                        constraint_details[f'max_{target_calories}_calories'] = recipe_calories <= target_calories if recipe_calories is not None else False
         
-        # Check time constraints
-        if user_intent.time_constraints:
-            if user_intent.time_constraints == 'quick':
+        # Check time constraints from agent
+        if time_constraints:
+            if time_constraints == 'quick' or time_constraints == 'fast':
                 cook_minutes = _extract_cook_time_minutes(cook_time)
                 constraint_details['quick'] = cook_minutes <= 30 if cook_minutes is not None else False
-            elif user_intent.time_constraints.startswith('under_') and user_intent.time_constraints.endswith('_minutes'):
-                target_minutes = int(user_intent.time_constraints.split('_')[1])
-                cook_minutes = _extract_cook_time_minutes(cook_time)
-                constraint_details[f'under_{target_minutes}_minutes'] = cook_minutes <= target_minutes if cook_minutes is not None else False
+            elif 'minutes' in time_constraints:
+                # Extract time limit (e.g., "under_30_minutes" or "30 minutes")
+                import re
+                match = re.search(r'(\d+)', time_constraints)
+                if match:
+                    target_minutes = int(match.group(1))
+                    cook_minutes = _extract_cook_time_minutes(cook_time)
+                    constraint_details[f'under_{target_minutes}_minutes'] = cook_minutes <= target_minutes if cook_minutes is not None else False
         
         # Calculate simple scores
         total_constraints = len(constraint_details)
