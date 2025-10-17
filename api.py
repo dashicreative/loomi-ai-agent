@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 
 from Recipe_Discovery_Agent.Discovery_Agent import create_recipe_discovery_agent
 from Recipe_Discovery_Agent.Dependencies import RecipeDeps, SessionContext
+from Custom_Ingredient_LLM.Custom_Ingredient_LLM import process_ingredient
 
 # Pydantic models for API requests/responses
 class SearchRequest(BaseModel):
@@ -41,6 +42,21 @@ class SearchResponse(BaseModel):
     agent_response: str
     total_results: int
     search_query: str
+
+# Pydantic models for Ingredient endpoint
+class IngredientRequest(BaseModel):
+    ingredient_name: str
+
+class IngredientResponse(BaseModel):
+    success: bool
+    ingredient_name: str
+    nutrition: Optional[Dict] = None
+    category: Optional[str] = None
+    category_image_url: Optional[str] = None
+    spoonacular_image_hit: Optional[bool] = None
+    image_url: Optional[str] = None
+    error: Optional[str] = None
+    message: Optional[str] = None
 
 # Global storage for sessions (in production, use Redis/database)
 sessions: Dict[str, SessionContext] = {}
@@ -317,6 +333,45 @@ async def delete_session(session_id: str):
         "message": f"Session {session_id} deleted",
         "active_sessions": len(sessions)
     }
+
+# ========== CUSTOM INGREDIENT LLM ENDPOINTS ==========
+
+@app.post("/process-ingredient", response_model=IngredientResponse)
+async def create_custom_ingredient(request: IngredientRequest):
+    """
+    Process a custom ingredient and return nutrition data, category, and images.
+    
+    This endpoint:
+    1. Validates if the input is actually a food item
+    2. Returns nutritional information per 100g/100ml
+    3. Categorizes the ingredient
+    4. Fetches both ingredient and category images
+    
+    Returns 400 if the input is not a food item.
+    """
+    
+    if not request.ingredient_name:
+        raise HTTPException(status_code=400, detail="Ingredient name is required")
+    
+    try:
+        result = await process_ingredient(request.ingredient_name)
+        
+        # If it's not a food item, return with 400 status
+        if not result.get("success", False):
+            raise HTTPException(
+                status_code=400, 
+                detail={
+                    "error": result.get("error"),
+                    "message": result.get("message"),
+                    "ingredient_name": result.get("ingredient_name")
+                }
+            )
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing ingredient: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

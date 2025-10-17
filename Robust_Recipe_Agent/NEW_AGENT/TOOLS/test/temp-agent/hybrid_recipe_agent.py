@@ -73,6 +73,20 @@ class HybridAgentDeps:
     recipe_memory: Dict[str, Dict] = field(default_factory=dict)  # recipe_id -> full_recipe_object
     recipe_counter: int = field(default=0)  # For generating unique IDs
     
+    # Session query tracking (Phase 1: in-session only)
+    session_queries: List[Dict] = field(default_factory=list)  # Query history for session
+    query_counter: int = field(default=0)  # For generating query IDs
+    current_query_id: Optional[str] = None  # Current search context
+    
+    # Intent-based attempt tracking
+    intent_history: List[Dict] = field(default_factory=list)  # Intent-based search tracking
+    intent_counter: int = field(default=0)  # For generating intent IDs
+    current_intent_id: Optional[str] = None  # Links related searches
+    current_attempt: int = field(default=0)  # Attempt number for current intent
+    
+    # User interaction tracking (Phase 1: in-session only)  
+    user_interactions: Dict[str, List[str]] = field(default_factory=dict)  # recipe_id -> [actions]
+    
     
     def __post_init__(self):
         """Initialize tool instances after dataclass creation."""
@@ -109,9 +123,12 @@ async def search_and_parse_recipes(
     query: str,
     subject: str = None,
     dietary_constraints: List[str] = [],
-    allergy_constraints: List[str] = [],
+    query_allergies: List[str] = [],
+    user_profile_allergies: List[str] = [],
+    ignore_profile_allergies: bool = False,
     nutrition_requirements: List[str] = [],
     time_constraints: str = None,
+    is_continuation: bool = False,
     url_count: int = 25,
     search_strategy: str = "priority_only"
 ) -> Dict:
@@ -126,16 +143,50 @@ async def search_and_parse_recipes(
     """
     tool_start = time.time()
     print(f"🔍 [TOOL] Starting search_and_parse_recipes: {url_count} URLs, {search_strategy} strategy")
-    print(f"🎯 [CONSTRAINTS] Agent passed: subject='{subject}', dietary={dietary_constraints}, allergies={allergy_constraints}, nutrition={nutrition_requirements}, time={time_constraints}")
+    # Combine allergy constraints for comprehensive safety
+    combined_allergies = []
+    if not ignore_profile_allergies:
+        combined_allergies.extend(user_profile_allergies)
+    combined_allergies.extend(query_allergies)
+    # Remove duplicates while preserving order
+    combined_allergies = list(dict.fromkeys(combined_allergies))
+    
+    print(f"🎯 [CONSTRAINTS] Agent passed: subject='{subject}', dietary={dietary_constraints}, allergies={combined_allergies}, nutrition={nutrition_requirements}, time={time_constraints}")
+    if user_profile_allergies and ignore_profile_allergies:
+        print(f"⚠️ [SAFETY] Profile allergies ignored for this search: {user_profile_allergies}")
     
     if not ctx.deps.query_start_time:
         ctx.deps.query_start_time = time.time()
+    
+    # Handle intent tracking (new vs continuation)
+    if is_continuation and ctx.deps.current_intent_id:
+        # Continuing existing intent
+        ctx.deps.current_attempt += 1
+        print(f"🔄 [INTENT] Continuing intent {ctx.deps.current_intent_id}, attempt {ctx.deps.current_attempt}")
+        
+        # Escalate search strategy based on attempt number
+        if ctx.deps.current_attempt == 2:
+            search_strategy = "mixed" if search_strategy == "priority_only" else search_strategy
+        elif ctx.deps.current_attempt >= 3:
+            search_strategy = "broad"
+        print(f"📈 [ESCALATION] Attempt {ctx.deps.current_attempt} using {search_strategy} strategy")
+    else:
+        # New intent
+        ctx.deps.intent_counter += 1
+        ctx.deps.current_intent_id = f"intent_{ctx.deps.intent_counter:03d}"
+        ctx.deps.current_attempt = 1
+        print(f"🆕 [INTENT] Started new intent {ctx.deps.current_intent_id}, attempt 1")
+    
+    # Create query ID for this specific search
+    ctx.deps.query_counter += 1
+    ctx.deps.current_query_id = f"search_{ctx.deps.query_counter:03d}"
+    print(f"🔍 [QUERY] Started search {ctx.deps.current_query_id}")
     
     # Create constraint object from agent parameters
     agent_constraints = {
         "subject": subject,
         "dietary_constraints": dietary_constraints,
-        "allergy_constraints": allergy_constraints, 
+        "allergy_constraints": combined_allergies,  # Use combined list
         "nutrition_requirements": nutrition_requirements,
         "time_constraints": time_constraints
     }
@@ -230,9 +281,24 @@ async def search_and_parse_recipes(
             quality_score = 100.0 if is_priority_site and has_image else 80.0 if is_priority_site else 60.0 if has_image else 40.0
             simple_scores["quality"] = quality_score
             
+            # Add query context and position to stored recipe
+            recipe_with_context = recipe.copy()
+            recipe_with_context.update({
+                "recipe_id": recipe_id,
+                "query_id": ctx.deps.current_query_id,
+                "user_position": i + 1,  # Position in search results (1, 2, 3, etc.)
+                "shown_to_user": True,   # Recipes from search tool are shown
+                "timestamp": time.time()
+            })
+            
+            # Store full recipe in memory with context
+            ctx.deps.recipe_memory[recipe_id] = recipe_with_context
+            
             # Create recipe summary for agent
             recipe_summary = {
                 "recipe_id": recipe_id,
+                "query_id": ctx.deps.current_query_id,
+                "user_position": i + 1,
                 "title": recipe.get('title', ''),
                 "url": recipe.get('source_url', ''),
                 "simple_scores": simple_scores,
@@ -250,6 +316,66 @@ async def search_and_parse_recipes(
         
         print(f"💾 [MEMORY] Stored {len(recipe_summaries)} recipes in session memory (IDs: {ctx.deps.recipe_counter-len(recipe_summaries)+1:03d}-{ctx.deps.recipe_counter:03d})")
         
+        # Calculate accuracy for intent tracking
+        total_constraints = len([c for c in agent_constraints.values() if c])
+        accuracy_sum = sum(constraint.get('simple_scores', {}).get('accuracy', 0) for constraint in _check_recipes_against_constraints(parsed_recipes, agent_constraints))
+        average_accuracy = accuracy_sum / len(parsed_recipes) if parsed_recipes else 0
+        
+        # Save attempt to intent tracking
+        attempt_record = {
+            "attempt_number": ctx.deps.current_attempt,
+            "query_id": ctx.deps.current_query_id,
+            "search_strategy": search_strategy,
+            "recipes_found": len(parsed_recipes),
+            "average_accuracy": round(average_accuracy, 1),
+            "timestamp": time.time()
+        }
+        
+        # Update or create intent history
+        if ctx.deps.current_intent_id:
+            # Find existing intent or create new
+            intent_record = None
+            for intent in ctx.deps.intent_history:
+                if intent["intent_id"] == ctx.deps.current_intent_id:
+                    intent_record = intent
+                    break
+            
+            if not intent_record:
+                # New intent record
+                intent_record = {
+                    "intent_id": ctx.deps.current_intent_id,
+                    "original_query": query,
+                    "subject": subject,
+                    "constraints": agent_constraints,
+                    "attempts": [],
+                    "best_accuracy": 0,
+                    "total_recipes_found": 0
+                }
+                ctx.deps.intent_history.append(intent_record)
+            
+            # Add this attempt
+            intent_record["attempts"].append(attempt_record)
+            intent_record["best_accuracy"] = max(intent_record["best_accuracy"], average_accuracy)
+            intent_record["total_recipes_found"] += len(parsed_recipes)
+            
+            print(f"📊 [INTENT] Intent {ctx.deps.current_intent_id}: attempt {ctx.deps.current_attempt}, accuracy {average_accuracy:.1f}%")
+        
+        # Save query to session history for reference resolution
+        if recipe_summaries:
+            query_record = {
+                "query_id": ctx.deps.current_query_id,
+                "intent_id": ctx.deps.current_intent_id,
+                "attempt_number": ctx.deps.current_attempt,
+                "user_query": query,
+                "recipe_ids": [summary["recipe_id"] for summary in recipe_summaries],
+                "recipe_count": len(recipe_summaries),
+                "constraints_used": agent_constraints,
+                "timestamp": time.time(),
+                "search_strategy": search_strategy
+            }
+            ctx.deps.session_queries.append(query_record)
+            print(f"📚 [HISTORY] Saved query {ctx.deps.current_query_id}: '{query}' → {len(recipe_summaries)} recipes")
+        
         result = {
             "recipe_summaries": recipe_summaries,  # Return summaries, not full recipes
             "backlog_list_urls": list_urls,
@@ -260,7 +386,14 @@ async def search_and_parse_recipes(
             },
             "quality_assessment": quality_assessment,
             "source_distribution": search_result.get("source_distribution", {}),
-            "recipes_with_constraints": _check_recipes_against_constraints(parsed_recipes, agent_constraints)
+            "recipes_with_constraints": _check_recipes_against_constraints(parsed_recipes, agent_constraints),
+            "intent_context": {
+                "intent_id": ctx.deps.current_intent_id,
+                "attempt_number": ctx.deps.current_attempt,
+                "average_accuracy": round(average_accuracy, 1),
+                "search_strategy_used": search_strategy,
+                "is_continuation": is_continuation
+            }
         }
         
         tool_elapsed = time.time() - tool_start
@@ -275,6 +408,7 @@ async def search_and_parse_recipes(
         print(f"📊 Quality Assessment: {result['quality_assessment']}")
         print(f"📊 Source Distribution: {result['source_distribution']}")
         print(f"📊 Timing Info: {result['timing_info']}")
+        print(f"📊 Intent Context: {result['intent_context']}")
         print(f"📋 Recipe Summaries: {len(result['recipe_summaries'])} items")
         print(f"📋 Constraint Analysis: {len(result['recipes_with_constraints'])} items")
         print(f"📋 Backlog URLs: {len(result['backlog_list_urls'])} items")
@@ -480,6 +614,127 @@ def get_full_recipe_details(ctx: RunContext[HybridAgentDeps], recipe_id: str) ->
         "cook_time": full_recipe.get('cook_time', ''),
         "servings": full_recipe.get('servings', '')
     }
+
+
+@hybrid_agent.tool
+def find_recipe_by_reference(
+    ctx: RunContext[HybridAgentDeps], 
+    user_description: str,
+    search_reference: str = "last"
+) -> Dict:
+    """
+    Find a specific recipe from session memory based on user description.
+    Use when user references specific recipes: "the scottish one", "recipe #3", "the quick one"
+    """
+    print(f"🔍 [REFERENCE] Resolving user reference: '{user_description}' from {search_reference} search")
+    
+    if not ctx.deps.session_queries:
+        return {
+            "error": "No previous searches in session",
+            "message": "No previous searches to reference. Would you like me to find some recipes?"
+        }
+    
+    # Determine which search to look in
+    if search_reference == "last":
+        target_query = ctx.deps.session_queries[-1]
+    else:
+        # Could add logic for "second to last", etc.
+        target_query = ctx.deps.session_queries[-1]
+    
+    # Find matching recipe based on description
+    matching_recipes = []
+    for recipe_id in target_query["recipe_ids"]:
+        if recipe_id in ctx.deps.recipe_memory:
+            recipe = ctx.deps.recipe_memory[recipe_id]
+            match_score = _calculate_reference_match(recipe, user_description)
+            if match_score > 0:
+                matching_recipes.append((recipe_id, recipe, match_score))
+    
+    if not matching_recipes:
+        return {
+            "error": "No matching recipe found",
+            "message": f"Couldn't find a recipe matching '{user_description}' from your {search_reference} search"
+        }
+    
+    # Sort by match score and return best match
+    matching_recipes.sort(key=lambda x: x[2], reverse=True)
+    best_match_id, best_match_recipe, score = matching_recipes[0]
+    
+    result = {
+        "recipe_id": best_match_id,
+        "recipe_title": best_match_recipe.get('title', ''),
+        "user_position": best_match_recipe.get('user_position', 'Unknown'),
+        "match_confidence": score,
+        "query_context": {
+            "query_id": target_query["query_id"],
+            "original_query": target_query["user_query"]
+        },
+        "message": f"Found recipe: {best_match_recipe.get('title', 'Unknown')}"
+    }
+    
+    print(f"✅ [REFERENCE] Resolved '{user_description}' → {best_match_id} (confidence: {score:.2f})")
+    return result
+
+
+def _calculate_reference_match(recipe: Dict, user_description: str) -> float:
+    """Calculate how well a recipe matches a user's description."""
+    description_lower = user_description.lower()
+    title_lower = recipe.get('title', '').lower()
+    
+    match_score = 0.0
+    
+    # Direct title matching
+    if any(word in title_lower for word in description_lower.split() if len(word) > 3):
+        match_score += 0.5
+    
+    # Position references  
+    if 'first' in description_lower or '#1' in description_lower:
+        match_score += 1.0 if recipe.get('user_position') == 1 else 0.0
+    elif 'second' in description_lower or '#2' in description_lower:
+        match_score += 1.0 if recipe.get('user_position') == 2 else 0.0
+    elif 'third' in description_lower or '#3' in description_lower:
+        match_score += 1.0 if recipe.get('user_position') == 3 else 0.0
+    elif 'last' in description_lower:
+        # Would need to know total count, but approximate
+        match_score += 0.8 if recipe.get('user_position', 0) >= 3 else 0.0
+    
+    # Characteristic matching
+    if 'quick' in description_lower:
+        cook_time = recipe.get('cook_time_minutes')
+        match_score += 0.7 if cook_time and cook_time <= 30 else 0.0
+    
+    # Cuisine/style matching
+    cuisine_terms = ['scottish', 'italian', 'mexican', 'asian', 'french', 'american']
+    for term in cuisine_terms:
+        if term in description_lower and term in title_lower:
+            match_score += 0.8
+    
+    return min(1.0, match_score)
+
+
+@hybrid_agent.tool  
+def track_user_interaction(
+    ctx: RunContext[HybridAgentDeps],
+    recipe_id: str,
+    interaction_type: str
+) -> str:
+    """
+    Track user interactions with recipes for session context.
+    Use when you know user performed specific actions.
+    """
+    if recipe_id not in ctx.deps.recipe_memory:
+        return f"Recipe {recipe_id} not found in session memory"
+    
+    # Initialize interaction list if not exists
+    if recipe_id not in ctx.deps.user_interactions:
+        ctx.deps.user_interactions[recipe_id] = []
+    
+    # Add interaction if not already tracked
+    if interaction_type not in ctx.deps.user_interactions[recipe_id]:
+        ctx.deps.user_interactions[recipe_id].append(interaction_type)
+        print(f"👆 [INTERACTION] User {interaction_type} recipe {recipe_id}")
+    
+    return f"Tracked user interaction: {interaction_type} for {recipe_id}"
 
 
 @hybrid_agent.tool

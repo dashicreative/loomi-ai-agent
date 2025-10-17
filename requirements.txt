@@ -24,3 +24,7 @@ pytest-asyncio>=0.21.1
 # Additional dependencies for Recipe Discovery Agent
 asyncio-mqtt>=0.11.0
 lxml>=4.9.0
+
+# Custom Ingredient LLM dependencies
+openai>=1.54.3
+aiohttp>=3.10.10
