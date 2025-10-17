@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from Recipe_Discovery_Agent.Discovery_Agent import create_recipe_discovery_agent
 from Recipe_Discovery_Agent.Dependencies import RecipeDeps, SessionContext
 from Custom_Ingredient_LLM.Custom_Ingredient_LLM import process_ingredient
+from Custom_Ingredient_LLM.Custom_Ingredient_LLM_Batch import process_ingredients_with_fallback
 
 # Pydantic models for API requests/responses
 class SearchRequest(BaseModel):
@@ -57,6 +58,16 @@ class IngredientResponse(BaseModel):
     image_url: Optional[str] = None
     error: Optional[str] = None
     message: Optional[str] = None
+
+# Pydantic models for Batch Ingredient endpoint
+class IngredientBatchRequest(BaseModel):
+    ingredient_names: List[str]
+
+class IngredientBatchResponse(BaseModel):
+    total_count: int
+    successful_count: int
+    failed_count: int
+    results: List[IngredientResponse]
 
 # Global storage for sessions (in production, use Redis/database)
 sessions: Dict[str, SessionContext] = {}
@@ -372,6 +383,47 @@ async def create_custom_ingredient(request: IngredientRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing ingredient: {str(e)}")
+
+@app.post("/process-ingredients-batch", response_model=IngredientBatchResponse)
+async def create_custom_ingredients_batch(request: IngredientBatchRequest):
+    """
+    Process multiple ingredients in parallel and return all results.
+    
+    This endpoint:
+    1. Accepts a list of ingredient names (max 50)
+    2. Processes them in parallel batches of 5 to respect rate limits
+    3. Returns results for all ingredients in a single response
+    4. Handles failures gracefully (failed ingredients don't stop others)
+    
+    Example request:
+    {
+        "ingredient_names": ["chicken", "rice", "olive oil", "tomato"]
+    }
+    
+    Returns structured results with success/failure status for each ingredient.
+    """
+    
+    if not request.ingredient_names:
+        raise HTTPException(status_code=400, detail="At least one ingredient name is required")
+    
+    if len(request.ingredient_names) > 50:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Maximum 50 ingredients allowed per request, received {len(request.ingredient_names)}"
+        )
+    
+    try:
+        result = await process_ingredients_with_fallback(request.ingredient_names)
+        
+        # Check if there was a validation error
+        if "error" in result and result["error"] == "TOO_MANY_INGREDIENTS":
+            raise HTTPException(status_code=400, detail=result)
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing ingredients batch: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
