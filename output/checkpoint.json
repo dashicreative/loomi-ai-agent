@@ -1,0 +1,15 @@
+{
+  "current_row": 5000,
+  "total_processed": 5000,
+  "tier_counts": {
+    "professional": 11,
+    "tier1": 46,
+    "tier2": 264,
+    "tier3": 0,
+    "rejected": 4679
+  },
+  "db_uploaded": 11,
+  "db_failed": 0,
+  "timestamp": "2025-10-18T20:12:31.695573+00:00",
+  "last_batch_completed": 1
+}

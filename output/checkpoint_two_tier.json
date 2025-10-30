@@ -1,0 +1,11 @@
+{
+  "current_row": 100000,
+  "total_processed": 100000,
+  "tier1_candidates": 9666,
+  "candidates_processed": 9666,
+  "professional_count": 880,
+  "db_uploaded": 880,
+  "db_failed": 0,
+  "timestamp": "2025-10-18T21:28:23.663265+00:00",
+  "last_batch_completed": 4
+}
