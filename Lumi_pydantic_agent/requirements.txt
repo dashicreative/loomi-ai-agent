@@ -1,0 +1,30 @@
+# Core AI Framework
+pydantic-ai>=0.0.14
+pydantic>=2.5.0
+
+# FastAPI Web Service
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# HTTP & Web Scraping  
+httpx>=0.24.0
+beautifulsoup4>=4.12.0
+requests>=2.31.0
+firecrawl-py>=1.0.0
+
+# Environment & Utilities
+python-dotenv>=1.0.0
+logfire>=0.15.0
+
+# Optional - Testing (can be removed for production)
+pydantic-evals>=0.1.0
+pytest>=7.4.3
+pytest-asyncio>=0.21.1
+
+# Additional dependencies for Recipe Discovery Agent
+asyncio-mqtt>=0.11.0
+lxml>=4.9.0
+
+# Custom Ingredient LLM dependencies
+openai>=1.54.3
+aiohttp>=3.10.10
