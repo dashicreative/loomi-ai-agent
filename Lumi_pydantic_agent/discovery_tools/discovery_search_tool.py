@@ -29,7 +29,10 @@ BLOCKED_SITES = {
     'instacart.com', 'shipt.com',
     
     # Wiki & Generic Content Sites
-    'wikipedia.org', 'wikihow.com', 'ehow.com'
+    'wikipedia.org', 'wikihow.com', 'ehow.com',
+    
+    # Sites That Block Crawlers (403 Forbidden)
+    'abrightmoment.com', 'feastandwest.com', 'cooksmarts.com'
 }
 
 PRIORITY_SITES = [
@@ -171,81 +174,107 @@ class WebSearchTool:
         self, query: str, count: int, region: str, 
         language: str, time_range: Optional[str]
     ) -> List[Dict]:
-        """Execute search using SerpAPI."""
+        """Execute search using SerpAPI with pagination for high result counts."""
+        all_results = []
+        results_per_page = 10  # SerpAPI max per request
+        total_pages = min((count + results_per_page - 1) // results_per_page, 10)  # Max 10 pages (100 results)
+        
         async with httpx.AsyncClient(timeout=30.0) as client:
-            params = {
-                "api_key": self.serpapi_key,
-                "engine": "google",
-                "q": query,
-                "num": min(count, 100),
-                "hl": language,
-                "gl": region
-            }
+            for page in range(total_pages):
+                params = {
+                    "api_key": self.serpapi_key,
+                    "engine": "google",
+                    "q": query,
+                    "num": results_per_page,
+                    "start": page * results_per_page,  # Pagination offset
+                    "hl": language,
+                    "gl": region
+                }
             
-            if time_range:
-                # Convert to SerpAPI format (qdr:d, qdr:w, qdr:m, qdr:y)
-                params["tbs"] = f"qdr:{time_range}"
-            
-            try:
-                response = await client.get("https://serpapi.com/search", params=params)
-                response.raise_for_status()
-                data = response.json()
+                if time_range:
+                    # Convert to SerpAPI format (qdr:d, qdr:w, qdr:m, qdr:y)
+                    params["tbs"] = f"qdr:{time_range}"
                 
-                results = []
-                for item in data.get("organic_results", []):
-                    results.append({
-                        "url": item.get("link"),
-                        "title": item.get("title"),
-                        "snippet": item.get("snippet", ""),
-                        "source": "serpapi"
-                    })
-                return results
-                
-            except Exception as e:
-                print(f"SerpAPI search failed: {e}")
-                return []
+                try:
+                    response = await client.get("https://serpapi.com/search", params=params)
+                    response.raise_for_status()
+                    data = response.json()
+                    
+                    page_results = []
+                    for item in data.get("organic_results", []):
+                        page_results.append({
+                            "url": item.get("link"),
+                            "title": item.get("title"),
+                            "snippet": item.get("snippet", ""),
+                            "source": "serpapi"
+                        })
+                    
+                    all_results.extend(page_results)
+                    
+                    # Break early if we have enough results or no more results
+                    if len(all_results) >= count or len(page_results) < results_per_page:
+                        break
+                        
+                except Exception as e:
+                    print(f"SerpAPI search page {page + 1} failed: {e}")
+                    break
+                    
+        return all_results[:count]  # Return only requested count
     
     async def _google_search(
         self, query: str, count: int, region: str,
         language: str, time_range: Optional[str], safe_search: bool
     ) -> List[Dict]:
-        """Execute search using Google Custom Search."""
+        """Execute search using Google Custom Search with pagination for high result counts."""
+        all_results = []
+        results_per_page = 10  # Google CSE max per request
+        total_pages = min((count + results_per_page - 1) // results_per_page, 10)  # Max 10 pages (100 results)
+        
         async with httpx.AsyncClient(timeout=30.0) as client:
-            params = {
-                "key": self.google_key,
-                "cx": self.google_cx,
-                "q": query,
-                "num": min(count, 10),  # Google limits to 10 per request
-                "gl": region,
-                "hl": language,
-                "safe": "active" if safe_search else "off"
-            }
+            for page in range(total_pages):
+                params = {
+                    "key": self.google_key,
+                    "cx": self.google_cx,
+                    "q": query,
+                    "num": results_per_page,
+                    "start": page * results_per_page + 1,  # Google pagination starts at 1
+                    "gl": region,
+                    "hl": language,
+                    "safe": "active" if safe_search else "off"
+                }
             
-            if time_range:
-                # Google CSE date restrict format
-                params["dateRestrict"] = f"{time_range}1"  # d1, w1, m1, y1
-            
-            try:
-                response = await client.get(
-                    "https://www.googleapis.com/customsearch/v1",
-                    params=params
-                )
-                response.raise_for_status()
-                data = response.json()
+                if time_range:
+                    # Google CSE date restrict format
+                    params["dateRestrict"] = f"{time_range}1"  # d1, w1, m1, y1
                 
-                results = []
-                for item in data.get("items", []):
-                    results.append({
-                        "url": item.get("link"),
-                        "title": item.get("title"),
-                        "snippet": item.get("snippet", ""),
-                        "source": "google_cse"
-                    })
-                return results
-                
-            except Exception as e:
-                print(f"Google Custom Search failed: {e}")
-                return []
+                try:
+                    response = await client.get(
+                        "https://www.googleapis.com/customsearch/v1",
+                        params=params
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    
+                    page_results = []
+                    for item in data.get("items", []):
+                        page_results.append({
+                            "url": item.get("link"),
+                            "title": item.get("title"),
+                            "snippet": item.get("snippet", ""),
+                            "source": "google_cse"
+                        })
+                    
+                    all_results.extend(page_results)
+                    
+                    # Break early if we have enough results or no more results
+                    if len(all_results) >= count or len(page_results) < results_per_page:
+                        break
+                        
+                except Exception as e:
+                    print(f"Google Custom Search page {page + 1} failed: {e}")
+                    break
+                    
+        return all_results[:count]  # Return only requested count
     
     def _filter_results(
         self, results: List[Dict], 

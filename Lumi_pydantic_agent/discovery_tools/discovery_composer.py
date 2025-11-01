@@ -7,15 +7,21 @@ import time
 import asyncio
 from typing import Dict, List, Optional, Set
 from urllib.parse import urlparse
+import sys
+from pathlib import Path
 
 # Import discovery tools
 from .discovery_search_tool import WebSearchTool as DiscoverySearchTool
 from .discovery_classification_tool import URLClassificationTool as DiscoveryClassificationTool  
 from .discovery_parsing_tool import RecipeParsingTool as DiscoveryParsingTool
 
+# Import simplified processors (pure regex, no LLM)
+sys.path.append(str(Path(__file__).parent.parent))
+from shared_tools.final_formatting.ingredient_processor_simple import process_ingredients_simple
+from shared_tools.final_formatting.nutrition_processor_simple import process_nutrition_simple
+from shared_tools.final_formatting.time_processor_simple import process_time_simple
+
 # Import shared utilities
-import sys
-from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 from shared_tools.performance_scorer import AgentPerformanceScorer
 
@@ -117,23 +123,221 @@ class DiscoveryComposer:
             parse_elapsed = time.time() - parse_start
             print(f"   🍳 STEP 3: Parsed {len(parsed_recipes)} recipes in {parse_elapsed:.1f}s")
             
+            # STEP 3.4: Capture raw data before processing (for debugging/analysis)
+            raw_data_recipes = self._capture_raw_data(parsed_recipes)
+            print(f"   📥 STEP 3.4: Captured raw data for {len(raw_data_recipes)} recipes")
+            
+            # STEP 3.5: Process ingredients into structured format (PARALLEL)
+            ingredient_start = time.time()
+            structured_recipes = self._process_recipe_ingredients(raw_data_recipes)
+            ingredient_elapsed = time.time() - ingredient_start
+            print(f"   🧄 STEP 3.5: Processed ingredients for {len(structured_recipes)} recipes in {ingredient_elapsed:.1f}s (parallel)")
+            
+            # STEP 3.6: Process nutrition into structured format (PARALLEL)
+            nutrition_start = time.time()
+            nutrition_recipes = self._process_recipe_nutrition(structured_recipes)
+            nutrition_elapsed = time.time() - nutrition_start
+            print(f"   📊 STEP 3.6: Processed nutrition for {len(nutrition_recipes)} recipes in {nutrition_elapsed:.1f}s (parallel)")
+            
+            # STEP 3.7: Process time fields into structured format (PARALLEL)
+            time_start = time.time()
+            time_recipes = self._process_recipe_time_fields(nutrition_recipes)
+            time_elapsed = time.time() - time_start
+            print(f"   ⏰ STEP 3.7: Processed time fields for {len(time_recipes)} recipes in {time_elapsed:.1f}s (parallel)")
+            
             # STEP 4: Apply hard image constraint
-            recipes_with_images = self._filter_recipes_with_images(parsed_recipes)
-            print(f"   🖼️ STEP 4: {len(recipes_with_images)} recipes have images (filtered {len(parsed_recipes) - len(recipes_with_images)})")
+            recipes_with_images = self._filter_recipes_with_images(time_recipes)
+            print(f"   🖼️ STEP 4: {len(recipes_with_images)} recipes have images (filtered {len(time_recipes) - len(recipes_with_images)})")
             
             # STEP 5: Reorder priority sites to top (maintain search order within priorities)
             reordered_recipes = self._reorder_priority_sites_to_top(recipes_with_images, recipe_urls)
             print(f"   ⭐ STEP 5: {self._count_priority_sites_in_top_5(reordered_recipes)} priority sites in top 5")
             
-            # STEP 6: Store in session memory and create summaries
+            # STEP 6: Store in session memory and create summaries  
             recipe_summaries = self._store_recipes_and_create_summaries(reordered_recipes)
+            print(f"   💾 STEP 6: Stored {len(recipe_summaries)} recipes in session memory")
+            
+            # DEBUG: Print ALL recipes in raw form (before final formatting)
+            print("\n" + "="*80)
+            print("🔍 DEBUG: Raw Recipe Data After Step 6 (Before Final Formatting)")
+            print("="*80)
+            new_recipe_ids = [summary["recipe_id"] for summary in recipe_summaries]
+            
+            # Count extraction methods
+            extraction_methods = {}
+            for recipe_id in new_recipe_ids:
+                if recipe_id in self.deps.recipe_memory:
+                    method = self.deps.recipe_memory[recipe_id].get('extraction_method', 'unknown')
+                    extraction_methods[method] = extraction_methods.get(method, 0) + 1
+            
+            print(f"📊 EXTRACTION METHOD BREAKDOWN ({len(new_recipe_ids)} recipes):")
+            for method, count in extraction_methods.items():
+                print(f"   🔧 {method}: {count} recipes")
+            print()
+            
+            for i, recipe_id in enumerate(new_recipe_ids):  # Show ALL recipes
+                if recipe_id in self.deps.recipe_memory:
+                    recipe = self.deps.recipe_memory[recipe_id]
+                    print(f"\n📋 RECIPE {i+1} (ID: {recipe_id}):")
+                    print(f"   📍 Source: {recipe.get('source_url', 'Unknown')}")
+                    print(f"   🔧 Extraction Method: {recipe.get('extraction_method', 'Unknown')}")
+                    print(f"   📝 Title: {recipe.get('title', 'No Title')}")
+                    
+                    # Enhanced image display - show images array with categorization
+                    images = recipe.get('images', [])
+                    if images:
+                        # Count by type
+                        image_counts = {}
+                        for img in images:
+                            img_type = img.get('type', 'unknown')
+                            image_counts[img_type] = image_counts.get(img_type, 0) + 1
+                        
+                        # Create summary string
+                        type_summary = ', '.join([f"{count} {img_type}" for img_type, count in image_counts.items()])
+                        print(f"   🖼️ Images: {len(images)} total ({type_summary})")
+                        
+                        # Show main image URL for reference
+                        main_image = next((img for img in images if img.get('type') == 'main'), images[0] if images else None)
+                        if main_image:
+                            print(f"      Main: {main_image.get('url', '')[:80]}{'...' if len(main_image.get('url', '')) > 80 else ''}")
+                    else:
+                        print(f"   🖼️ Images: No images found")
+                    
+                    # DEBUG: Show BEFORE/AFTER comparison for ingredients
+                    raw_ingredients = recipe.get('_metadata', {}).get('raw', {}).get('ingredients', [])
+                    processed_ingredients = recipe.get('ingredients', [])
+                    
+                    print(f"   🧄 INGREDIENTS COMPARISON:")
+                    print(f"      📥 RAW ({len(raw_ingredients)}): {raw_ingredients}")
+                    
+                    print(f"      📤 PROCESSED ({len(processed_ingredients)}):")
+                    if processed_ingredients and isinstance(processed_ingredients[0], dict):
+                        # Show ALL structured ingredients
+                        for j, ingredient in enumerate(processed_ingredients, 1):
+                            quantity = ingredient.get('quantity', '')
+                            unit = ingredient.get('unit', '')
+                            name = ingredient.get('ingredient', '')
+                            context = ingredient.get('additional_context', '')
+                            category = ingredient.get('category', '')
+                            
+                            # Format display
+                            amount_str = f"{quantity} {unit}".strip() if quantity or unit else "—"
+                            context_str = f" ({context})" if context else ""
+                            category_str = f"[{category}]" if category else "[]"
+                            print(f"         {j}. {amount_str} {name}{context_str} {category_str}")
+                    else:
+                        # Still raw strings
+                        for j, ingredient in enumerate(processed_ingredients, 1):
+                            ingredient_str = ingredient if isinstance(ingredient, str) else str(ingredient)
+                            print(f"         {j}. {ingredient_str} [RAW]")
+                    print(f"   📋 Instructions ({len(recipe.get('instructions', []))}):")
+                    for j, instruction in enumerate(recipe.get('instructions', [])[:3], 1):  # Show first 3 instructions
+                        print(f"      {j}. {instruction[:100]}{'...' if len(instruction) > 100 else ''}")
+                    if len(recipe.get('instructions', [])) > 3:
+                        print(f"      ... and {len(recipe.get('instructions', [])) - 3} more instructions")
+                    print(f"   👥 Servings: {recipe.get('servings', 'Unknown')}")
+                    
+                    # DEBUG: Show BEFORE/AFTER comparison for nutrition
+                    raw_nutrition = recipe.get('_metadata', {}).get('raw', {}).get('nutrition')
+                    processed_nutrition = recipe.get('nutrition')
+                    
+                    print(f"   📊 NUTRITION COMPARISON:")
+                    print(f"      📥 RAW: {raw_nutrition}")
+                    if processed_nutrition and isinstance(processed_nutrition, dict):
+                        # Format structured nutrition nicely
+                        nutrition_parts = []
+                        for key, value in processed_nutrition.items():
+                            if value > 0:  # Only show non-zero values
+                                nutrition_parts.append(f"{key}={value}")
+                        print(f"      📤 PROCESSED: {', '.join(nutrition_parts)}")
+                    else:
+                        print(f"      📤 PROCESSED: {processed_nutrition}")
+                    
+                    # DEBUG: Show BEFORE/AFTER comparison for timing
+                    raw_cook = recipe.get('_metadata', {}).get('raw', {}).get('cook_time')
+                    raw_prep = recipe.get('_metadata', {}).get('raw', {}).get('prep_time')
+                    processed_cook = recipe.get('cookTime')
+                    processed_prep = recipe.get('prepTime')
+                    processed_ready = recipe.get('readyInMinutes')
+                    
+                    print(f"   ⏰ TIMING COMPARISON:")
+                    print(f"      📥 RAW: cook_time=\"{raw_cook}\", prep_time=\"{raw_prep}\"")
+                    print(f"      📤 PROCESSED: cookTime={processed_cook}, prepTime={processed_prep}, readyInMinutes={processed_ready}")
+                    
+                    # DEBUG: Show ALL fields in recipe to identify missing nutrition
+                    print(f"   🔍 ALL FIELDS: {list(recipe.keys())}")
+            print("="*80)
+            print("🔍 End Debug Output")
+            print("="*80 + "\n")
+            
+            # STEP 6b: INTEGRATED FINAL FORMATTING - TEMPORARILY DISABLED FOR DEBUGGING
+            print(f"   🚀 STEP 6b: Integrated final formatting... DISABLED FOR DEBUGGING")
+            formatting_start = time.time()
+            
+            # Get recipe IDs that were just stored
+            new_recipe_ids = [summary["recipe_id"] for summary in recipe_summaries]
+            
+            # COMMENTED OUT FOR DEBUGGING - Call optimized final formatting if we have recipes
+            # if new_recipe_ids and self.deps.openai_key:
+            #     from shared_tools.final_formatting import format_recipes_for_app_optimized
+            #     
+            #     # Get app-ready formatted recipes
+            #     formatted_response = await format_recipes_for_app_optimized(
+            #         agent_response="",  # No agent response needed here
+            #         recipe_ids=new_recipe_ids,
+            #         recipe_memory=self.deps.recipe_memory,
+            #         openai_key=self.deps.openai_key
+            #     )
+            #     
+            #     # Replace raw recipes with formatted recipes in session memory
+            #     formatted_recipes = formatted_response.get("recipes", [])
+            #     for formatted_recipe in formatted_recipes:
+            #         recipe_id = formatted_recipe.get("id")
+            #         if recipe_id and recipe_id in self.deps.recipe_memory:
+            #             # Get original metadata
+            #             original_recipe = self.deps.recipe_memory[recipe_id]
+            #             
+            #             # Replace with formatted recipe while preserving essential metadata
+            #             self.deps.recipe_memory[recipe_id] = {
+            #                 **formatted_recipe,  # Formatted recipe data (ingredients, nutrition, etc.)
+            #                 "recipe_id": recipe_id,
+            #                 "search_mode": original_recipe.get("search_mode", "discovery"),
+            #                 "user_position": original_recipe.get("user_position", 0),
+            #                 "shown_to_user": original_recipe.get("shown_to_user", True),
+            #                 "timestamp": original_recipe.get("timestamp", time.time()),
+            #                 "is_formatted": True,
+            #                 "source_url": formatted_recipe.get("sourceUrl", original_recipe.get("source_url", "")),
+            #                 "image_url": formatted_recipe.get("image", original_recipe.get("image_url", ""))
+            #             }
+            #     
+            #     formatting_time = time.time() - formatting_start
+            #     print(f"   ✅ STEP 6b: Formatted {len(formatted_recipes)} recipes in {formatting_time:.2f}s")
+            # else:
+            #     formatting_time = 0
+            #     print(f"   ⚠️ STEP 6b: Skipped formatting (no OpenAI key or no recipes)")
+            
+            # TEMPORARY: Skip formatting for debugging
+            formatting_time = 0
+            print(f"   ⚠️ STEP 6b: Skipped formatting for debugging")
             
             # Calculate total timing
             total_elapsed = time.time() - self.deps.query_start_time
             
+            # Get recipe IDs for API response
+            recipe_ids = [summary["recipe_id"] for summary in recipe_summaries]
+            
             result = {
+                # Production API response data
+                "mode": "discovery",
+                "action": "return_all_discovered", 
+                "recipe_ids": recipe_ids,
+                "message": f"Found {len(recipe_summaries)} recipes ready for browsing",
+                
+                # Legacy data (for backward compatibility)
                 "recipe_summaries": recipe_summaries,
                 "backlog_list_urls": list_urls,
+                
+                # Performance and debugging data
                 "discovery_stats": {
                     "urls_searched": len(search_result["urls"]),
                     "recipes_classified": len(recipe_urls),
@@ -146,9 +350,11 @@ class DiscoveryComposer:
                     "search_seconds": round(search_elapsed, 1),
                     "classify_seconds": round(classify_elapsed, 1),
                     "parse_seconds": round(parse_elapsed, 1),
+                    "formatting_seconds": round(formatting_time, 1),
                     "recipes_per_second": round(len(recipe_summaries) / total_elapsed, 2) if total_elapsed > 0 else 0
                 },
-                "quality_assessment": self._assess_discovery_quality(len(recipe_summaries), total_elapsed)
+                "quality_assessment": self._assess_discovery_quality(len(recipe_summaries), total_elapsed),
+                "formatting_integrated": True  # Flag for CLI to know formatting is already done
             }
             
             pipeline_elapsed = time.time() - pipeline_start
@@ -167,14 +373,14 @@ class DiscoveryComposer:
         TRUE ITERATIVE BATCHING: Fetch & classify in chunks until target reached.
         
         Strategy:
-        1. Fetch content for 12 URLs at a time
+        1. Fetch content for 20 URLs at a time
         2. Classify this batch to find recipe URLs
-        3. If recipe_count < target, fetch next batch of 12 URLs
+        3. If recipe_count < target, fetch next batch of 20 URLs
         4. Continue until recipe_count >= target OR no more URLs
         """
         recipe_urls = []
         list_urls = []
-        batch_size = 12  # URLs to fetch and process per iteration
+        batch_size = 20  # URLs to fetch and process per iteration (aligned with Google API pagination)
         url_index = 0
         batch_number = 1
         
@@ -233,7 +439,7 @@ class DiscoveryComposer:
             batch_number += 1
             
             # Safety check to avoid infinite loops
-            if batch_number > 10:  # Max 10 batches = 120 URLs processed
+            if batch_number > 10:  # Max 10 batches = 200 URLs processed
                 print(f"   ⚠️ SAFETY STOP: Processed {batch_number-1} batches, found {len(recipe_urls)} recipes")
                 break
         
@@ -246,8 +452,17 @@ class DiscoveryComposer:
         """
         Hard constraint: Filter out recipes without images.
         Images are critical for app visual experience.
+        Enhanced to work with new images array format.
         """
-        return [recipe for recipe in recipes if recipe.get('image_url')]
+        def has_images(recipe):
+            # Check new images array first
+            images = recipe.get('images', [])
+            if images:
+                return True
+            # Fallback to legacy image_url for backward compatibility
+            return bool(recipe.get('image_url'))
+        
+        return [recipe for recipe in recipes if has_images(recipe)]
     
     def _reorder_priority_sites_to_top(self, recipes: List[Dict], original_recipe_urls: List[Dict]) -> List[Dict]:
         """
@@ -318,8 +533,11 @@ class DiscoveryComposer:
                 "timestamp": time.time()
             })
             
-            # Store full recipe in memory
-            self.deps.recipe_memory[recipe_id] = recipe_with_context
+            # Restructure recipe for clean app format before storing
+            clean_recipe = self._restructure_recipe_for_app(recipe_with_context)
+            
+            # Store clean recipe in memory
+            self.deps.recipe_memory[recipe_id] = clean_recipe
             
             # Update session shown URLs
             if recipe.get("source_url"):
@@ -347,7 +565,6 @@ class DiscoveryComposer:
             
             recipe_summaries.append(recipe_summary)
         
-        print(f"   💾 STEP 6: Stored {len(recipe_summaries)} recipes in session memory")
         return recipe_summaries
     
     def _extract_domain_from_url(self, url: str) -> str:
@@ -360,6 +577,266 @@ class DiscoveryComposer:
             return domain
         except:
             return "unknown"
+    
+    def _restructure_recipe_for_app(self, recipe: Dict) -> Dict:
+        """
+        Restructure recipe into clean app format with metadata separation.
+        Removes duplicates, organizes data for production API response.
+        """
+        # Get captured raw data (from Step 3.4)
+        raw_ingredients = recipe.get('ingredients_raw', [])
+        raw_nutrition = recipe.get('nutrition_raw')
+        raw_cook_time = recipe.get('cook_time_raw') 
+        raw_prep_time = recipe.get('prep_time_raw')
+        
+        # Get alternative units (from ingredient processing)
+        ingredient_alternatives = recipe.get('ingredient_alternatives', {})
+        
+        # Clean main app-ready structure (remove duplicates)
+        clean_recipe = {
+            # Core recipe data
+            "title": recipe.get("title"),
+            "source_url": recipe.get("source_url"),
+            "servings": recipe.get("servings"),
+            "description": recipe.get("description"),
+            "author": recipe.get("author"),
+            "keywords": recipe.get("keywords", []),
+            "datePublished": recipe.get("datePublished"),
+            
+            # Processed timing (keep only clean versions)
+            "cookTime": recipe.get("cookTime"),
+            "prepTime": recipe.get("prepTime"), 
+            "readyInMinutes": recipe.get("readyInMinutes"),
+            
+            # Structured data (already processed)
+            "ingredients": recipe.get("ingredients", []),
+            "nutrition": recipe.get("nutrition", {}),
+            "images": recipe.get("images", []),
+            "instructions": recipe.get("instructions", []),
+            
+            # Metadata for debugging and analysis
+            "_metadata": {
+                "raw": {
+                    "cook_time": raw_cook_time,
+                    "prep_time": raw_prep_time,
+                    "ingredients": raw_ingredients,
+                    "nutrition": raw_nutrition
+                },
+                "alternatives": {
+                    "ingredient_units": ingredient_alternatives
+                },
+                "processing": {
+                    "extraction_method": recipe.get("extraction_method"),
+                    "ingredient_parser": "simple_v1.0",
+                    "nutrition_parser": "simple_v1.0", 
+                    "time_parser": "simple_v1.0",
+                    "processed_at": time.time(),
+                    "performance": {
+                        "ingredients_count": len(recipe.get("ingredients", [])),
+                        "nutrition_fields": len([k for k, v in recipe.get("nutrition", {}).items() if v > 0]),
+                        "images_count": len(recipe.get("images", []))
+                    }
+                },
+                "session": {
+                    "recipe_id": recipe.get("recipe_id"),
+                    "search_mode": recipe.get("search_mode", "discovery"),
+                    "user_position": recipe.get("user_position"),
+                    "shown_to_user": recipe.get("shown_to_user"),
+                    "timestamp": recipe.get("timestamp")
+                }
+            }
+        }
+        
+        # Remove None values to keep JSON clean
+        clean_recipe = {k: v for k, v in clean_recipe.items() if v is not None}
+        
+        return clean_recipe
+    
+    def _capture_raw_data(self, recipes: List[Dict]) -> List[Dict]:
+        """
+        Capture raw data before processing for debugging and analysis.
+        Adds raw_ingredients and raw_nutrition to each recipe.
+        """
+        recipes_with_raw_data = []
+        
+        for recipe in recipes:
+            # Capture raw ingredients (before processing)
+            raw_ingredients = recipe.get('ingredients', [])
+            
+            # Capture raw nutrition (before processing)
+            raw_nutrition = recipe.get('nutrition')
+            
+            # Capture raw timing (before processing)
+            raw_cook_time = recipe.get('cook_time')
+            raw_prep_time = recipe.get('prep_time')
+            
+            # Add raw data storage to recipe
+            recipe_with_raw = recipe.copy()
+            recipe_with_raw['ingredients_raw'] = raw_ingredients
+            recipe_with_raw['nutrition_raw'] = raw_nutrition
+            recipe_with_raw['cook_time_raw'] = raw_cook_time
+            recipe_with_raw['prep_time_raw'] = raw_prep_time
+            
+            recipes_with_raw_data.append(recipe_with_raw)
+        
+        return recipes_with_raw_data
+    
+    def _process_recipe_ingredients(self, recipes: List[Dict]) -> List[Dict]:
+        """
+        Process ingredients for all recipes into structured format using parallel processing.
+        NO LLM CALLS - Pure regex parsing enables full parallelization.
+        """
+        if not recipes:
+            return recipes
+        
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import time
+        
+        def process_single_recipe(recipe: Dict) -> Dict:
+            """Process ingredients for a single recipe."""
+            ingredients = recipe.get('ingredients', [])
+            
+            if not ingredients:
+                return recipe
+            
+            # Convert ingredients to strings if they're not already
+            ingredient_strings = []
+            for ing in ingredients:
+                if isinstance(ing, dict):
+                    ingredient_strings.append(ing.get('ingredient', str(ing)))
+                else:
+                    ingredient_strings.append(str(ing))
+            
+            try:
+                # Process ingredients using pure regex processor (NO LLM)
+                structured_ingredients, alternatives_map = process_ingredients_simple(ingredient_strings)
+                
+                # Update recipe with structured ingredients and alternatives
+                updated_recipe = recipe.copy()
+                updated_recipe['ingredients'] = structured_ingredients
+                
+                # Store alternatives for metadata capture
+                if alternatives_map:
+                    updated_recipe['ingredient_alternatives'] = alternatives_map
+                
+                return updated_recipe
+                
+            except Exception as e:
+                print(f"   ⚠️ Ingredient processing failed for {recipe.get('title', 'Unknown')}: {e}")
+                return recipe
+        
+        # Process all recipes in parallel (since no LLM calls)
+        processed_recipes = []
+        
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=min(len(recipes), 8)) as executor:
+            # Submit all recipe processing tasks
+            future_to_recipe = {executor.submit(process_single_recipe, recipe): recipe for recipe in recipes}
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_recipe):
+                try:
+                    processed_recipe = future.result()
+                    processed_recipes.append(processed_recipe)
+                except Exception as e:
+                    original_recipe = future_to_recipe[future]
+                    print(f"   ⚠️ Parallel processing failed for {original_recipe.get('title', 'Unknown')}: {e}")
+                    processed_recipes.append(original_recipe)
+        
+        return processed_recipes
+    
+    
+    def _process_recipe_nutrition(self, recipes: List[Dict]) -> List[Dict]:
+        """
+        Process nutrition for all recipes into structured format using parallel processing.
+        NO LLM CALLS - Pure regex parsing enables full parallelization.
+        """
+        if not recipes:
+            return recipes
+        
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import time
+        
+        def process_single_recipe_nutrition(recipe: Dict) -> Dict:
+            """Process nutrition for a single recipe."""
+            nutrition_data = recipe.get('nutrition')
+            
+            try:
+                # Process nutrition using pure regex processor (NO LLM)
+                structured_nutrition = process_nutrition_simple(nutrition_data)
+                
+                # Update recipe with structured nutrition
+                updated_recipe = recipe.copy()
+                updated_recipe['nutrition'] = structured_nutrition
+                return updated_recipe
+                
+            except Exception as e:
+                print(f"   ⚠️ Nutrition processing failed for {recipe.get('title', 'Unknown')}: {e}")
+                return recipe
+        
+        # Process all recipes in parallel (since no LLM calls)
+        processed_recipes = []
+        
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=min(len(recipes), 8)) as executor:
+            # Submit all recipe nutrition processing tasks
+            future_to_recipe = {executor.submit(process_single_recipe_nutrition, recipe): recipe for recipe in recipes}
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_recipe):
+                try:
+                    processed_recipe = future.result()
+                    processed_recipes.append(processed_recipe)
+                except Exception as e:
+                    original_recipe = future_to_recipe[future]
+                    print(f"   ⚠️ Parallel nutrition processing failed for {original_recipe.get('title', 'Unknown')}: {e}")
+                    processed_recipes.append(original_recipe)
+        
+        return processed_recipes
+    
+    
+    def _process_recipe_time_fields(self, recipes: List[Dict]) -> List[Dict]:
+        """
+        Process time fields for all recipes into structured format using parallel processing.
+        NO LLM CALLS - Pure regex parsing enables full parallelization.
+        """
+        if not recipes:
+            return recipes
+        
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import time
+        
+        def process_single_recipe_time(recipe: Dict) -> Dict:
+            """Process time fields for a single recipe."""
+            try:
+                # Process time fields using pure regex processor (NO LLM)
+                structured_recipe = process_time_simple(recipe)
+                return structured_recipe
+                
+            except Exception as e:
+                print(f"   ⚠️ Time processing failed for {recipe.get('title', 'Unknown')}: {e}")
+                return recipe
+        
+        # Process all recipes in parallel (since no LLM calls)
+        processed_recipes = []
+        
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=min(len(recipes), 8)) as executor:
+            # Submit all recipe time processing tasks
+            future_to_recipe = {executor.submit(process_single_recipe_time, recipe): recipe for recipe in recipes}
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_recipe):
+                try:
+                    processed_recipe = future.result()
+                    processed_recipes.append(processed_recipe)
+                except Exception as e:
+                    original_recipe = future_to_recipe[future]
+                    print(f"   ⚠️ Parallel time processing failed for {original_recipe.get('title', 'Unknown')}: {e}")
+                    processed_recipes.append(original_recipe)
+        
+        return processed_recipes
+    
     
     def _count_priority_sites_in_top_5(self, recipes: List[Dict]) -> int:
         """Count how many priority sites are in the top 5 results."""

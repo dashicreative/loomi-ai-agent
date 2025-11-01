@@ -168,9 +168,33 @@ class AgentPerformanceScorer:
         else:
             score += 15.0  # Unknown sites (lower trust)
         
-        # Photo quality (0-25 points)
-        image_url = recipe.get('image_url', '')
-        if image_url:
+        # Photo quality (0-30 points) - Enhanced for multiple images
+        images = recipe.get('images', [])
+        image_url = recipe.get('image_url', '')  # Backward compatibility
+        
+        if images:
+            # Score based on image count and quality
+            base_score = 15.0  # Base score for having images
+            
+            # Bonus for multiple images (gallery support)
+            if len(images) >= 3:
+                base_score += 10.0  # Excellent visual content
+            elif len(images) >= 2:
+                base_score += 5.0   # Good visual variety
+            
+            # Quality assessment based on main image
+            main_image = next((img for img in images if img.get('type') == 'main'), images[0] if images else None)
+            if main_image:
+                main_url = main_image.get('url', '')
+                if any(quality_indicator in main_url for quality_indicator in ['1200', '1500', 'large', 'hero']):
+                    base_score += 5.0  # High-resolution main image
+                elif 'thumb' in main_url or '150' in main_url:
+                    base_score -= 5.0  # Penalize thumbnail quality
+            
+            score += min(30.0, base_score)  # Cap at 30 points
+            
+        elif image_url:
+            # Legacy scoring for backward compatibility
             if any(quality_indicator in image_url for quality_indicator in ['1200', '1500', 'large', 'hero']):
                 score += 25.0  # High-resolution images
             elif 'thumb' in image_url or '150' in image_url:
@@ -240,7 +264,16 @@ class AgentPerformanceScorer:
         if recipe.get('instructions'):
             instructions_count = len(recipe.get('instructions', []))  
             score += min(25.0, instructions_count * 4)  # 4 points per step, max 25
-        if recipe.get('image_url'): score += 10.0
+        # Image presence (enhanced for multiple images)
+        images = recipe.get('images', [])
+        if images:
+            base_points = 10.0
+            # Bonus for multiple images in simple scoring
+            if len(images) >= 3:
+                base_points += 5.0  # Gallery bonus
+            score += base_points
+        elif recipe.get('image_url'): 
+            score += 10.0  # Legacy compatibility
         
         # Bonus fields (30 points total)
         if recipe.get('cook_time'): score += 10.0

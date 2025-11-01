@@ -11,10 +11,33 @@ import os
 import asyncio
 from contextlib import asynccontextmanager
 
-from Recipe_Discovery_Agent.Discovery_Agent import create_recipe_discovery_agent
-from Recipe_Discovery_Agent.Dependencies import RecipeDeps, SessionContext
+# Import new hybrid agent
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent / "Lumi_pydantic_agent"))
+
+from agents.hybrid_recipe_agent import hybrid_agent, HybridAgentDeps
 from Custom_Ingredient_LLM.Custom_Ingredient_LLM import process_ingredient
 from Custom_Ingredient_LLM.Custom_Ingredient_LLM_Batch import process_ingredients_with_fallback
+
+# Simple session context for new agent (replaces old SessionContext)
+class SimpleSessionContext:
+    """Lightweight session context for hybrid agent"""
+    def __init__(self):
+        import uuid
+        self.session_id = str(uuid.uuid4())
+        self.search_history = []
+        self.current_batch_recipes = []
+        self.saved_meals = []
+        
+    def get_saved_nutrition_totals(self):
+        """Calculate nutrition totals from saved meals"""
+        totals = {"calories": 0, "protein": 0, "fat": 0, "carbs": 0}
+        for meal in self.saved_meals:
+            nutrition = meal.get("nutrition", {})
+            for key in totals:
+                totals[key] += nutrition.get(key, 0)
+        return totals
 
 # Pydantic models for API requests/responses
 class SearchRequest(BaseModel):
@@ -70,40 +93,38 @@ class IngredientBatchResponse(BaseModel):
     results: List[IngredientResponse]
 
 # Global storage for sessions (in production, use Redis/database)
-sessions: Dict[str, SessionContext] = {}
-agent = None
-deps_template = None
+sessions: Dict[str, SimpleSessionContext] = {}
+hybrid_deps = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize agent and dependencies on startup"""
-    global agent, deps_template
+    """Initialize hybrid agent dependencies on startup"""
+    global hybrid_deps
     
-    # Validate required environment variables
+    # Validate required environment variables for new hybrid agent
     required_vars = {
         'OPENAI_API_KEY': os.getenv("OPENAI_API_KEY"),
         'SERPAPI_KEY': os.getenv("SERPAPI_KEY"), 
-        'FIRECRAWL_API_KEY': os.getenv("FIRECRAWL_API_KEY")
+        'GOOGLE_SEARCH_KEY': os.getenv("GOOGLE_SEARCH_KEY"),
+        'GOOGLE_SEARCH_ENGINE_ID': os.getenv("GOOGLE_SEARCH_ENGINE_ID")
     }
     
     missing_vars = [var for var, value in required_vars.items() if not value]
     if missing_vars:
         raise RuntimeError(f"Missing required environment variables: {', '.join(missing_vars)}")
     
-    # Create agent and dependencies template
-    agent = create_recipe_discovery_agent()
-    deps_template = RecipeDeps(
+    # Create hybrid agent dependencies template
+    hybrid_deps = HybridAgentDeps(
         serpapi_key=required_vars['SERPAPI_KEY'],
-        firecrawl_key=required_vars['FIRECRAWL_API_KEY'],
         openai_key=required_vars['OPENAI_API_KEY'],
-        google_search_key=os.getenv("GOOGLE_SEARCH_KEY"),
-        google_search_engine_id=os.getenv("GOOGLE_SEARCH_ENGINE_ID"),
-        session=None  # Will be set per request
+        google_key=required_vars['GOOGLE_SEARCH_KEY'],
+        google_cx=required_vars['GOOGLE_SEARCH_ENGINE_ID']
     )
     
-    print("✅ Recipe Discovery Agent API initialized successfully")
+    print("✅ Hybrid Recipe Agent API initialized successfully")
+    print(f"🔧 Using new hybrid agent with discovery + selective modes")
     yield
-    print("🔄 Shutting down Recipe Discovery Agent API")
+    print("🔄 Shutting down Hybrid Recipe Agent API")
 
 # Create FastAPI app
 app = FastAPI(
@@ -122,130 +143,136 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def get_or_create_session(session_id: Optional[str] = None) -> SessionContext:
+def get_or_create_session(session_id: Optional[str] = None) -> SimpleSessionContext:
     """Get existing session or create new one"""
     if session_id and session_id in sessions:
         return sessions[session_id]
     
     # Create new session
-    new_session = SessionContext()
+    new_session = SimpleSessionContext()
     sessions[new_session.session_id] = new_session
     return new_session
 
-def create_deps_with_session(session: SessionContext) -> RecipeDeps:
-    """Create RecipeDeps with the specified session"""
-    return RecipeDeps(
-        serpapi_key=deps_template.serpapi_key,
-        firecrawl_key=deps_template.firecrawl_key,
-        openai_key=deps_template.openai_key,
-        google_search_key=deps_template.google_search_key,
-        google_search_engine_id=deps_template.google_search_engine_id,
-        session=session
+def create_hybrid_deps_for_request() -> HybridAgentDeps:
+    """Create a fresh HybridAgentDeps instance for each request"""
+    # Create a copy of the template with fresh session state
+    return HybridAgentDeps(
+        serpapi_key=hybrid_deps.serpapi_key,
+        openai_key=hybrid_deps.openai_key,
+        google_key=hybrid_deps.google_key,
+        google_cx=hybrid_deps.google_cx
+        # Note: HybridAgentDeps has built-in session management (recipe_memory, etc.)
     )
 
 @app.get("/")
 async def root():
     """Health check endpoint"""
     return {
-        "service": "Recipe Discovery Agent API",
-        "status": "healthy",
-        "version": "1.0.0",
-        "active_sessions": len(sessions)
+        "service": "Hybrid Recipe Agent API",
+        "status": "healthy", 
+        "version": "2.0.0",
+        "agent_type": "hybrid_discovery_selective",
+        "active_sessions": len(sessions),
+        "features": [
+            "discovery_mode_fast_exploration",
+            "selective_mode_precise_constraints", 
+            "structured_ingredients_nutrition_timing",
+            "multi_image_gallery_support",
+            "10_grocery_store_categories"
+        ]
     }
+
+@app.get("/test")
+async def test_hybrid_agent():
+    """Test endpoint to verify new hybrid agent is working"""
+    try:
+        # Create test dependencies
+        test_deps = create_hybrid_deps_for_request()
+        
+        # Test with simple query
+        result = await hybrid_agent.run("chocolate cake", deps=test_deps)
+        
+        # Get results
+        agent_response = result.data if hasattr(result, 'data') else str(result)
+        recipe_count = len(test_deps.recipe_memory)
+        
+        return {
+            "success": True,
+            "agent_response": agent_response[:200] + "..." if len(agent_response) > 200 else agent_response,
+            "recipes_found": recipe_count,
+            "sample_recipe_ids": list(test_deps.recipe_memory.keys())[:3],
+            "message": "Hybrid agent is working correctly!"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "Hybrid agent test failed"
+        }
 
 @app.post("/search", response_model=SearchResponse)
 async def search_recipes(request: SearchRequest):
-    """Search for recipes and return structured results"""
+    """Search for recipes using new hybrid agent and return structured results"""
     try:
         # Debug: Log exactly what query we received from iOS app
-        print(f"🔍 DEBUG: API RECEIVED QUERY: '{request.query}'")
-        print(f"🔍 DEBUG: API RECEIVED SESSION_ID: '{request.session_id}'")
+        print(f"🔍 API RECEIVED: '{request.query}' (session: {request.session_id})")
         
-        # Get or create session
+        # Get or create session for tracking
         session = get_or_create_session(request.session_id)
-        deps = create_deps_with_session(session)
+        session.search_history.append(request.query)
         
-        # Debug: Confirm what we're sending to agent
-        print(f"🔍 DEBUG: SENDING TO AGENT: '{request.query}'")
+        # Create hybrid agent dependencies for this request
+        request_deps = create_hybrid_deps_for_request()
         
-        # Run agent with search query
-        result = await agent.run(request.query, deps=deps)
+        # Run NEW hybrid agent
+        print(f"🚀 CALLING HYBRID AGENT: '{request.query}'")
+        result = await hybrid_agent.run(request.query, deps=request_deps)
         
-        # Debug: Log the actual agent response structure
-        print(f"🔍 DEBUG: Agent result type: {type(result)}")
-        print(f"🔍 DEBUG: Agent result data: {getattr(result, 'data', 'No data attr')}")
-        print(f"🔍 DEBUG: Agent result messages count: {len(result.all_messages())}")
+        # Extract clean agent response text
+        agent_response = result.data if hasattr(result, 'data') else str(result)
+        print(f"🤖 AGENT RESPONSE: '{agent_response}'")
         
-        # Extract structured data from agent response
+        # Get recipes from agent's session memory (where clean recipes are stored)
+        recipe_memory = request_deps.recipe_memory
+        recipe_count = len(recipe_memory)
+        print(f"📊 FOUND: {recipe_count} clean recipes in session memory")
+        
+        # Extract clean app-ready recipes
         all_recipes = []
-        search_query = request.query
-        
-        # Debug: Let's examine the entire result structure
-        print(f"🔍 DEBUG: Examining all messages for recipes...")
-        
-        for i, message in enumerate(result.all_messages()):
-            print(f"🔍 DEBUG: Message {i} type: {type(message)}")
+        for recipe_id, recipe_data in recipe_memory.items():
+            # Remove internal fields that apps don't need
+            clean_recipe = recipe_data.copy()
             
-            # Check for tool call responses
-            if hasattr(message, 'parts'):
-                for part in message.parts:
-                    if hasattr(part, 'tool_name'):
-                        print(f"🔍 DEBUG: Found tool call: {part.tool_name}")
-                    if hasattr(part, 'tool_result'):
-                        tool_result = part.tool_result
-                        print(f"🔍 DEBUG: Tool result type: {type(tool_result)}")
-                        if isinstance(tool_result, dict):
-                            print(f"🔍 DEBUG: Tool result keys: {list(tool_result.keys())[:10]}")  # First 10 keys
-                            if 'full_recipes' in tool_result:
-                                batch_recipes = tool_result.get('full_recipes', [])
-                                print(f"🔍 DEBUG: Found {len(batch_recipes)} recipes via parts.tool_result")
-                                all_recipes.extend(batch_recipes)
-                                search_query = tool_result.get('searchQuery', search_query)
+            # Remove session/debug fields for cleaner API response
+            if '_metadata' in clean_recipe:
+                # Keep metadata but remove some session fields for cleaner API
+                metadata = clean_recipe['_metadata'].copy()
+                if 'session' in metadata:
+                    # Keep only essential session info
+                    metadata['session'] = {
+                        'recipe_id': metadata['session'].get('recipe_id'),
+                        'user_position': metadata['session'].get('user_position')
+                    }
+                clean_recipe['_metadata'] = metadata
             
-            # Original extraction logic as fallback
-            if hasattr(message, 'content'):
-                content = message.content
-                if isinstance(content, list):
-                    for j, item in enumerate(content):
-                        print(f"🔍 DEBUG: Message {i}, Item {j} type: {type(item)}")
-                        if hasattr(item, 'output'):
-                            output = item.output
-                            print(f"🔍 DEBUG: Tool output keys: {list(output.keys()) if isinstance(output, dict) else 'Not dict'}")
-                            if isinstance(output, dict) and 'full_recipes' in output:
-                                batch_recipes = output.get('full_recipes', [])
-                                print(f"🔍 DEBUG: Found {len(batch_recipes)} recipes via content.output")
-                                all_recipes.extend(batch_recipes)
-                                search_query = output.get('searchQuery', search_query)
+            all_recipes.append(clean_recipe)
         
-        # Also check if session has recipes (agent might have updated it directly)
-        if not all_recipes and session.current_batch_recipes:
-            print(f"🔍 DEBUG: No recipes in tool outputs, but session has {len(session.current_batch_recipes)} recipes")
-            all_recipes = session.current_batch_recipes
+        print(f"✅ RETURNING: {len(all_recipes)} clean app-ready recipes")
         
-        print(f"🔍 DEBUG: Final recipe count: {len(all_recipes)}")
-        
-        # Update session with new recipes
+        # Update session with recipes for future reference
         session.current_batch_recipes = all_recipes
-        
-        # Clean agent response text
-        agent_response = str(result.data) if hasattr(result, 'data') else str(result)
-        if 'AgentRunResult' in agent_response:
-            # Extract clean text from AgentRunResult
-            if 'output=' in agent_response:
-                start = agent_response.find("output='") + 8
-                end = agent_response.find("')", start)
-                if start > 7 and end > start:
-                    agent_response = agent_response[start:end]
         
         return SearchResponse(
             session_id=session.session_id,
             recipes=all_recipes,
             agent_response=agent_response,
             total_results=len(all_recipes),
-            search_query=search_query
+            search_query=request.query
         )
         
     except Exception as e:
+        print(f"❌ API ERROR: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 @app.post("/save-meal")
@@ -256,20 +283,20 @@ async def save_meal(request: SaveMealRequest):
             raise HTTPException(status_code=404, detail="Session not found")
         
         session = sessions[request.session_id]
-        deps = create_deps_with_session(session)
         
-        # Use agent's save_meal tool
-        result = await agent.run(
-            f"save meal #{request.meal_number}",
-            deps=deps
-        )
-        
-        return {
-            "success": True,
-            "message": f"Meal #{request.meal_number} saved successfully",
-            "session_id": session.session_id,
-            "saved_meals_count": len(session.saved_meals)
-        }
+        # Simple meal saving logic (no agent needed for this)
+        if 0 <= request.meal_number < len(session.current_batch_recipes):
+            recipe_to_save = session.current_batch_recipes[request.meal_number]
+            session.saved_meals.append(recipe_to_save)
+            
+            return {
+                "success": True,
+                "message": f"Meal #{request.meal_number} saved successfully",
+                "session_id": session.session_id,
+                "saved_meals_count": len(session.saved_meals)
+            }
+        else:
+            raise HTTPException(status_code=400, detail="Invalid meal number")
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Save meal failed: {str(e)}")
@@ -313,19 +340,27 @@ async def analyze_meals(request: AnalyzeMealsRequest):
             raise HTTPException(status_code=404, detail="Session not found")
         
         session = sessions[request.session_id]
-        deps = create_deps_with_session(session)
         
-        # Use agent's analyze tool
-        result = await agent.run(
-            f"analyze my saved meals: {request.query}",
-            deps=deps
-        )
+        # For analysis, we can either use the hybrid agent or provide a simpler response
+        # Since the main focus is recipe discovery, let's provide basic analysis
+        saved_meals_count = len(session.saved_meals)
+        nutrition_totals = session.get_saved_nutrition_totals()
+        
+        # Simple analysis based on saved meals
+        analysis = f"You have {saved_meals_count} saved meals. "
+        if nutrition_totals['calories'] > 0:
+            analysis += f"Total nutrition: {nutrition_totals['calories']:.0f} calories, "
+            analysis += f"{nutrition_totals['protein']:.0f}g protein, "
+            analysis += f"{nutrition_totals['fat']:.0f}g fat, "
+            analysis += f"{nutrition_totals['carbs']:.0f}g carbs."
+        else:
+            analysis += "Nutrition data will be available once you save some meals with nutrition information."
         
         return {
             "session_id": request.session_id,
-            "analysis": str(result.data) if hasattr(result, 'data') else str(result),
+            "analysis": analysis,
             "saved_meals_count": len(session.saved_meals),
-            "nutrition_totals": session.get_saved_nutrition_totals()
+            "nutrition_totals": nutrition_totals
         }
         
     except Exception as e:
