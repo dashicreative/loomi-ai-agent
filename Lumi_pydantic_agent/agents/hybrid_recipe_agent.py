@@ -67,6 +67,7 @@ class HybridAgentDeps:
     # Session state
     session_shown_urls: Set[str] = field(default_factory=set)
     session_recipe_bank: List[Dict] = field(default_factory=list)
+    session_failed_urls: Set[str] = field(default_factory=set)  # URLs that failed parsing (potential lists)
     query_start_time: Optional[float] = None
     user_intent: Optional[UserIntent] = None    # Store intent across conversation
     

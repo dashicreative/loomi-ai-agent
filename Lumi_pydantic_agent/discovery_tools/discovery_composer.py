@@ -87,8 +87,8 @@ class DiscoveryComposer:
             search_start = time.time()
             search_result = await self.search_tool.search(
                 query=query,
-                result_count=search_url_count,
-                search_strategy="mixed",  # Balanced approach for discovery
+                result_count=search_url_count,  # This will be ignored for multi_parallel
+                search_strategy="multi_parallel",  # NEW: 5 parallel pagination calls for 50 URLs
                 exclude_urls=exclude_urls or self.deps.session_shown_urls
             )
             
@@ -98,30 +98,45 @@ class DiscoveryComposer:
             search_elapsed = time.time() - search_start
             print(f"   🔍 STEP 1: Found {len(search_result['urls'])} URLs in {search_elapsed:.1f}s")
             
-            # STEP 2: Classify URLs with Early Exit at target recipe count
-            classify_start = time.time()
-            recipe_urls, list_urls = await self._classify_with_early_exit(
-                search_result["urls"], 
-                target_recipe_count
-            )
+            # STEP 2: WATERFALL APPROACH - Skip classification, parse everything directly
+            print(f"   🌊 STEP 2: WATERFALL PARSING - Attempting to parse all {len(search_result['urls'])} URLs directly")
+            all_search_urls = search_result["urls"]  # Keep full URL objects (not just strings)
             
-            classify_elapsed = time.time() - classify_start
-            print(f"   📋 STEP 2: Found {len(recipe_urls)} recipes, {len(list_urls)} lists in {classify_elapsed:.1f}s (early exit)")
+            if not all_search_urls:
+                return self._empty_discovery_result("No valid URLs found")
             
-            if not recipe_urls:
-                return self._empty_discovery_result("No individual recipe URLs found")
-            
-            # STEP 3: Parse all found recipe URLs
+            # STEP 3: WATERFALL PARSING - Parse all URLs (JSON-LD + recipe-scrapers funnel)  
             parse_start = time.time()
+            
+            # Add required 'type' field to all URLs for parser compatibility
+            urls_for_parsing = []
+            for url_obj in all_search_urls:
+                enhanced_url = url_obj.copy()
+                enhanced_url['type'] = 'recipe'  # Assume all are recipes for waterfall parsing
+                enhanced_url['confidence'] = 1.0  # High confidence for parsing attempt
+                urls_for_parsing.append(enhanced_url)
+            
             parse_result = await self.parsing_tool.parse_recipes(
-                urls=recipe_urls,
+                urls=urls_for_parsing,  # URLs with required 'type' field
                 parsing_depth="quick",  # Fast parsing for discovery
                 timeout_seconds=12      # Aggressive timeout
             )
             
             parsed_recipes = parse_result["parsed_recipes"]
             parse_elapsed = time.time() - parse_start
+            
+            # WATERFALL: Store failed URLs for potential future list processing  
+            successfully_parsed_urls = {recipe.get('source_url') for recipe in parsed_recipes}
+            all_url_strings = [url.get('url') for url in all_search_urls if url.get('url')]
+            failed_url_strings = [url for url in all_url_strings if url not in successfully_parsed_urls]
+            
+            # Store failed URLs in session memory for potential future list processing
+            self.deps.session_failed_urls.update(failed_url_strings)
+            
             print(f"   🍳 STEP 3: Parsed {len(parsed_recipes)} recipes in {parse_elapsed:.1f}s")
+            print(f"   🌊 WATERFALL: {len(failed_url_strings)} URLs failed parsing → stored in session for potential list processing")
+            print(f"   📊 SUCCESS RATE: {len(parsed_recipes)}/{len(all_search_urls)} URLs = {len(parsed_recipes)/len(all_search_urls)*100:.1f}%")
+            print(f"   💾 SESSION: {len(self.deps.session_failed_urls)} total failed URLs tracked this session")
             
             # STEP 3.4: Capture raw data before processing (for debugging/analysis)
             raw_data_recipes = self._capture_raw_data(parsed_recipes)
@@ -150,175 +165,27 @@ class DiscoveryComposer:
             print(f"   🖼️ STEP 4: {len(recipes_with_images)} recipes have images (filtered {len(time_recipes) - len(recipes_with_images)})")
             
             # STEP 5: Reorder priority sites to top (maintain search order within priorities)
-            reordered_recipes = self._reorder_priority_sites_to_top(recipes_with_images, recipe_urls)
+            reordered_recipes = self._reorder_priority_sites_to_top(recipes_with_images, search_result["urls"])
             print(f"   ⭐ STEP 5: {self._count_priority_sites_in_top_5(reordered_recipes)} priority sites in top 5")
             
             # STEP 6: Store in session memory and create summaries  
             recipe_summaries = self._store_recipes_and_create_summaries(reordered_recipes)
             print(f"   💾 STEP 6: Stored {len(recipe_summaries)} recipes in session memory")
             
-            # DEBUG: Print ALL recipes in raw form (before final formatting)
-            print("\n" + "="*80)
-            print("🔍 DEBUG: Raw Recipe Data After Step 6 (Before Final Formatting)")
-            print("="*80)
+            # Simple final recipe list
+            print(f"\n📋 FINAL RECIPES ({len(recipe_summaries)} found):")
             new_recipe_ids = [summary["recipe_id"] for summary in recipe_summaries]
             
-            # Count extraction methods
-            extraction_methods = {}
-            for recipe_id in new_recipe_ids:
-                if recipe_id in self.deps.recipe_memory:
-                    method = self.deps.recipe_memory[recipe_id].get('extraction_method', 'unknown')
-                    extraction_methods[method] = extraction_methods.get(method, 0) + 1
-            
-            print(f"📊 EXTRACTION METHOD BREAKDOWN ({len(new_recipe_ids)} recipes):")
-            for method, count in extraction_methods.items():
-                print(f"   🔧 {method}: {count} recipes")
-            print()
-            
-            for i, recipe_id in enumerate(new_recipe_ids):  # Show ALL recipes
+            for i, recipe_id in enumerate(new_recipe_ids, 1):
                 if recipe_id in self.deps.recipe_memory:
                     recipe = self.deps.recipe_memory[recipe_id]
-                    print(f"\n📋 RECIPE {i+1} (ID: {recipe_id}):")
-                    print(f"   📍 Source: {recipe.get('source_url', 'Unknown')}")
-                    print(f"   🔧 Extraction Method: {recipe.get('extraction_method', 'Unknown')}")
-                    print(f"   📝 Title: {recipe.get('title', 'No Title')}")
-                    
-                    # Enhanced image display - show images array with categorization
-                    images = recipe.get('images', [])
-                    if images:
-                        # Count by type
-                        image_counts = {}
-                        for img in images:
-                            img_type = img.get('type', 'unknown')
-                            image_counts[img_type] = image_counts.get(img_type, 0) + 1
-                        
-                        # Create summary string
-                        type_summary = ', '.join([f"{count} {img_type}" for img_type, count in image_counts.items()])
-                        print(f"   🖼️ Images: {len(images)} total ({type_summary})")
-                        
-                        # Show main image URL for reference
-                        main_image = next((img for img in images if img.get('type') == 'main'), images[0] if images else None)
-                        if main_image:
-                            print(f"      Main: {main_image.get('url', '')[:80]}{'...' if len(main_image.get('url', '')) > 80 else ''}")
-                    else:
-                        print(f"   🖼️ Images: No images found")
-                    
-                    # DEBUG: Show BEFORE/AFTER comparison for ingredients
-                    raw_ingredients = recipe.get('_metadata', {}).get('raw', {}).get('ingredients', [])
-                    processed_ingredients = recipe.get('ingredients', [])
-                    
-                    print(f"   🧄 INGREDIENTS COMPARISON:")
-                    print(f"      📥 RAW ({len(raw_ingredients)}): {raw_ingredients}")
-                    
-                    print(f"      📤 PROCESSED ({len(processed_ingredients)}):")
-                    if processed_ingredients and isinstance(processed_ingredients[0], dict):
-                        # Show ALL structured ingredients
-                        for j, ingredient in enumerate(processed_ingredients, 1):
-                            quantity = ingredient.get('quantity', '')
-                            unit = ingredient.get('unit', '')
-                            name = ingredient.get('ingredient', '')
-                            context = ingredient.get('additional_context', '')
-                            category = ingredient.get('category', '')
-                            
-                            # Format display
-                            amount_str = f"{quantity} {unit}".strip() if quantity or unit else "—"
-                            context_str = f" ({context})" if context else ""
-                            category_str = f"[{category}]" if category else "[]"
-                            print(f"         {j}. {amount_str} {name}{context_str} {category_str}")
-                    else:
-                        # Still raw strings
-                        for j, ingredient in enumerate(processed_ingredients, 1):
-                            ingredient_str = ingredient if isinstance(ingredient, str) else str(ingredient)
-                            print(f"         {j}. {ingredient_str} [RAW]")
-                    print(f"   📋 Instructions ({len(recipe.get('instructions', []))}):")
-                    for j, instruction in enumerate(recipe.get('instructions', [])[:3], 1):  # Show first 3 instructions
-                        print(f"      {j}. {instruction[:100]}{'...' if len(instruction) > 100 else ''}")
-                    if len(recipe.get('instructions', [])) > 3:
-                        print(f"      ... and {len(recipe.get('instructions', [])) - 3} more instructions")
-                    print(f"   👥 Servings: {recipe.get('servings', 'Unknown')}")
-                    
-                    # DEBUG: Show BEFORE/AFTER comparison for nutrition
-                    raw_nutrition = recipe.get('_metadata', {}).get('raw', {}).get('nutrition')
-                    processed_nutrition = recipe.get('nutrition')
-                    
-                    print(f"   📊 NUTRITION COMPARISON:")
-                    print(f"      📥 RAW: {raw_nutrition}")
-                    if processed_nutrition and isinstance(processed_nutrition, dict):
-                        # Format structured nutrition nicely
-                        nutrition_parts = []
-                        for key, value in processed_nutrition.items():
-                            if value > 0:  # Only show non-zero values
-                                nutrition_parts.append(f"{key}={value}")
-                        print(f"      📤 PROCESSED: {', '.join(nutrition_parts)}")
-                    else:
-                        print(f"      📤 PROCESSED: {processed_nutrition}")
-                    
-                    # DEBUG: Show BEFORE/AFTER comparison for timing
-                    raw_cook = recipe.get('_metadata', {}).get('raw', {}).get('cook_time')
-                    raw_prep = recipe.get('_metadata', {}).get('raw', {}).get('prep_time')
-                    processed_cook = recipe.get('cookTime')
-                    processed_prep = recipe.get('prepTime')
-                    processed_ready = recipe.get('readyInMinutes')
-                    
-                    print(f"   ⏰ TIMING COMPARISON:")
-                    print(f"      📥 RAW: cook_time=\"{raw_cook}\", prep_time=\"{raw_prep}\"")
-                    print(f"      📤 PROCESSED: cookTime={processed_cook}, prepTime={processed_prep}, readyInMinutes={processed_ready}")
-                    
-                    # DEBUG: Show ALL fields in recipe to identify missing nutrition
-                    print(f"   🔍 ALL FIELDS: {list(recipe.keys())}")
-            print("="*80)
-            print("🔍 End Debug Output")
-            print("="*80 + "\n")
+                    title = recipe.get('title', 'No Title')
+                    source = recipe.get('source_url', 'Unknown')
+                    print(f"   {i}. {title}")
+                    print(f"      {source}")
             
-            # STEP 6b: INTEGRATED FINAL FORMATTING - TEMPORARILY DISABLED FOR DEBUGGING
-            print(f"   🚀 STEP 6b: Integrated final formatting... DISABLED FOR DEBUGGING")
-            formatting_start = time.time()
-            
-            # Get recipe IDs that were just stored
-            new_recipe_ids = [summary["recipe_id"] for summary in recipe_summaries]
-            
-            # COMMENTED OUT FOR DEBUGGING - Call optimized final formatting if we have recipes
-            # if new_recipe_ids and self.deps.openai_key:
-            #     from shared_tools.final_formatting import format_recipes_for_app_optimized
-            #     
-            #     # Get app-ready formatted recipes
-            #     formatted_response = await format_recipes_for_app_optimized(
-            #         agent_response="",  # No agent response needed here
-            #         recipe_ids=new_recipe_ids,
-            #         recipe_memory=self.deps.recipe_memory,
-            #         openai_key=self.deps.openai_key
-            #     )
-            #     
-            #     # Replace raw recipes with formatted recipes in session memory
-            #     formatted_recipes = formatted_response.get("recipes", [])
-            #     for formatted_recipe in formatted_recipes:
-            #         recipe_id = formatted_recipe.get("id")
-            #         if recipe_id and recipe_id in self.deps.recipe_memory:
-            #             # Get original metadata
-            #             original_recipe = self.deps.recipe_memory[recipe_id]
-            #             
-            #             # Replace with formatted recipe while preserving essential metadata
-            #             self.deps.recipe_memory[recipe_id] = {
-            #                 **formatted_recipe,  # Formatted recipe data (ingredients, nutrition, etc.)
-            #                 "recipe_id": recipe_id,
-            #                 "search_mode": original_recipe.get("search_mode", "discovery"),
-            #                 "user_position": original_recipe.get("user_position", 0),
-            #                 "shown_to_user": original_recipe.get("shown_to_user", True),
-            #                 "timestamp": original_recipe.get("timestamp", time.time()),
-            #                 "is_formatted": True,
-            #                 "source_url": formatted_recipe.get("sourceUrl", original_recipe.get("source_url", "")),
-            #                 "image_url": formatted_recipe.get("image", original_recipe.get("image_url", ""))
-            #             }
-            #     
-            #     formatting_time = time.time() - formatting_start
-            #     print(f"   ✅ STEP 6b: Formatted {len(formatted_recipes)} recipes in {formatting_time:.2f}s")
-            # else:
-            #     formatting_time = 0
-            #     print(f"   ⚠️ STEP 6b: Skipped formatting (no OpenAI key or no recipes)")
-            
-            # TEMPORARY: Skip formatting for debugging
+            # Skip final formatting for now
             formatting_time = 0
-            print(f"   ⚠️ STEP 6b: Skipped formatting for debugging")
             
             # Calculate total timing
             total_elapsed = time.time() - self.deps.query_start_time
@@ -335,12 +202,12 @@ class DiscoveryComposer:
                 
                 # Legacy data (for backward compatibility)
                 "recipe_summaries": recipe_summaries,
-                "backlog_list_urls": list_urls,
+                "backlog_list_urls": [],  # No longer classifying lists separately
                 
                 # Performance and debugging data
                 "discovery_stats": {
                     "urls_searched": len(search_result["urls"]),
-                    "recipes_classified": len(recipe_urls),
+                    "urls_attempted_parsing": len(all_search_urls),
                     "recipes_parsed": len(parsed_recipes),
                     "recipes_with_images": len(recipes_with_images),
                     "final_recipe_count": len(recipe_summaries)
@@ -348,7 +215,7 @@ class DiscoveryComposer:
                 "timing_info": {
                     "total_seconds": round(total_elapsed, 1),
                     "search_seconds": round(search_elapsed, 1),
-                    "classify_seconds": round(classify_elapsed, 1),
+                    "classify_seconds": 0.0,  # Skipped classification in waterfall approach
                     "parse_seconds": round(parse_elapsed, 1),
                     "formatting_seconds": round(formatting_time, 1),
                     "recipes_per_second": round(len(recipe_summaries) / total_elapsed, 2) if total_elapsed > 0 else 0
@@ -368,16 +235,17 @@ class DiscoveryComposer:
             print(f"❌ [DISCOVERY] Pipeline failed after {pipeline_elapsed:.1f}s: {e}")
             return self._empty_discovery_result(f"Discovery pipeline error: {str(e)}")
     
-    async def _classify_with_early_exit(self, urls: List[Dict], target_count: int) -> tuple:
-        """
-        TRUE ITERATIVE BATCHING: Fetch & classify in chunks until target reached.
-        
-        Strategy:
-        1. Fetch content for 20 URLs at a time
-        2. Classify this batch to find recipe URLs
-        3. If recipe_count < target, fetch next batch of 20 URLs
-        4. Continue until recipe_count >= target OR no more URLs
-        """
+    # COMMENTED OUT: Old classification approach replaced by waterfall parsing
+    # async def _classify_with_early_exit(self, urls: List[Dict], target_count: int) -> tuple:
+    #     """
+    #     TRUE ITERATIVE BATCHING: Fetch & classify in chunks until target reached.
+    #     
+    #     Strategy:
+    #     1. Fetch content for 20 URLs at a time
+    #     2. Classify this batch to find recipe URLs
+    #     3. If recipe_count < target, fetch next batch of 20 URLs
+    #     4. Continue until recipe_count >= target OR no more URLs
+    #     """
         recipe_urls = []
         list_urls = []
         batch_size = 20  # URLs to fetch and process per iteration (aligned with Google API pagination)
@@ -447,6 +315,66 @@ class DiscoveryComposer:
             print(f"   📊 FINAL RESULT: Found {len(recipe_urls)} recipes (target: {target_count}) after processing {url_index} URLs")
         
         return recipe_urls, list_urls
+    
+    
+    async def _classify_all_urls(self, urls: List[Dict]) -> tuple:
+        """
+        Classify ALL URLs without early exit batching.
+        Process all URLs we found from our enhanced search to maximize results.
+        """
+        recipe_urls = []
+        list_urls = []
+        batch_size = 20  # Process in parallel batches for efficiency
+        
+        print(f"   📦 PROCESSING: All {len(urls)} URLs in parallel batches (no early exit)")
+        
+        # Process URLs in batches of 20 for parallel efficiency
+        for batch_start in range(0, len(urls), batch_size):
+            batch_end = min(batch_start + batch_size, len(urls))
+            current_batch_urls = urls[batch_start:batch_end]
+            batch_number = (batch_start // batch_size) + 1
+            
+            print(f"   📦 BATCH {batch_number}: Processing {len(current_batch_urls)} URLs (positions {batch_start+1}-{batch_end})...")
+            
+            # Fetch content for this batch
+            content_samples = await self.classification_tool._fetch_content_samples(current_batch_urls)
+            
+            # Classify all URLs in this batch in parallel (same as before)
+            classification_tasks = [
+                self.classification_tool._classify_single_url(sample) 
+                for sample in content_samples
+            ]
+            batch_results = await asyncio.gather(*classification_tasks, return_exceptions=True)
+            
+            # Process classification results
+            batch_recipes_found = 0
+            batch_lists_found = 0
+            
+            for i, classification in enumerate(batch_results):
+                if isinstance(classification, Exception):
+                    continue
+                    
+                original_url = current_batch_urls[i]
+                enriched_url = original_url.copy()
+                enriched_url.update({
+                    'type': classification.type,
+                    'confidence': classification.confidence,
+                    'classification_method': 'llm' if classification.confidence > 0.5 else 'fallback',
+                    'classification_signals': classification.signals
+                })
+                
+                if classification.type == "recipe":
+                    recipe_urls.append(enriched_url)
+                    batch_recipes_found += 1
+                elif classification.type == "list":
+                    list_urls.append(enriched_url)
+                    batch_lists_found += 1
+            
+            print(f"   📊 BATCH {batch_number}: Found {batch_recipes_found} recipes, {batch_lists_found} lists")
+        
+        print(f"   🎯 FINAL RESULT: Found {len(recipe_urls)} recipes total from all {len(urls)} URLs")
+        return recipe_urls, list_urls
+    
     
     def _filter_recipes_with_images(self, recipes: List[Dict]) -> List[Dict]:
         """

@@ -650,11 +650,9 @@ class RecipeParsingTool:
             
             if no_data_found:
                 print(f"   ❌ NO RECIPE DATA ({len(no_data_found)} sites):")
-                for url in no_data_found[:3]:  # Show first 3
+                for url in no_data_found:  # Show ALL sites for exclusion list building
                     domain = url.split('/')[2] if '/' in url else url
                     print(f"      • {domain}")
-                if len(no_data_found) > 3:
-                    print(f"      • ... and {len(no_data_found) - 3} more")
             
             if timeouts:
                 print(f"   ⏱️ TIMEOUTS ({len(timeouts)} sites):")
