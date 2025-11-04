@@ -28,3 +28,6 @@ lxml>=4.9.0
 # Custom Ingredient LLM dependencies
 openai>=1.54.3
 aiohttp>=3.10.10
+
+# Instagram Parser dependencies
+yt-dlp>=2025.10.22
