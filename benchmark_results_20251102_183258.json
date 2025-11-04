@@ -1,0 +1,29 @@
+{
+  "openai": {
+    "success": false,
+    "total_time": 0,
+    "recipe_json": null,
+    "title": null,
+    "ingredient_count": 0,
+    "direction_count": 0,
+    "error": "Failed to transcribe audio: 'InstagramTranscriber' object has no attribute 'client'"
+  },
+  "claude": {
+    "success": false,
+    "total_time": 0,
+    "recipe_json": null,
+    "title": null,
+    "ingredient_count": 0,
+    "direction_count": 0,
+    "error": "Failed to transcribe audio: 'InstagramTranscriber' object has no attribute 'client'"
+  },
+  "google": {
+    "success": false,
+    "total_time": 0,
+    "recipe_json": null,
+    "title": null,
+    "ingredient_count": 0,
+    "direction_count": 0,
+    "error": "Failed to transcribe audio: 'InstagramTranscriber' object has no attribute 'client'"
+  }
+}

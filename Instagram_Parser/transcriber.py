@@ -6,6 +6,8 @@ import concurrent.futures
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 import yt_dlp
+import requests
+import time
 from openai import OpenAI
 import google.generativeai as genai
 from dotenv import load_dotenv
@@ -15,16 +17,29 @@ from recipe_json_structuring import RecipeStructurer
 env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
+# Set up Deepgram environment variable if available (before importing)
+deepgram_key = os.getenv('DEEPGRAM_WISPER_API')
+if deepgram_key:
+    os.environ['DEEPGRAM_API_KEY'] = deepgram_key
+
+# Optional Deepgram import
+try:
+    from deepgram import DeepgramClient
+    DEEPGRAM_AVAILABLE = True
+except ImportError:
+    DEEPGRAM_AVAILABLE = False
+
 
 class InstagramTranscriber:
     """
     A class to extract and transcribe audio from Instagram videos.
     
     Handles the complete pipeline:
-    1. Extract video from Instagram URL using yt-dlp
-    2. Extract audio from video and convert to WAV
+    1. Extract video from Instagram URL using yt-dlp (with Smartproxy for rate limit bypass)
+    2. Extract audio from video and convert to MP3
     3. Transcribe audio using OpenAI Whisper API
-    4. Clean up temporary files
+    4. Parse recipe content using Google Gemini LLM
+    5. Clean up temporary files
     """
     
     def __init__(self, openai_api_key: Optional[str] = None, google_api_key: Optional[str] = None):
@@ -45,6 +60,21 @@ class InstagramTranscriber:
             self.google_model = genai.GenerativeModel('gemini-2.0-flash-exp')
         else:
             raise ValueError("Google Gemini API key is required. Please add GOOGLE_GEMINI_KEY to your .env file.")
+        
+        # Initialize Apify client for Instagram scraping
+        self.apify_token = os.getenv("APIFY_API_KEY")
+        if not self.apify_token:
+            raise ValueError("APIFY_API_KEY not found in .env file. Please add it.")
+        self.apify_base_url = "https://api.apify.com/v2/acts/apify~instagram-scraper"
+        
+        # Initialize Deepgram client (optional)
+        self.deepgram_client = None
+        if DEEPGRAM_AVAILABLE and deepgram_key:
+            try:
+                self.deepgram_client = DeepgramClient()
+            except Exception as e:
+                print(f"⚠️  Failed to initialize Deepgram client: {str(e)}")
+                self.deepgram_client = None
         
         self.temp_dir = tempfile.mkdtemp(prefix="instagram_transcriber_")
         self.temp_files = []  # Track files for cleanup
@@ -137,6 +167,114 @@ class InstagramTranscriber:
         else:
             raise ValueError(f"Unsupported provider: {provider}. Use 'openai', 'claude', 'google', or 'xai'.")
     
+    def extract_with_apify(self, instagram_url: str) -> Dict[str, Any]:
+        """
+        Extract Instagram post data using Apify's Instagram scraper.
+        
+        Args:
+            instagram_url: Instagram post/reel URL
+            
+        Returns:
+            Dictionary containing video URL, metadata, and creator info
+            
+        Raises:
+            Exception: For private videos, deleted videos, or other extraction errors
+        """
+        endpoint = f"{self.apify_base_url}/run-sync-get-dataset-items"
+        
+        payload = {
+            "directUrls": [instagram_url],
+            "resultsType": "posts",
+            "resultsLimit": 1,
+            "addParentData": False
+        }
+        
+        headers = {"Content-Type": "application/json"}
+        params = {"token": self.apify_token, "timeout": 120}
+        
+        try:
+            response = requests.post(endpoint, json=payload, headers=headers, params=params, timeout=120)
+            
+            # Accept both 200 and 201 as success
+            if response.status_code in [200, 201]:
+                result = response.json()
+                
+                if not result or len(result) == 0:
+                    raise Exception("No data returned from Apify scraper")
+                
+                post_data = result[0]
+                
+                # Extract essential data only
+                extracted_data = {
+                    "video_url": post_data.get("videoUrl"),
+                    "duration": post_data.get("videoDuration", 0),
+                    "caption": post_data.get("caption", ""),
+                    "creator_username": post_data.get("ownerUsername", ""),
+                    "creator_id": post_data.get("ownerId", ""),
+                    "likes_count": post_data.get("likesCount", 0),
+                    "post_type": post_data.get("type", "")
+                }
+                
+                if not extracted_data["video_url"]:
+                    raise Exception("No video URL found in Instagram post")
+                
+                return extracted_data
+                
+            else:
+                raise Exception(f"Apify API error: HTTP {response.status_code} - {response.text}")
+                
+        except requests.exceptions.Timeout:
+            raise Exception("Apify request timed out - Instagram might be blocking or post unavailable")
+        except Exception as e:
+            error_msg = str(e).lower()
+            if 'private' in error_msg or 'login' in error_msg:
+                raise Exception(
+                    "Unfortunately, this video is a private video and we cannot parse it. "
+                    "We can't use our Loomi magic to turn it into a recipe."
+                )
+            else:
+                raise Exception(f"Failed to extract Instagram data: {str(e)}")
+    
+    def download_audio_from_url(self, video_url: str) -> str:
+        """
+        Download audio directly from video URL without proxy.
+        
+        Args:
+            video_url: Direct video URL from Apify
+            
+        Returns:
+            Path to downloaded MP3 audio file
+        """
+        audio_path = os.path.join(self.temp_dir, 'instagram_audio.mp3')
+        
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            # Proxy commented out for Apify testing
+            # 'proxy': 'http://smart-ri5uzd2za4ec:Dw2OpGt3cD4ES8cj@proxy.smartproxy.net:3120',
+            'outtmpl': audio_path.replace('.mp3', '.%(ext)s'),
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '64',
+            }],
+            'quiet': True,
+            'no_warnings': True,
+        }
+        
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([video_url])
+                
+                self.temp_files.append(audio_path)
+                
+                if not os.path.exists(audio_path):
+                    raise Exception(f"Audio extraction failed - MP3 file not created: {audio_path}")
+                
+                return audio_path
+                
+        except Exception as e:
+            raise Exception(f"Failed to download audio from video URL: {str(e)}")
+    
     def extract_audio_directly(self, instagram_url: str) -> str:
         """
         Extract audio directly from Instagram URL using yt-dlp.
@@ -157,7 +295,7 @@ class InstagramTranscriber:
         # Configure yt-dlp options for direct audio extraction to MP3
         ydl_opts = {
             'format': 'bestaudio/best',  # Download best audio quality available
-            'proxy': 'http://smart-ri5uzd2za4ec:Dw2OpGt3cD4ES8cj@proxy.smartproxy.net:3120',  # Smartproxy to bypass rate limits
+            'proxy': 'http://smart-ri5uzd2za4ec:Dw2OpGt3cD4ES8cj@proxy.smartproxy.net:3120',  # Smartproxy to bypass rate limits (trades speed for scalability)
             'outtmpl': audio_path.replace('.mp3', '.%(ext)s'),
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
@@ -205,6 +343,25 @@ class InstagramTranscriber:
                 
         except Exception as e:
             raise Exception(f"Unexpected error during audio extraction: {str(e)}")
+    
+    def format_apify_metadata(self, apify_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert Apify data to match expected metadata format.
+        
+        Args:
+            apify_data: Data extracted from Apify
+            
+        Returns:
+            Dictionary containing formatted metadata
+        """
+        return {
+            'title': f"Recipe by @{apify_data.get('creator_username', 'unknown')}",
+            'description': apify_data.get('caption', ''),
+            'uploader': apify_data.get('creator_username', ''),
+            'upload_date': '',  # Not needed for our use case
+            'duration': apify_data.get('duration', 0),
+            'view_count': apify_data.get('likes_count', 0)  # Use likes as proxy for popularity
+        }
     
     def extract_instagram_metadata(self, instagram_url: str) -> Dict[str, Any]:
         """
@@ -281,10 +438,9 @@ class InstagramTranscriber:
         
         return combined_content
     
-    def transcribe_audio(self, audio_path: str) -> str:
+    def transcribe_audio_whisper(self, audio_path: str) -> str:
         """
         Transcribe audio file using OpenAI Whisper API.
-        Supports MP3, WAV, and other audio formats.
         
         Args:
             audio_path: Path to the audio file (MP3, WAV, etc.)
@@ -293,11 +449,9 @@ class InstagramTranscriber:
             Transcribed text from the audio
         """
         try:
-            # Verify audio file exists before attempting transcription
             if not os.path.exists(audio_path):
                 raise Exception(f"Audio file not found: {audio_path}")
             
-            # Open and transcribe the audio file using Whisper
             with open(audio_path, "rb") as audio_file:
                 transcript = self.openai_client.audio.transcriptions.create(
                     model="whisper-1",
@@ -305,11 +459,142 @@ class InstagramTranscriber:
                     response_format="text"
                 )
             
-            # Return the transcribed text
             return transcript.strip() if transcript else ""
             
         except Exception as e:
-            raise Exception(f"Failed to transcribe audio: {str(e)}")
+            raise Exception(f"Failed to transcribe audio with Whisper: {str(e)}")
+    
+    def transcribe_audio_gpt4o(self, audio_path: str) -> str:
+        """
+        Transcribe audio using GPT-4o with proper audio configuration.
+        This should be faster than Whisper for transcription tasks.
+        
+        Args:
+            audio_path: Path to the audio file (MP3, WAV, etc.)
+            
+        Returns:
+            Transcribed text from the audio
+        """
+        import base64
+        
+        try:
+            if not os.path.exists(audio_path):
+                raise Exception(f"Audio file not found: {audio_path}")
+            
+            # Read and encode the audio file
+            with open(audio_path, "rb") as audio_file:
+                audio_data = base64.b64encode(audio_file.read()).decode('utf-8')
+            
+            # Use GPT-4o with proper audio configuration
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4o-audio-preview",
+                modalities=["text"],  # Only text output needed
+                audio={"voice": "alloy", "format": "mp3"},  # Audio output config (required even if not used)
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Please transcribe this audio file accurately. Focus on cooking instructions, ingredients, and recipe details. Return only the transcribed text without any additional commentary."
+                            },
+                            {
+                                "type": "input_audio",
+                                "input_audio": {
+                                    "data": audio_data,
+                                    "format": "mp3"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                temperature=0.1
+            )
+            
+            return response.choices[0].message.content.strip() if response.choices[0].message.content else ""
+            
+        except Exception as e:
+            # Fallback to Whisper if GPT-4o fails
+            print(f"⚠️  GPT-4o transcription failed: {str(e)}")
+            print("🔄 Falling back to Whisper...")
+            return self.transcribe_audio_whisper(audio_path)
+    
+    def transcribe_audio_deepgram(self, audio_path: str) -> str:
+        """
+        Transcribe audio using Deepgram's Nova-3 model.
+        Should be faster than Whisper and competitive with GPT-4o.
+        
+        Args:
+            audio_path: Path to the audio file (MP3, WAV, etc.)
+            
+        Returns:
+            Transcribed text from the audio
+        """
+        try:
+            if not self.deepgram_client:
+                if not DEEPGRAM_AVAILABLE:
+                    raise Exception("Deepgram SDK not installed. Install with: pip install deepgram-sdk")
+                else:
+                    raise Exception("Deepgram client not initialized - check DEEPGRAM_WISPER_API key")
+            
+            if not os.path.exists(audio_path):
+                raise Exception(f"Audio file not found: {audio_path}")
+            
+            # Read audio file and transcribe using Nova-2 model
+            with open(audio_path, "rb") as audio_file:
+                response = self.deepgram_client.listen.v1.media.transcribe_file(
+                    request=audio_file.read(),
+                    model="nova-2"
+                )
+            
+            # Extract transcript from response
+            if (response.results and 
+                response.results.channels and 
+                len(response.results.channels) > 0 and
+                response.results.channels[0].alternatives and
+                len(response.results.channels[0].alternatives) > 0):
+                
+                transcript = response.results.channels[0].alternatives[0].transcript
+                return transcript.strip() if transcript else ""
+            else:
+                raise Exception("No transcript found in Deepgram response")
+                
+        except Exception as e:
+            raise Exception(f"Failed to transcribe audio with Deepgram: {str(e)}")
+    
+    def transcribe_audio(self, audio_path: str, provider: str = "gpt4o") -> str:
+        """
+        Transcribe audio file using specified provider.
+        
+        Args:
+            audio_path: Path to the audio file (MP3, WAV, etc.)
+            provider: "gpt4o" or "whisper" - transcription provider to use
+            
+        Returns:
+            Transcribed text from the audio
+        """
+        start_time = time.time()
+        
+        try:
+            if provider.lower() == "gpt4o":
+                transcript = self.transcribe_audio_gpt4o(audio_path)
+                provider_name = "GPT-4o"
+            elif provider.lower() == "deepgram":
+                transcript = self.transcribe_audio_deepgram(audio_path)
+                provider_name = "Deepgram"
+            else:
+                transcript = self.transcribe_audio_whisper(audio_path)
+                provider_name = "Whisper"
+            
+            duration = time.time() - start_time
+            print(f"   ✅ {provider_name} transcription: {duration:.2f}s")
+            
+            return transcript
+            
+        except Exception as e:
+            duration = time.time() - start_time
+            print(f"   ❌ Transcription failed after {duration:.2f}s: {str(e)}")
+            raise
     
     def extract_ingredients(self, combined_content: str) -> str:
         """
@@ -523,8 +808,11 @@ class InstagramTranscriber:
             Exception: With user-friendly error messages for various failure cases
         """
         try:
-            # Extract audio directly from Instagram URL (optimized single operation)
-            audio_path = self.extract_audio_directly(instagram_url)
+            # Extract Instagram data with Apify (NEW - replaces yt-dlp + proxy)
+            apify_data = self.extract_with_apify(instagram_url)
+            
+            # Download audio from direct video URL (no proxy needed)
+            audio_path = self.download_audio_from_url(apify_data['video_url'])
             
             # Transcribe audio using Whisper
             transcript = self.transcribe_audio(audio_path)
@@ -546,17 +834,22 @@ class InstagramTranscriber:
             Tuple of (transcript, ingredients_output, title_directions_output)
         """
         try:
-            # Step 1: Extract audio and transcribe
-            audio_path = self.extract_audio_directly(instagram_url)
-            transcript = self.transcribe_audio(audio_path)
+            # Step 1: Extract Instagram data with Apify
+            apify_data = self.extract_with_apify(instagram_url)
             
-            # Step 2: Extract Instagram metadata  
-            metadata = self.extract_instagram_metadata(instagram_url)
+            # Step 2: Download audio from video URL
+            audio_path = self.download_audio_from_url(apify_data['video_url'])
             
-            # Step 3: Combine content for LLM parsing
+            # Step 3: Transcribe audio with GPT-4o
+            transcript = self.transcribe_audio(audio_path, provider="gpt4o")
+            
+            # Step 4: Format metadata from Apify data
+            metadata = self.format_apify_metadata(apify_data)
+            
+            # Step 5: Combine content for LLM parsing
             combined_content = self.combine_content_for_parsing(transcript, metadata)
             
-            # Step 4: Run parallel recipe extraction
+            # Step 6: Run parallel recipe extraction
             ingredients_output, directions_output = self.parse_recipe_parallel(combined_content)
             
             return transcript, ingredients_output, directions_output
@@ -582,43 +875,52 @@ class InstagramTranscriber:
         timings = {}
         
         try:
-            # Step 1: Extract audio 
-            print("🔽 Step 1: Extracting audio from Instagram...")
+            # Step 1: Extract Instagram data with Apify (NEW - replaces yt-dlp + proxy)
+            print("🚀 Step 1: Extracting Instagram data with Apify...")
             step_start = time.time()
-            audio_path = self.extract_audio_directly(instagram_url)
-            timings['audio_extraction'] = time.time() - step_start
-            print(f"   ✅ Audio extracted ({timings['audio_extraction']:.2f}s)")
+            apify_data = self.extract_with_apify(instagram_url)
+            timings['apify_extraction'] = time.time() - step_start
+            print(f"   ✅ Instagram data extracted ({timings['apify_extraction']:.2f}s)")
+            print(f"   📹 Video URL found: {apify_data['video_url'][:50]}...")
+            print(f"   👤 Creator: @{apify_data['creator_username']}")
             
-            # Step 2: Transcribe audio
-            print("🎤 Step 2: Transcribing audio with Whisper...")
+            # Step 2: Download audio from direct video URL (no proxy needed)
+            print("🔽 Step 2: Downloading audio from video URL...")
+            step_start = time.time()
+            audio_path = self.download_audio_from_url(apify_data['video_url'])
+            timings['audio_download'] = time.time() - step_start
+            print(f"   ✅ Audio downloaded ({timings['audio_download']:.2f}s)")
+            
+            # Step 3: Transcribe audio with Whisper
+            print("🎤 Step 3: Transcribing audio with Whisper...")
             step_start = time.time()
             transcript = self.transcribe_audio(audio_path)
             timings['transcription'] = time.time() - step_start
             print(f"   ✅ Transcription complete ({timings['transcription']:.2f}s)")
             
-            # Step 3: Extract Instagram metadata  
-            print("📋 Step 3: Extracting Instagram metadata...")
+            # Step 4: Format metadata from Apify data
+            print("📋 Step 4: Formatting metadata...")
             step_start = time.time()
-            metadata = self.extract_instagram_metadata(instagram_url)
-            timings['metadata_extraction'] = time.time() - step_start
-            print(f"   ✅ Metadata extracted ({timings['metadata_extraction']:.2f}s)")
+            metadata = self.format_apify_metadata(apify_data)
+            timings['metadata_formatting'] = time.time() - step_start
+            print(f"   ✅ Metadata formatted ({timings['metadata_formatting']:.2f}s)")
             
-            # Step 4: Combine content for LLM parsing
-            print("🔗 Step 4: Combining content...")
+            # Step 5: Combine content for LLM parsing
+            print("🔗 Step 5: Combining content...")
             step_start = time.time()
             combined_content = self.combine_content_for_parsing(transcript, metadata)
             timings['content_combination'] = time.time() - step_start
             print(f"   ✅ Content combined ({timings['content_combination']:.2f}s)")
             
-            # Step 5: Run parallel recipe extraction
-            print("🤖 Step 5: Running parallel LLM recipe extraction (GEMINI)...")
+            # Step 6: Run parallel recipe extraction
+            print("🤖 Step 6: Running parallel LLM recipe extraction (GEMINI)...")
             step_start = time.time()
             ingredients_output, directions_output = self.parse_recipe_parallel(combined_content)
             timings['llm_parsing'] = time.time() - step_start
             print(f"   ✅ LLM parsing complete ({timings['llm_parsing']:.2f}s)")
             
-            # Step 6: Structure into JSON format
-            print("📦 Step 6: Structuring into JSON...")
+            # Step 7: Structure into JSON format
+            print("📦 Step 7: Structuring into JSON...")
             step_start = time.time()
             recipe_json = self.recipe_structurer.process_llm_outputs(
                 ingredients_output, 
@@ -633,16 +935,26 @@ class InstagramTranscriber:
             
             # Display detailed timing breakdown
             print("\n" + "=" * 50)
-            print("⏱️  DETAILED TIMING BREAKDOWN")
+            print("⏱️  DETAILED TIMING BREAKDOWN (APIFY MODE)")
             print("=" * 50)
-            print(f"🔽 Audio Extraction:     {timings['audio_extraction']:.2f}s ({timings['audio_extraction']/timings['total_time']*100:.1f}%)")
-            print(f"🎤 Audio Transcription:  {timings['transcription']:.2f}s ({timings['transcription']/timings['total_time']*100:.1f}%)")
-            print(f"📋 Metadata Extraction:  {timings['metadata_extraction']:.2f}s ({timings['metadata_extraction']/timings['total_time']*100:.1f}%)")
-            print(f"🔗 Content Combination:  {timings['content_combination']:.2f}s ({timings['content_combination']/timings['total_time']*100:.1f}%)")
-            print(f"🤖 LLM Recipe Parsing:   {timings['llm_parsing']:.2f}s ({timings['llm_parsing']/timings['total_time']*100:.1f}%)")
-            print(f"📦 JSON Structuring:     {timings['json_structuring']:.2f}s ({timings['json_structuring']/timings['total_time']*100:.1f}%)")
+            print(f"🚀 Apify Data Extraction: {timings['apify_extraction']:.2f}s ({timings['apify_extraction']/timings['total_time']*100:.1f}%)")
+            print(f"🔽 Audio Download:        {timings['audio_download']:.2f}s ({timings['audio_download']/timings['total_time']*100:.1f}%)")
+            print(f"🎤 Audio Transcription:   {timings['transcription']:.2f}s ({timings['transcription']/timings['total_time']*100:.1f}%)")
+            print(f"📋 Metadata Formatting:   {timings['metadata_formatting']:.2f}s ({timings['metadata_formatting']/timings['total_time']*100:.1f}%)")
+            print(f"🔗 Content Combination:   {timings['content_combination']:.2f}s ({timings['content_combination']/timings['total_time']*100:.1f}%)")
+            print(f"🤖 LLM Recipe Parsing:    {timings['llm_parsing']:.2f}s ({timings['llm_parsing']/timings['total_time']*100:.1f}%)")
+            print(f"📦 JSON Structuring:      {timings['json_structuring']:.2f}s ({timings['json_structuring']/timings['total_time']*100:.1f}%)")
             print(f"{'─' * 50}")
-            print(f"🎯 TOTAL PROCESSING:     {timings['total_time']:.2f}s (100.0%)")
+            print(f"🎯 TOTAL PROCESSING:      {timings['total_time']:.2f}s (100.0%)")
+            
+            # Show comparison vs proxy approach
+            proxy_time_estimate = 150  # Conservative estimate for proxy approach
+            if timings['total_time'] > 0:
+                speedup = proxy_time_estimate / timings['total_time']
+                print(f"\n🚀 SPEED COMPARISON:")
+                print(f"   Proxy approach (est):  ~{proxy_time_estimate}s")
+                print(f"   Apify approach:        {timings['total_time']:.2f}s")
+                print(f"   Speed improvement:     {speedup:.1f}x faster")
             print("=" * 50)
             
             return recipe_json

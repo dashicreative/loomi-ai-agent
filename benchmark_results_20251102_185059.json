@@ -1,0 +1,38 @@
+{
+  "openai": {
+    "success": true,
+    "total_time": 9.560526847839355,
+    "recipe_json": "{\n  \"title\": \"Margarita Pizza\",\n  \"ingredients\": [\n    {\n      \"name\": \"pizza dough\",\n      \"quantity\": \"1\",\n      \"unit\": \"count\"\n    },\n    {\n      \"name\": \"tomatoes\",\n      \"quantity\": \"1\",\n      \"unit\": \"count\"\n    },\n    {\n      \"name\": \"chopped fresh basil\",\n      \"quantity\": \"2\",\n      \"unit\": \"tbsp\"\n    },\n    {\n      \"name\": \"salt\",\n      \"quantity\": \"1\",\n      \"unit\": \"count\"\n    },\n    {\n      \"name\": \"1 2 lb fresh mozzarella cheese\",\n      \"quantity\": \"1\",\n      \"unit\": \"count\"\n    },\n    {\n      \"name\": \"whole basil leaves\",\n      \"quantity\": \"1\",\n      \"unit\": \"count\"\n    }\n  ],\n  \"directions\": [\n    \"Preheat oven to 500°F with a baking steel or stone.\",\n    \"In a bowl, add whole tomatoes and crush with your hands. Add chopped fresh basil and salt, then mix together and set aside.\",\n    \"After the pizza dough has doubled in size, divide it in half and roll into balls. Place into a greased bowl, cover, and let rest for 25 more minutes.\",\n    \"Take one dough ball and punch out the crust using your fist. Stretch the dough until roughly a foot in circumference.\",\n    \"Place the stretched dough on a lightly floured pizza peel.\",\n    \"Add a couple of spoonfuls of the tomato sauce, some mozzarella slices, and a few whole basil leaves.\",\n    \"Using the pizza peel, slide the pizza onto the pre-heated pizza stone.\",\n    \"Cook for about 10-12 minutes, or until the cheese is melted and the dough is puffed and lightly browned.\",\n    \"Slice and enjoy!\"\n  ],\n  \"source_url\": \"https://www.instagram.com/p/C1NHCghxg8e/\"\n}",
+    "title": "Margarita Pizza",
+    "ingredient_count": 6,
+    "direction_count": 9,
+    "error": null
+  },
+  "claude": {
+    "success": true,
+    "total_time": 10.348775863647461,
+    "recipe_json": "{\n  \"title\": \"Margarita Pizza\",\n  \"ingredients\": [\n    {\n      \"name\": \"pizza dough\",\n      \"quantity\": \"1\",\n      \"unit\": \"count\"\n    },\n    {\n      \"name\": \"tomatoes from a 28 oz can of whole tomatoes\",\n      \"quantity\": \"1\",\n      \"unit\": \"count\"\n    },\n    {\n      \"name\": \"chopped fresh basil\",\n      \"quantity\": \"2\",\n      \"unit\": \"tbsp\"\n    },\n    {\n      \"name\": \"salt\",\n      \"quantity\": \"1\",\n      \"unit\": \"count\"\n    },\n    {\n      \"name\": \"fresh mozzarella cheese\",\n      \"quantity\": \"1/2\",\n      \"unit\": \"lb\"\n    }\n  ],\n  \"directions\": [\n    \"Preheat oven to 500°F with a baking steel or stone\",\n    \"In a bowl, add your whole tomatoes from a 28 oz can and crush with your hands\",\n    \"Add 2 Tbsp chopped fresh basil and salt to the crushed tomatoes\",\n    \"Mix together, then set aside\",\n    \"After your pizza dough (pizza dough recipe at preppykitchen.com) has doubled in size, divide in half and roll into balls\",\n    \"Place into a greased bowl, cover and let rest for 25 more minutes\",\n    \"Take one of your dough balls and using your fist, punch out the crust\",\n    \"Stretch your dough until roughly a foot in circumference\",\n    \"Place on a lightly floured pizza peel\",\n    \"Add a couple spoonfuls of your sauce, some fresh mozzarella cheese slices and a few whole basil leaves\",\n    \"Using your pizza peel, slide your pizza onto your pre-heated pizza stone\",\n    \"Cook for about 10-12 minutes, or until the cheese is melted and the dough is puffed and lightly browned\",\n    \"Slice and enjoy\"\n  ],\n  \"source_url\": \"https://www.instagram.com/p/C1NHCghxg8e/\"\n}",
+    "title": "Margarita Pizza",
+    "ingredient_count": 5,
+    "direction_count": 13,
+    "error": null
+  },
+  "google": {
+    "success": false,
+    "total_time": 0,
+    "recipe_json": null,
+    "title": null,
+    "ingredient_count": 0,
+    "direction_count": 0,
+    "error": "Failed to extract ingredients using google: Invalid operation: The `response.text` quick accessor requires the response to contain a valid `Part`, but none were returned. The candidate's [finish_reason](https://ai.google.dev/api/generate-content#finishreason) is 2."
+  },
+  "xai": {
+    "success": false,
+    "total_time": 0,
+    "recipe_json": null,
+    "title": null,
+    "ingredient_count": 0,
+    "direction_count": 0,
+    "error": "Failed to extract ingredients using xai: Error code: 403 - {'code': 'The caller does not have permission to execute the specified operation', 'error': \"Your newly created teams doesn't have any credits yet. You can purchase credits on https://console.x.ai/team/1057f0e3-3794-4d07-a254-a4edf342bfe8.\"}"
+  }
+}
