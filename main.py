@@ -1,8 +1,9 @@
 """
-Railway Entry Point for Recipe Discovery Agent API
+Railway Entry Point for Recipe Parser API
 
-This is the main entry point for deploying the Recipe Discovery Agent as a 
+This is the main entry point for deploying the Recipe Parser API as a 
 FastAPI web service on Railway for iOS app integration.
+Supports Instagram video parsing and recipe site parsing.
 """
 
 import os
@@ -13,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 if __name__ == "__main__":
-    print("🚂 Starting Recipe Discovery Agent API on Railway...")
+    print("🚂 Starting Recipe Parser API on Railway...")
     
     import uvicorn
     from api import app
