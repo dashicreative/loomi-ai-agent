@@ -110,9 +110,9 @@ class WebSearchTool:
         if site_filter:
             query = f"{query} {site_filter}"
         
-        # Execute clean parallel pagination search
+        # NEW: Execute enhanced multi-strategy parallel search
         if search_strategy == "multi_parallel":
-            raw_results = await self._execute_parallel_pagination_search(
+            raw_results = await self._execute_multi_strategy_search(
                 query, region, language, time_range, safe_search
             )
         else:
@@ -147,17 +147,23 @@ class WebSearchTool:
         }
     
     def _build_site_filter(self, strategy: str, additional_blocked: Optional[Set[str]]) -> str:
-        """Build Google search site restrictions based on strategy.
+        """Build Google search site restrictions based on strategy."""
+        all_blocked = BLOCKED_SITES.copy()
+        if additional_blocked:
+            all_blocked.update(additional_blocked)
         
-        NOTE: Site blocking now handled by CSE configuration, so this is much simpler.
-        """
         if strategy == "priority_only":
-            # Only search priority sites (still useful for focused searches)
+            # Only search priority sites
             site_includes = " OR ".join(f"site:{site}" for site in PRIORITY_SITES[:10])
             return f"({site_includes})"
-        else:
-            # No site filtering needed - CSE handles all blocking automatically
-            return ""
+        elif strategy == "broad":
+            # Exclude blocked sites only
+            site_excludes = " ".join(f"-site:{site}" for site in all_blocked)
+            return site_excludes
+        else:  # mixed
+            # Prefer priority sites but don't exclude others
+            # Google will naturally rank these higher
+            return " ".join(f"-site:{site}" for site in all_blocked)
     
     async def _execute_search(
         self, query: str, count: int, region: str, 
@@ -282,30 +288,51 @@ class WebSearchTool:
         exclude_urls: Optional[Set[str]], 
         additional_blocked: Optional[Set[str]]
     ) -> List[Dict]:
-        """Filter out excluded URLs. Site blocking now handled by CSE configuration."""
+        """Filter out blocked sites and excluded URLs with robust domain checking."""
         if not results:
             return []
         
-        exclude_set = exclude_urls or set()
-        if not exclude_set:
-            # No filtering needed - CSE handles site blocking, no exclusions provided
-            return results
+        all_blocked = BLOCKED_SITES.copy()
+        if additional_blocked:
+            all_blocked.update(additional_blocked)
         
-        # Only filter out explicitly excluded URLs (for deduplication)
+        exclude_set = exclude_urls or set()
+        
         filtered = []
         filtered_count = 0
         
         for result in results:
             url = result.get("url", "")
             
+            # Check if excluded first
             if url in exclude_set:
                 filtered_count += 1
                 continue
             
+            # Extract domain from URL for robust checking
+            domain = self._extract_domain(url)
+            if not domain:
+                filtered_count += 1
+                continue  # Skip invalid URLs
+            
+            # Check if domain is blocked (exact match or subdomain)
+            is_blocked = False
+            for blocked_site in all_blocked:
+                if domain == blocked_site or domain.endswith('.' + blocked_site):
+                    is_blocked = True
+                    print(f"🚫 BLOCKED: {url} (matches {blocked_site})")
+                    break
+            
+            if is_blocked:
+                filtered_count += 1
+                continue
+            
+            # Only block if it's a video-only platform (domain-based blocking handles this)
+            # Recipe sites with supplementary videos are OK
             filtered.append(result)
         
         if filtered_count > 0:
-            print(f"🛡️ Filtered out {filtered_count} excluded URLs (deduplication)")
+            print(f"🛡️ Filtered out {filtered_count} blocked/invalid results")
         
         return filtered
     
@@ -371,48 +398,67 @@ class WebSearchTool:
             return "continue"
 
 
-    async def _execute_parallel_pagination_search(
-        self, query: str, region: str, language: str, 
+    async def _execute_multi_strategy_search(
+        self, base_query: str, region: str, language: str, 
         time_range: Optional[str], safe_search: bool
     ) -> List[Dict]:
         """
-        Execute 5 parallel paginated API calls to get 50 total URLs (10 per call).
-        Simple, clean approach now that CSE handles all site blocking.
+        Execute 3 parallel search strategies to get 30 total URLs (10 each).
+        Strategy 1: Priority sites only
+        Strategy 2: Exclude priority sites (diversity)  
+        Strategy 3: Best recipe search
         """
-        print(f"🔍 PARALLEL PAGINATION: Making 5 parallel calls for 50 total URLs")
-        print(f"📝 Clean Query: {query}")
+        # Remove the base query modifications since we're building custom queries
+        original_query = base_query.replace(" recipe", "").strip()
         
-        # Create 5 parallel pagination tasks (start positions: 1, 11, 21, 31, 41)
+        # Use the ORIGINAL working blocked sites logic (like single strategy did)
+        blocked_filter = " ".join(f"-site:{site}" for site in BLOCKED_SITES)
+        print(f"🚫 BLOCKING: ALL {len(BLOCKED_SITES)} sites using original working method")
+        print(f"🛡️ FILTER: {blocked_filter[:120]}...")
+        
+        # Build 3 search strategies with COMPLETE blocking (like before)
+        priority_sites = "|".join(f"site:{site}" for site in PRIORITY_SITES[:5])
+        
+        search_queries = [
+            # Strategy 1: Priority sites only (get high-quality results)
+            f"homemade {original_query} recipe ({priority_sites}) {blocked_filter}",
+            
+            # Strategy 2: Exclude priority sites (get diversity) + recipe-specific terms
+            f"{original_query} recipe ingredients instructions " + " ".join(f"-site:{site}" for site in PRIORITY_SITES) + f" {blocked_filter}",
+            
+            # Strategy 3: Best recipe search (get popular/recommended results)  
+            f"best {original_query} recipe {blocked_filter}"
+        ]
+        
+        print(f"🔍 ENHANCED SEARCH: Running 3 parallel strategies with COMPLETE blocking")
+        
+        # Execute all 3 searches in parallel (back to simple query method)
         search_tasks = []
-        for page in range(5):
-            start_position = (page * 10) + 1  # Google pagination: 1, 11, 21, 31, 41
+        for i, query in enumerate(search_queries, 1):
+            print(f"   Strategy {i}: {query[:80]}...")
+            print(f"      Query length: {len(query)} characters")
             
             if self.google_key:
-                task = self._google_search_single_page(
-                    query, start_position, region, language, time_range, safe_search
-                )
+                task = self._google_search(query, 10, region, language, time_range, safe_search)
             else:
-                task = self._serpapi_search_single_page(
-                    query, start_position, region, language, time_range
-                )
+                task = self._serpapi_search(query, 10, region, language, time_range, safe_search)
             search_tasks.append(task)
-            print(f"   📄 Page {page + 1}: Results {start_position}-{start_position + 9}")
         
-        # Execute all 5 pages in parallel
-        page_results = await asyncio.gather(*search_tasks, return_exceptions=True)
+        # Wait for all searches to complete
+        strategy_results = await asyncio.gather(*search_tasks, return_exceptions=True)
         
-        # Combine results from all pages
+        # Combine results from all strategies
         combined_results = []
-        for page_num, results in enumerate(page_results, 1):
+        for i, results in enumerate(strategy_results, 1):
             if isinstance(results, Exception):
-                print(f"   ⚠️ Page {page_num} failed: {results}")
+                print(f"   ⚠️ Strategy {i} failed: {results}")
                 continue
                 
             valid_results = [r for r in results if r.get('url')]
             combined_results.extend(valid_results)
-            print(f"   ✅ Page {page_num}: {len(valid_results)} URLs")
+            print(f"   ✅ Strategy {i}: {len(valid_results)} URLs")
         
-        # Remove duplicates while preserving search order
+        # Remove duplicates while preserving order
         seen_urls = set()
         unique_results = []
         for result in combined_results:
@@ -421,90 +467,17 @@ class WebSearchTool:
                 seen_urls.add(url)
                 unique_results.append(result)
         
-        print(f"🎯 TOTAL: {len(unique_results)} unique URLs from parallel pagination")
+        print(f"🎯 COMBINED: {len(unique_results)} unique URLs from 3 strategies")
+        
+        # DEBUG: Print all URLs for user review
+        print(f"📋 FULL URL LIST:")
+        for i, result in enumerate(unique_results, 1):
+            url = result.get('url', '')
+            title = result.get('title', 'No title')[:50]
+            print(f"   {i:2d}. {url}")
+            print(f"       {title}...")
+        
         return unique_results
-    
-    async def _google_search_single_page(
-        self, query: str, start_position: int, region: str,
-        language: str, time_range: Optional[str], safe_search: bool
-    ) -> List[Dict]:
-        """Execute single Google CSE API call for one page of results."""
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            params = {
-                "key": self.google_key,
-                "cx": self.google_cx,
-                "q": query,
-                "num": 10,  # Always 10 results per page
-                "start": start_position,
-                "gl": region,
-                "hl": language,
-                "safe": "active" if safe_search else "off"
-            }
-        
-            if time_range:
-                params["dateRestrict"] = f"{time_range}1"
-            
-            try:
-                response = await client.get(
-                    "https://www.googleapis.com/customsearch/v1",
-                    params=params
-                )
-                response.raise_for_status()
-                data = response.json()
-                
-                results = []
-                for item in data.get("items", []):
-                    results.append({
-                        "url": item.get("link"),
-                        "title": item.get("title"),
-                        "snippet": item.get("snippet", ""),
-                        "source": "google_cse"
-                    })
-                
-                return results
-                
-            except Exception as e:
-                print(f"Google CSE page starting at {start_position} failed: {e}")
-                return []
-    
-    async def _serpapi_search_single_page(
-        self, query: str, start_position: int, region: str,
-        language: str, time_range: Optional[str]
-    ) -> List[Dict]:
-        """Execute single SerpAPI call for one page of results."""
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            params = {
-                "api_key": self.serpapi_key,
-                "engine": "google",
-                "q": query,
-                "num": 10,  # Always 10 results per page
-                "start": start_position - 1,  # SerpAPI uses 0-based indexing
-                "hl": language,
-                "gl": region
-            }
-        
-            if time_range:
-                params["tbs"] = f"qdr:{time_range}"
-            
-            try:
-                response = await client.get("https://serpapi.com/search", params=params)
-                response.raise_for_status()
-                data = response.json()
-                
-                results = []
-                for item in data.get("organic_results", []):
-                    results.append({
-                        "url": item.get("link"),
-                        "title": item.get("title"),
-                        "snippet": item.get("snippet", ""),
-                        "source": "serpapi"
-                    })
-                
-                return results
-                
-            except Exception as e:
-                print(f"SerpAPI page starting at {start_position} failed: {e}")
-                return []
 
 
 # For agent integration

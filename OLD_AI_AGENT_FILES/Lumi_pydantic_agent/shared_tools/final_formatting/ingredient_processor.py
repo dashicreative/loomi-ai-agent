@@ -49,7 +49,7 @@ def _normalize_to_instacart_unit(unit: str) -> str:
         'bunches': 'bunch',
         'heads': 'head',
         'packages': 'package',
-        'packets': 'packet'
+        'packets': 'packet' , 
     }
     
     return unit_mappings.get(unit_lower, unit_lower)
@@ -372,7 +372,7 @@ Input ingredients:
 - 1 pound butter
 - one box of graham crackers
 Expected output: ["simple", "simple", "complex"] 
-Reasoning: "count" accepted = simple, "pound" accepted = simple, "box" not accepted = complex
+Reasoning: "each" accepted = simple, "pound" accepted = simple, "box" not accepted = complex
 
 NOW LABEL THESE {len(ingredient_strings)} INGREDIENTS (return exactly {len(ingredient_strings)} labels):
 {ingredients_text}
@@ -384,7 +384,7 @@ SIMPLE PATTERN: [number] [accepted_unit] [ingredient_name]
 ✓ "2 cups flour" ✓ "3 each eggs" ✓ "1 pound chicken" ✓ "1 tablespoon salt" ✓ "2 cans tomatoes"
 
 COMPLEX PATTERNS (mark as complex):
-✗ "4 whole eggs" → has "whole" descriptor, needs "count"
+✗ "4 whole eggs" → has "whole" descriptor, needs "each"
 ✗ "1 box graham crackers" → "box" not in accepted units  
 ✗ "15 graham crackers" → no unit specified
 ✗ "salt to taste" → subjective amount
@@ -652,7 +652,7 @@ Order must match ingredient list exactly."""
                     'ounce', 'ounces', 'oz', 'pound', 'pounds', 'lb', 'lbs',
                     'gram', 'grams', 'g', 'gs', 'kilogram', 'kilograms', 'kg', 'kgs',
                     'can', 'cans', 'bunch', 'bunches', 'head', 'heads',
-                    'large', 'medium', 'small', 'count', 'package', 'packages', 'packet', 'packets'
+                    'large', 'medium', 'small', 'each', 'package', 'packages', 'packet', 'packets'
                 ]
                 
                 words = remainder.split()
@@ -700,18 +700,18 @@ INGREDIENTS TO PROCESS:
 CONVERSION RULES:
 - Convert to accepted units: cup, tablespoon, teaspoon, ounce, pound, gram, can, each, bunch, head, package
 - For multiple measurements, choose the most practical unit (tablespoon for butter, ounce for most others)
-- For subjective amounts ("to taste", "half a lime"), use default quantity: "1", unit: "count" 
+- For subjective amounts ("to taste", "half a lime"), use default quantity: "1", unit: "each" 
 - Use first variant only (cup not cups, ounce not ounces)
 - Add pantry_staple: true for common items (salt, butter, olive oil, pepper, sugar, flour, etc.)
 - Set optional: true for "to taste", "if desired", "garnish" items
 - Never set disqualified: true - all items should be orderable
 
 CONVERSION EXAMPLES:
-- "Crust" → quantity: "1", unit: "count", ingredient: "pie crust", pantry_staple: false
+- "Crust" → quantity: "1", unit: "each", ingredient: "pie crust", pantry_staple: false
 - "2 1/2 ounces unsalted butter (about 5 tablespoons; 70 g)" → quantity: "5", unit: "tablespoon", ingredient: "unsalted butter", pantry_staple: true
-- "Kosher salt, to taste" → quantity: "1", unit: "count", ingredient: "kosher salt", pantry_staple: true, optional: true
-- "juice from 1 lemon" → quantity: "1", unit: "count", ingredient: "lemon", pantry_staple: false
-- "4 whole eggs" → quantity: "4", unit: "count", ingredient: "eggs", pantry_staple: false
+- "Kosher salt, to taste" → quantity: "1", unit: "each", ingredient: "kosher salt", pantry_staple: true, optional: true
+- "juice from 1 lemon" → quantity: "1", unit: "each", ingredient: "lemon", pantry_staple: false
+- "4 whole eggs" → quantity: "4", unit: "each", ingredient: "eggs", pantry_staple: false
 
 JSON FORMAT:
 [{{"quantity": "amount", "unit": "unit", "ingredient": "name", "pantry_staple": boolean, "optional": boolean, "original": "text"}}]"""
@@ -729,7 +729,7 @@ JSON FORMAT:
                         "max_tokens": 800,
                         "temperature": 0.1,
                         "messages": [
-                            {"role": "system", "content": "You convert complex ingredients to app-compatible format. For single items without quantities (like 'Crust'), always add quantity: '1' and unit: 'count' or 'package'. For subjective amounts ('to taste'), use quantity: '1' and unit: 'count'. Mark common pantry items as pantry_staple: true. Set optional: true for 'to taste' items."},
+                            {"role": "system", "content": "You convert complex ingredients to app-compatible format. For single items without quantities (like 'Crust'), always add quantity: '1' and unit: 'each' or 'package'. For subjective amounts ('to taste'), use quantity: '1' and unit: 'each'. Mark common pantry items as pantry_staple: true. Set optional: true for 'to taste' items."},
                             {"role": "user", "content": prompt}
                         ]
                     }
@@ -753,7 +753,7 @@ JSON FORMAT:
                     for ing in parsed_ingredients:
                         normalized_ing = {
                             "quantity": ing.get("quantity", "1"),
-                            "unit": ing.get("unit", "count"),
+                            "unit": ing.get("unit", "each"),
                             "ingredient": ing.get("ingredient", ""),
                             "size": ing.get("size"),
                             "additional_context": ing.get("additional_context"),
@@ -908,7 +908,7 @@ Return JSON array with categories in the same order:
             
             parsed_ingredients.append({
                 "quantity": "1",
-                "unit": "count",
+                "unit": "each",
                 "ingredient": ingredient_text,
                 "size": None,
                 "additional_context": None,
@@ -948,7 +948,7 @@ Return JSON array with categories in the same order:
             is_pantry = any(item in ingredient.lower() for item in pantry_items)
             
             # Normalize unit
-            normalized_unit = _normalize_to_instacart_unit(unit) if unit else "count"
+            normalized_unit = _normalize_to_instacart_unit(unit) if unit else "each"
             
             parsed.append({
                 "quantity": quantity or "1",

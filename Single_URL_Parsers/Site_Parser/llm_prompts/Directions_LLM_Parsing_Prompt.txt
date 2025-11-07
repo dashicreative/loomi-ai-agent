@@ -4,7 +4,7 @@ CRITICAL: Preserve all specific details exactly as mentioned. Only make minimal 
 - Specific temperatures, timings, or techniques
 - Brand names or specific ingredient references  
 - Cooking methods, equipment, or measurements
-- Special instructions or notes
+- Special instructions or notes or editorial words / direction itself
 
 INSTRUCTIONS:
 1. Take the paragraph instructions and break them into clear, numbered steps

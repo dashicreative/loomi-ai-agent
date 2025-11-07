@@ -4,7 +4,7 @@ Two-Tiered Ingredient Analysis - US FILTERED VERSION
 - Skips redundant HTTP HEAD requests (validate_image_url)
 - 40 parallel threads for maximum speed
 - US store/brand filtering (16 stores + 433 brands)
-- Clears database to start fresh with US-only ingredients
+- Clears database to start fresh with US-onyyly ingredients
 - Handles database duplicates with upserts
 """
 
@@ -726,8 +726,9 @@ def main():
             conn.execute(text("SELECT 1"))
         logger.info("✅ Database connection successful")
         
-        # DATABASE PRESERVATION - keep existing data (clearing disabled)
-        logger.info("🔄 Preserving existing professional products - no database clearing")
+        # CLEAR DATABASE - start fresh with US filtering
+        logger.info("🗑️ Clearing database to start fresh with US-filtered ingredients")
+        clear_database(engine)
         
         # Process complete dataset with ultra optimized analysis
         final_stats = process_optimized_analysis(csv_file_path, engine)
