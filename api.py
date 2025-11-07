@@ -27,6 +27,7 @@ class ParseResponse(BaseModel):
     recipe_json: str = None
     error: str = None
     elapsed_seconds: float = None
+    debug_info: dict = None
 
 # Create FastAPI app
 app = FastAPI(
@@ -68,6 +69,11 @@ async def parse_instagram_recipe(request: URLRequest):
     Input: {"url": "https://www.instagram.com/p/ABC123/"}
     Output: {"success": true, "recipe_json": "...", "elapsed_seconds": 15.2}
     """
+    import traceback
+    import time
+    
+    start_time = time.time()
+    
     try:
         print(f"🎬 Instagram Parse Request: {request.url}")
         
@@ -75,29 +81,78 @@ async def parse_instagram_recipe(request: URLRequest):
         if "instagram.com" not in request.url.lower():
             raise HTTPException(status_code=400, detail="URL must be an Instagram post or reel")
         
-        # Parse Instagram recipe
+        print("✅ URL validation passed")
+        
+        # Check environment variables
+        required_env_vars = ["APIFY_API_KEY", "GOOGLE_GEMINI_KEY", "DEEPGRAM_WISPER_API"]
+        missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+        if missing_vars:
+            error_msg = f"Missing environment variables: {', '.join(missing_vars)}"
+            print(f"❌ Environment error: {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
+        
+        print("✅ Environment variables check passed")
+        
+        # Parse Instagram recipe (not async - runs in thread pool automatically)
+        print("🚀 Starting Instagram parser...")
         recipe_json = instagram_parser.parse_instagram_recipe_to_json(request.url)
         
-        # Note: Instagram parser handles its own timing internally
+        elapsed_seconds = time.time() - start_time
+        print(f"✅ Instagram parsing completed successfully in {elapsed_seconds:.2f}s")
+        
         return ParseResponse(
             success=True,
             recipe_json=recipe_json,
-            elapsed_seconds=0.0  # Instagram parser reports timing internally
+            elapsed_seconds=elapsed_seconds
         )
         
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
+        elapsed_seconds = time.time() - start_time
         error_message = str(e)
-        print(f"❌ Instagram Parse Error: {error_message}")
         
-        # Handle specific error cases
-        if "private video" in error_message.lower():
+        # Log full traceback for debugging
+        print(f"❌ Instagram Parse Error after {elapsed_seconds:.2f}s: {error_message}")
+        print("📍 Full traceback:")
+        print(traceback.format_exc())
+        
+        # Create detailed error response
+        detailed_error = {
+            "original_error": error_message,
+            "error_type": type(e).__name__,
+            "elapsed_seconds": elapsed_seconds,
+            "url": request.url
+        }
+        
+        # Handle specific error cases with better status codes
+        if "private video" in error_message.lower() or "private account" in error_message.lower():
             status_code = 403
-        elif "deleted" in error_message.lower() or "not available" in error_message.lower():
+            user_message = "This Instagram video is private or from a private account"
+        elif "deleted" in error_message.lower() or "not available" in error_message.lower() or "not found" in error_message.lower():
             status_code = 404
+            user_message = "Instagram video not found or has been deleted"
+        elif "rate limit" in error_message.lower() or "too many requests" in error_message.lower():
+            status_code = 429
+            user_message = "Rate limit exceeded, please try again later"
+        elif "timeout" in error_message.lower():
+            status_code = 504
+            user_message = "Request timed out, please try again"
+        elif "api key" in error_message.lower() or "authentication" in error_message.lower():
+            status_code = 500
+            user_message = "Server configuration error"
         else:
             status_code = 500
+            user_message = f"Server error: {error_message}"
             
-        raise HTTPException(status_code=status_code, detail=error_message)
+        raise HTTPException(
+            status_code=status_code, 
+            detail={
+                "message": user_message,
+                "debug_info": detailed_error
+            }
+        )
 
 @app.post("/parse-site-recipe", response_model=ParseResponse)
 async def parse_site_recipe(request: URLRequest):
