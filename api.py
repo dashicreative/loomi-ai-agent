@@ -6,15 +6,9 @@ Provides HTTP endpoints for iOS app integration
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, Dict, List
 import os
-import asyncio
-from contextlib import asynccontextmanager
-
-# Import new hybrid agent
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent / "Lumi_pydantic_agent"))
 
 from agents.hybrid_recipe_agent import hybrid_agent, HybridAgentDeps
 from Custom_Ingredient_LLM.Custom_Ingredient_LLM import process_ingredient

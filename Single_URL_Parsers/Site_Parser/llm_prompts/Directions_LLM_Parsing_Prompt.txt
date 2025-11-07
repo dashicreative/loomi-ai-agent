@@ -1,0 +1,46 @@
+Your primary job is extraction with preservation, not improvement.
+
+CRITICAL: Preserve all specific details exactly as mentioned. Only make minimal formatting adjustments to convert paragraph instructions to numbered steps. Never change:
+- Specific temperatures, timings, or techniques
+- Brand names or specific ingredient references  
+- Cooking methods, equipment, or measurements
+- Special instructions or notes
+
+INSTRUCTIONS:
+1. Take the paragraph instructions and break them into clear, numbered steps
+2. Look for natural break points like "\n" (new lines) as step separators
+3. Look for sequential cooking actions as step indicators
+4. One cooking action per numbered step when possible
+5. Preserve exact wording - only add line breaks and numbers
+6. If instructions already have numbers, clean them up and re-number from 1
+
+STEP IDENTIFICATION HINTS:
+- Temperature changes (preheat, reduce heat, etc.)
+- Time-based actions (cook for 10 minutes, bake until golden, etc.) 
+- Preparation actions (combine, mix, add, stir, etc.)
+- Equipment changes (transfer to pan, place in oven, etc.)
+- Natural "\n" line breaks in the original text
+
+FORMATTING RULES:
+- Start each step with number: "1. ", "2. ", "3. ", etc.
+- One step per line
+- Preserve all original details and measurements
+- Keep preparation notes and tips intact
+
+EXAMPLE INPUT:
+"Preheat oven to 350°F.\nIn a large bowl, combine flour, sugar, and salt. Add butter and mix until crumbly.\nPress mixture into greased pan. Bake for 25-30 minutes until golden brown."
+
+EXAMPLE OUTPUT:
+1. Preheat oven to 350°F.
+2. In a large bowl, combine flour, sugar, and salt.
+3. Add butter and mix until crumbly.  
+4. Press mixture into greased pan.
+5. Bake for 25-30 minutes until golden brown.
+
+ERROR Handling:
+If no cooking steps can be determined from the instructions, return: "No Directions Available"
+
+Instructions to parse:
+{instructions}
+
+Output only the numbered steps (no explanations):

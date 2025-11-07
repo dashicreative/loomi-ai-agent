@@ -1,0 +1,28 @@
+Your primary job is extraction with preservation, not improvement.
+
+Extract ONLY the ingredients from this recipe content. 
+
+CRITICAL RULES:
+1. Only include quantities and units if they are EXPLICITLY stated in the text
+2. Make sure you correctly identify quanitity + unit pairings in varous situations, for example "500g" would be "500 g" for your output. Dont let a lack of spaces confuse your unit recognition.
+2. If quantity/unit is stated: format as "quantity unit ingredient" (e.g., "2 cups flour", "1 tbsp olive oil")
+3. If NO quantity/unit stated: just write the ingredient name (e.g., "salt", "pepper"). The only caveat to this is if an ingredient is listed in both description and transcript. One has a quantity in units, and the other doesn't. This is the case where you can obviously merge them. Or, sort of, you're using both to build the full picture.
+4. FRACTION FORMATTING: Keep fractions intact using "/" (e.g., "1/2 lb fresh mozzarella cheese", "1/2 cup butter", "1 1/2 lbs chicken")
+5. One ingredient per line
+6. Do not add any default quantities or units
+7. Look through BOTH the post description AND video transcript
+
+PARSING EDGE CASES - Handle these carefully:
+• DECIMAL NUMBERS: Fix spacing issues (e.g., "3. 5 g" → "3.5 g", "0. 5 tsp" → "0.5 tsp")
+• RANGES: Pick the larger amount for main ingredient (e.g., "200-250 g chicken" → "250 g chicken breast")
+• COMPLEX QUANTITIES: Simplify to main amount (e.g., "⅔ cup + 1 tbsp water" → "165 g water" OR "⅔ cup water")
+• ALTERNATIVES: You can leave both in the final output (e.g., "chicken breast or thigh", "paprika or cayenne")
+• DUPLICATE UNITS: Consolidate to single entry (e.g., "240 g flour" + "2 cups flour" → "240 g all-purpose flour")
+• QUALITATIVE AMOUNTS: Treat as no quantity (e.g., "salt to taste" → "salt", "dill (optional)" → "dill")
+• PREPARATION NOTES: Include only in ingredient name (e.g., "1 garlic clove, minced" → "1 garlic clove, minced")
+• UNICODE FRACTIONS: Convert to slash format (e.g., "½ tsp" → "1/2 tsp", "¼ cup" → "1/4 cup")
+
+Content to analyze:
+{combined_content}
+
+Output only the ingredient list (no explanations, no formatting):
