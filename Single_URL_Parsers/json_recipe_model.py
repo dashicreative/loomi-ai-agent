@@ -18,7 +18,8 @@ def create_standard_recipe_json(
     source_url: str,
     nutrition: Dict[str, str] = None,
     image: str = "",
-    meal_occasion: str = "Other"
+    meal_occasion: str = "Other",
+    total_time: str = ""
 ) -> Dict[str, Any]:
     """
     Create a standardized recipe dictionary structure.
@@ -32,6 +33,7 @@ def create_standard_recipe_json(
         nutrition: Optional nutrition dict with 'calories', 'fat', 'carbs', 'protein' keys
         image: Optional image URL for the recipe (defaults to empty string)
         meal_occasion: Meal occasion category (Breakfast/Lunch/Dinner/Dessert/Snack/Other)
+        total_time: Optional total cooking/prep time (e.g., "1 h 45 m", defaults to empty string)
         
     Returns:
         Standardized recipe dictionary
@@ -49,6 +51,7 @@ def create_standard_recipe_json(
         "title": title,
         "parser_method": parser_method,
         "meal_occasion": meal_occasion,
+        "total_time": total_time,
         "ingredients": ingredients,
         "directions": directions,
         "nutrition": nutrition,
@@ -75,6 +78,7 @@ STANDARD_RECIPE_TEMPLATE = {
     "title": "",
     "parser_method": "",
     "meal_occasion": "Other",
+    "total_time": "",
     "ingredients": [],
     "directions": [],
     "nutrition": {

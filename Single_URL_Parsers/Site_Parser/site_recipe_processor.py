@@ -98,6 +98,7 @@ class SiteRecipeProcessor:
         instructions = apify_response.get("instructions", "")
         image_url = apify_response.get("image", "")
         source_url = apify_response.get("url", "")
+        total_time = apify_response.get("total_time", "")
         
         # Extract nutrition data (convert to simple format)
         nutrition = {}
@@ -122,7 +123,8 @@ class SiteRecipeProcessor:
             "instructions": instructions,
             "image": image_url,
             "nutrition": nutrition,
-            "source_url": source_url
+            "source_url": source_url,
+            "total_time": total_time
         }
     
     def _extract_numeric_value(self, value: str) -> Optional[str]:
@@ -314,7 +316,8 @@ class SiteRecipeProcessor:
             directions=formatted_directions,
             source_url=key_fields["source_url"],
             nutrition=key_fields["nutrition"],
-            meal_occasion=meal_occasion
+            meal_occasion=meal_occasion,
+            total_time=key_fields["total_time"]
         )
         
         # Add image field (not in standard model yet)

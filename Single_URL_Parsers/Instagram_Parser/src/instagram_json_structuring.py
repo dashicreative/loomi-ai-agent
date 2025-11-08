@@ -154,7 +154,8 @@ class RecipeStructurer:
             directions=recipe.directions,
             source_url=recipe.source_url,
             image=image_url,
-            meal_occasion=meal_occasion
+            meal_occasion=meal_occasion,
+            total_time=""  # Instagram doesn't provide total time data
             # nutrition defaults to empty strings in standard format
         )
         
