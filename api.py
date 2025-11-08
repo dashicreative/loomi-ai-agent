@@ -5,9 +5,13 @@ Minimal FastAPI service with just 2 endpoints for URL parsing.
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import os
 import sys
+import json
+import asyncio
+import time
 from pathlib import Path
 
 # Add parser directories to path
@@ -57,7 +61,9 @@ async def root():
         "version": "2.0.0",
         "endpoints": [
             "POST /parse-instagram-recipe",
-            "POST /parse-site-recipe"
+            "POST /parse-site-recipe",
+            "POST /parse-instagram-recipe-stream (SSE)",
+            "POST /parse-site-recipe-stream (SSE)"
         ]
     }
 
@@ -196,6 +202,207 @@ async def parse_site_recipe(request: URLRequest):
             status_code = 500
             
         raise HTTPException(status_code=status_code, detail=error_message)
+
+# =============================================================================
+# SERVER-SENT EVENTS (SSE) STREAMING ENDPOINTS
+# =============================================================================
+
+def sse_format(data: dict) -> str:
+    """Format data as Server-Sent Events message"""
+    return f"data: {json.dumps(data)}\n\n"
+
+async def stream_instagram_parsing(url: str):
+    """
+    Stream Instagram recipe parsing with real-time progress updates
+    """
+    try:
+        # Stage 1: Finding your recipe (0-40%)
+        yield sse_format({"stage": "Finding your recipe...", "progress": 10})
+        
+        # Validate Instagram URL
+        if "instagram.com" not in url.lower():
+            yield sse_format({
+                "stage": "Error", 
+                "progress": 0, 
+                "success": False,
+                "error": "URL must be an Instagram post or reel"
+            })
+            return
+            
+        yield sse_format({"stage": "Finding your recipe...", "progress": 20})
+        
+        # Check environment variables
+        required_env_vars = ["APIFY_API_KEY", "GOOGLE_GEMINI_KEY", "DEEPGRAM_WISPER_API"]
+        missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+        if missing_vars:
+            yield sse_format({
+                "stage": "Error",
+                "progress": 0,
+                "success": False,
+                "error": f"Server configuration error: Missing environment variables"
+            })
+            return
+            
+        yield sse_format({"stage": "Finding your recipe...", "progress": 40})
+        
+        # Stage 2: Reading your recipe (40-70%)
+        yield sse_format({"stage": "Reading your recipe...", "progress": 50})
+        
+        # Parse Instagram recipe in a thread to avoid blocking
+        import concurrent.futures
+        import threading
+        
+        # Create a lock and progress tracker for threaded operations
+        progress_lock = threading.Lock()
+        current_progress = {"value": 50}
+        
+        def update_progress(stage: str, progress: int):
+            with progress_lock:
+                current_progress["value"] = progress
+        
+        # Run the parsing in a thread pool
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            # Start the parsing
+            future = executor.submit(instagram_parser.parse_instagram_recipe_to_json, url)
+            
+            # Monitor progress while parsing runs
+            llm_start_time = time.time()
+            llm_shown = False
+            
+            while not future.done():
+                await asyncio.sleep(0.5)  # Check every 500ms
+                
+                # Show "Preparing your recipe..." if LLM takes longer than 3 seconds
+                if not llm_shown and (time.time() - llm_start_time) > 3:
+                    yield sse_format({"stage": "Preparing your recipe...", "progress": 80})
+                    llm_shown = True
+                
+                # Update reading progress gradually
+                if current_progress["value"] < 70:
+                    current_progress["value"] = min(70, current_progress["value"] + 2)
+                    yield sse_format({"stage": "Reading your recipe...", "progress": current_progress["value"]})
+            
+            # Get the result
+            recipe_json = future.result()
+        
+        # Stage 4: Recipe Ready! (100%)
+        yield sse_format({
+            "stage": "Your recipe is ready!", 
+            "progress": 100,
+            "success": True,
+            "recipe_json": recipe_json
+        })
+        
+    except Exception as e:
+        # Handle any errors during streaming
+        import traceback
+        print(f"❌ SSE Instagram Parse Error: {str(e)}")
+        print("📍 Full traceback:")
+        print(traceback.format_exc())
+        
+        yield sse_format({
+            "stage": "Error",
+            "progress": 0,
+            "success": False,
+            "error": str(e)
+        })
+
+async def stream_site_parsing(url: str):
+    """
+    Stream site recipe parsing with real-time progress updates
+    """
+    try:
+        # Stage 1: Finding your recipe (0-40%)
+        yield sse_format({"stage": "Finding your recipe...", "progress": 20})
+        
+        # Validate URL format
+        if not url.startswith(('http://', 'https://')):
+            url = f"https://{url}"
+            
+        yield sse_format({"stage": "Finding your recipe...", "progress": 40})
+        
+        # Stage 2: Reading your recipe (40-70%)
+        yield sse_format({"stage": "Reading your recipe...", "progress": 60})
+        
+        # Parse recipe site
+        llm_start_time = time.time()
+        result = await parse_single_recipe_url(url)
+        llm_duration = time.time() - llm_start_time
+        
+        # Stage 3: Preparing your recipe (only if LLM took > 3 seconds)
+        if llm_duration > 3:
+            yield sse_format({"stage": "Preparing your recipe...", "progress": 90})
+            await asyncio.sleep(0.5)  # Brief pause to show the stage
+        
+        if result["success"]:
+            # Stage 4: Recipe Ready!
+            yield sse_format({
+                "stage": "Your recipe is ready!",
+                "progress": 100,
+                "success": True,
+                "recipe_json": result["processed_json"],
+                "elapsed_seconds": result["total_elapsed_seconds"]
+            })
+        else:
+            yield sse_format({
+                "stage": "Error",
+                "progress": 0,
+                "success": False,
+                "error": result.get("error", "Failed to parse recipe")
+            })
+            
+    except Exception as e:
+        print(f"❌ SSE Site Parse Error: {str(e)}")
+        yield sse_format({
+            "stage": "Error",
+            "progress": 0,
+            "success": False,
+            "error": str(e)
+        })
+
+@app.post("/parse-instagram-recipe-stream")
+async def parse_instagram_recipe_stream(request: URLRequest):
+    """
+    Parse Instagram video/reel with real-time progress updates via Server-Sent Events.
+    
+    Returns a stream of progress updates followed by the final recipe JSON.
+    
+    Input: {"url": "https://www.instagram.com/p/ABC123/"}
+    Output: SSE stream with progress updates + final result
+    """
+    return StreamingResponse(
+        stream_instagram_parsing(request.url),
+        media_type="text/plain",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Methods": "*"
+        }
+    )
+
+@app.post("/parse-site-recipe-stream")
+async def parse_site_recipe_stream(request: URLRequest):
+    """
+    Parse recipe website with real-time progress updates via Server-Sent Events.
+    
+    Returns a stream of progress updates followed by the final recipe JSON.
+    
+    Input: {"url": "https://www.allrecipes.com/recipe/..."}
+    Output: SSE stream with progress updates + final result
+    """
+    return StreamingResponse(
+        stream_site_parsing(request.url),
+        media_type="text/plain",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Methods": "*"
+        }
+    )
 
 if __name__ == "__main__":
     import uvicorn
