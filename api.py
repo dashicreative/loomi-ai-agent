@@ -11,7 +11,9 @@ import sys
 import json
 import asyncio
 import time
+import socket
 from pathlib import Path
+from urllib.parse import urlparse
 
 # Add parser directories to path
 sys.path.append(str(Path(__file__).parent / "Single_URL_Parsers" / "Instagram_Parser" / "src"))
@@ -51,6 +53,23 @@ app.add_middleware(
 # Initialize Instagram parser (once at startup)
 instagram_parser = InstagramTranscriber()
 
+# DNS validation function
+async def is_valid_domain(url: str) -> bool:
+    """Quick DNS check to validate domain exists without HTTP overhead"""
+    try:
+        parsed = urlparse(url)
+        domain = parsed.netloc or parsed.path.split('/')[0]
+        
+        # Remove port if present
+        if ':' in domain:
+            domain = domain.split(':')[0]
+            
+        # Quick DNS lookup
+        socket.gethostbyname(domain)
+        return True
+    except (socket.gaierror, socket.error, ValueError):
+        return False
+
 @app.get("/")
 async def root():
     """Health check endpoint"""
@@ -83,6 +102,10 @@ async def parse_instagram_recipe(request: URLRequest):
         # Validate Instagram URL
         if "instagram.com" not in request.url.lower():
             raise HTTPException(status_code=400, detail="URL must be an Instagram post or reel")
+        
+        # DNS validation to check if domain exists
+        if not await is_valid_domain(request.url):
+            raise HTTPException(status_code=400, detail="Invalid or unreachable URL domain")
         
         print("✅ URL validation passed")
         
@@ -171,6 +194,12 @@ async def parse_site_recipe(request: URLRequest):
         # Validate URL format
         if not request.url.startswith(('http://', 'https://')):
             request.url = f"https://{request.url}"
+        
+        # DNS validation to check if domain exists
+        if not await is_valid_domain(request.url):
+            raise HTTPException(status_code=400, detail="Invalid or unreachable URL domain")
+        
+        print("✅ URL domain validation passed")
         
         # Parse recipe site
         result = await parse_single_recipe_url(request.url)
