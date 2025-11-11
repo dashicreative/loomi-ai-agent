@@ -1,17 +1,23 @@
-Role: Your job is ingredient-to-step matching. Analyze cooking steps and determine which specific ingredients are used in each step based on cooking workflow and context.
+Role: Your job is ingredient-to-step matching. Create a cooking checklist where each ingredient appears only ONCE - when it's first used.
 
-CRITICAL: This is pattern recognition, not recipe improvement. Match ingredients to steps based on:
-- Direct mentions of ingredients in step text
-- Cooking workflow logic (prep ingredients used before cooking ingredients)
-- Context from other steps (seasoned chicken from step 1 gets cooked in step 3)
-- Quantity logic (large amounts typically used early, small amounts for finishing)
+CRITICAL COOKING CHECKLIST PRINCIPLE: 
+Think like you're cooking and checking off ingredients as you use them. Each ingredient should be assigned to only ONE step - the step where you first grab it from your ingredient list. This creates a progressive checklist where cooks know exactly when to use each ingredient.
 
-MATCHING RULES:
-1. If an ingredient is directly mentioned in a step, it belongs to that step
-2. If a step references a prepared item from previous steps, include those preparation ingredients
-3. For ambiguous cases, use cooking logic and step context
-4. Don't assign ingredients to steps where they're not actually used
-5. Multiple steps can use the same ingredient if it's added at different times
+CORE MATCHING RULES:
+1. ONLY match ingredients explicitly mentioned BY NAME in that exact step
+2. Each ingredient appears in EXACTLY ONE step (no duplicates across steps)
+3. Never infer ingredients from generic terms like "mixture", "batter", "dough", "sauce"
+4. If a step just transfers/moves something already made, assign ZERO ingredients
+5. Don't assign ingredients based on what "should" be there - only what's explicitly named
+
+WRONG APPROACH EXAMPLES:
+❌ Step says "add chicken mixture" → Don't assign all chicken ingredients
+❌ Step says "pour batter into pan" → Don't assign flour, eggs, etc.
+❌ Step says "transfer cheesecake mixture" → Don't assign cream cheese, eggs, etc.
+
+CORRECT APPROACH:
+✅ Only assign ingredients when step says "add flour", "pour milk", "season with salt"
+✅ Think: "When do I first grab each ingredient from my counter?"
 
 INPUT FORMAT:
 Ingredients will be provided with unique IDs like I12345, I67890, etc.
@@ -19,20 +25,23 @@ Steps will be numbered cooking instructions.
 
 EXAMPLES:
 
-Example 1:
+Example 1 - Each ingredient used exactly once:
 Ingredients: I101: olive oil | I102: chicken breast | I103: salt | I104: garlic
 Steps: 1. Season chicken with salt | 2. Heat oil in pan | 3. Add seasoned chicken and garlic to pan
-Output: Step1:I102,I103|Step2:I101|Step3:I102,I104
+Output: Step1:I102,I103|Step2:I101|Step3:I104
+Reasoning: Chicken and salt first used in step 1, oil first used in step 2, garlic first used in step 3. No duplicates.
 
-Example 2:  
-Ingredients: I201: pasta | I202: water | I203: salt | I204: butter | I205: parmesan
-Steps: 1. Bring salted water to boil | 2. Add pasta to boiling water | 3. Drain and toss with butter and cheese
-Output: Step1:I202,I203|Step2:I201|Step3:I201,I204,I205
+Example 2 - Avoid "mixture" inference:
+Ingredients: I201: cream cheese | I202: eggs | I203: sugar | I204: vanilla
+Steps: 1. Beat cream cheese until fluffy | 2. Add eggs and sugar | 3. Stir in vanilla | 4. Pour mixture into pan
+Output: Step1:I201|Step2:I202,I203|Step3:I204|Step4:
+Reasoning: Step 4 says "pour mixture" but doesn't mention specific ingredients, so no ingredients assigned.
 
-Example 3:
-Ingredients: I301: flour | I302: eggs | I303: milk | I304: sugar | I305: oil
-Steps: 1. Whisk flour, sugar in bowl | 2. Beat eggs and milk together | 3. Combine wet and dry ingredients | 4. Heat oil in pan for frying
-Output: Step1:I301,I304|Step2:I302,I303|Step3:I301,I302,I303,I304|Step4:I305
+Example 3 - Transfer steps get zero ingredients:
+Ingredients: I301: flour | I302: butter | I303: milk | I304: cheese
+Steps: 1. Mix flour and butter | 2. Gradually add milk | 3. Stir in cheese | 4. Transfer sauce to serving dish
+Output: Step1:I301,I302|Step2:I303|Step3:I304|Step4:
+Reasoning: Step 4 is just transferring - no new ingredients mentioned.
 
 Now analyze the following:
 
