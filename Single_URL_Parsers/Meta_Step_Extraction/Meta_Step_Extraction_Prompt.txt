@@ -1,0 +1,55 @@
+Role: Your job is meta step identification with preservation, not editorial changes. Analyze cooking directions and identify which steps are section headers (meta steps) vs detailed implementation steps.
+
+CRITICAL: This is extraction with preservation, not recipe improvement. Meta steps are OPTIONAL - do not force matches or hallucinate them. Only identify meta steps that are:
+- Explicitly mentioned as section headers in the original recipe
+- Short, punchy cooking actions (1-4 words like "Saute the veggies", "Poach the chicken")
+- Followed by detailed implementation steps
+- 100% clearly identifiable as section organizers
+- If a step has no clear meta step to belong to, mark it as REGULAR with no meta step assignment
+
+IDENTIFICATION RULES:
+1. Meta steps are typically short phrases that describe a cooking technique or phase
+2. They're usually followed by detailed steps explaining HOW to do that technique
+3. Preserve the exact original step order - never rearrange
+4. Only mark steps as meta steps if you're 100% confident they're section headers
+5. It's perfectly fine if no meta steps exist - they are OPTIONAL, not required. If they are clearly stated YES its required to identify but if they are not dont assume.
+6. Many steps will have NO meta step assignment - this is normal and correct
+7. Don't get creative or guess - stick to what's explicitly there
+8. Don't move steps around or change the cooking sequence
+
+EXAMPLES:
+
+Example 1 - Clear Meta Steps:
+Steps: 1. Saute the veggies | 2. Heat oil in pan | 3. Add carrots and cook | 4. Poach the chicken | 5. Add chicken to pot | 6. Simmer for 15 minutes | 7. Serve | 8. Remove herbs and garnish
+Output: Step1:META|Step2:REGULAR:Saute the veggies|Step3:REGULAR:Saute the veggies|Step4:META|Step5:REGULAR:Poach the chicken|Step6:REGULAR:Poach the chicken|Step7:META|Step8:REGULAR:Serve
+
+Example 2 - No Clear Meta Steps:
+Steps: 1. Heat oil in large pot | 2. Add onions and cook until soft | 3. Add garlic and spices | 4. Pour in broth and simmer
+Output: Step1:REGULAR|Step2:REGULAR|Step3:REGULAR|Step4:REGULAR
+
+Example 3 - Mixed Meta and Regular:
+Steps: 1. Prepare the dough | 2. Mix flour and water | 3. Knead for 10 minutes | 4. Let rise for 1 hour | 5. Add toppings | 6. Spread sauce on dough | 7. Add cheese and pepperoni
+Output: Step1:META|Step2:REGULAR:Prepare the dough|Step3:REGULAR:Prepare the dough|Step4:REGULAR:Prepare the dough|Step5:META|Step6:REGULAR:Add toppings|Step7:REGULAR:Add toppings
+
+Example 4 - Partial Meta Steps (Mixed):
+Steps: 1. Make the batter | 2. Cream butter and sugar | 3. Add eggs one at a time | 4. Fold in flour | 5. Preheat oven to 350°F | 6. Pour batter into pan | 7. Bake for 25 minutes | 8. Cool completely before frosting
+Output: Step1:META|Step2:REGULAR:Make the batter|Step3:REGULAR:Make the batter|Step4:REGULAR:Make the batter|Step5:REGULAR|Step6:REGULAR|Step7:REGULAR|Step8:REGULAR
+
+FORMAT EXPLANATION:
+- META = This step is a section header
+- REGULAR = Regular cooking step with NO meta step assignment
+- REGULAR:MetaStepName = Regular step that belongs under the named meta step section
+- Most steps will be REGULAR with no meta step - this is normal and correct
+
+Now analyze the following:
+
+Ingredients: {ingredients_list}
+
+Steps: {numbered_steps}
+
+Output format: Step1:META|Step2:REGULAR:MetaStepName|Step3:REGULAR|etc.
+
+ERROR Handling:
+If no clear analysis can be made, return: "No Meta Steps Available"
+
+Output only the step classifications (no explanations):

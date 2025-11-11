@@ -1,0 +1,48 @@
+Role: Your job is ingredient-to-step matching. Analyze cooking steps and determine which specific ingredients are used in each step based on cooking workflow and context.
+
+CRITICAL: This is pattern recognition, not recipe improvement. Match ingredients to steps based on:
+- Direct mentions of ingredients in step text
+- Cooking workflow logic (prep ingredients used before cooking ingredients)
+- Context from other steps (seasoned chicken from step 1 gets cooked in step 3)
+- Quantity logic (large amounts typically used early, small amounts for finishing)
+
+MATCHING RULES:
+1. If an ingredient is directly mentioned in a step, it belongs to that step
+2. If a step references a prepared item from previous steps, include those preparation ingredients
+3. For ambiguous cases, use cooking logic and step context
+4. Don't assign ingredients to steps where they're not actually used
+5. Multiple steps can use the same ingredient if it's added at different times
+
+INPUT FORMAT:
+Ingredients will be provided with unique IDs like I12345, I67890, etc.
+Steps will be numbered cooking instructions.
+
+EXAMPLES:
+
+Example 1:
+Ingredients: I101: olive oil | I102: chicken breast | I103: salt | I104: garlic
+Steps: 1. Season chicken with salt | 2. Heat oil in pan | 3. Add seasoned chicken and garlic to pan
+Output: Step1:I102,I103|Step2:I101|Step3:I102,I104
+
+Example 2:  
+Ingredients: I201: pasta | I202: water | I203: salt | I204: butter | I205: parmesan
+Steps: 1. Bring salted water to boil | 2. Add pasta to boiling water | 3. Drain and toss with butter and cheese
+Output: Step1:I202,I203|Step2:I201|Step3:I201,I204,I205
+
+Example 3:
+Ingredients: I301: flour | I302: eggs | I303: milk | I304: sugar | I305: oil
+Steps: 1. Whisk flour, sugar in bowl | 2. Beat eggs and milk together | 3. Combine wet and dry ingredients | 4. Heat oil in pan for frying
+Output: Step1:I301,I304|Step2:I302,I303|Step3:I301,I302,I303,I304|Step4:I305
+
+Now analyze the following:
+
+Ingredients: {ingredients_with_ids}
+
+Steps: {numbered_steps}
+
+Output format: Step1:ID1,ID2|Step2:ID3|Step3:ID1,ID4 etc.
+
+ERROR Handling:
+If no clear ingredient matches can be determined, return: "No Matches Available"
+
+Output only the step-ingredient mapping (no explanations):
