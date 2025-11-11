@@ -1,57 +1,43 @@
-Role: Your job is ingredient-to-step matching. Create a cooking checklist where each ingredient appears only ONCE - when it's first used.
+TASK: Match ingredient IDs to recipe steps. Each ingredient should appear EXACTLY ONCE at its first explicit mention.
 
-CRITICAL COOKING CHECKLIST PRINCIPLE: 
-Think like you're cooking and checking off ingredients as you use them. Each ingredient should be assigned to only ONE step - the step where you first grab it from your ingredient list. This creates a progressive checklist where cooks know exactly when to use each ingredient.
+MATCHING RULES (in priority order):
+1. Only match when step text explicitly names the ingredient
+2. Match on core ingredient name (ignore quantities, descriptors, parenthetical notes)
+   - "crushed cookies" matches "12 protein cookies (crushed)" ✓
+   - "cream cheese" matches "cream cheese (* See notes, room temperature)" ✓
+   - "butter" matches "light butter (melted)" ✓
+3. Each ingredient ID appears in exactly one step (first mention only)
+4. Generic terms DO NOT match ingredients:
+   - "mixture", "batter", "dough", "filling" = NO matches
+   - "Transfer to pan" = NO matches (just moving, not adding)
+5. If ingredient is never explicitly mentioned in ANY step, omit it from output
 
-CORE MATCHING RULES:
-1. ONLY match ingredients explicitly mentioned BY NAME in that exact step
-2. Each ingredient appears in EXACTLY ONE step (no duplicates across steps)
-3. Never infer ingredients from generic terms like "mixture", "batter", "dough", "sauce"
-4. If a step just transfers/moves something already made, assign ZERO ingredients
-5. Don't assign ingredients based on what "should" be there - only what's explicitly named
+STEP-BY-STEP PROCESS:
+1. Read all ingredients and their IDs
+2. Go through steps sequentially
+3. For each step, identify explicitly named ingredients
+4. Assign those ingredient IDs to that step
+5. Never assign the same ID twice (skip if already used)
 
-WRONG APPROACH EXAMPLES:
-❌ Step says "add chicken mixture" → Don't assign all chicken ingredients
-❌ Step says "pour batter into pan" → Don't assign flour, eggs, etc.
-❌ Step says "transfer cheesecake mixture" → Don't assign cream cheese, eggs, etc.
-
-CORRECT APPROACH:
-✅ Only assign ingredients when step says "add flour", "pour milk", "season with salt"
-✅ Think: "When do I first grab each ingredient from my counter?"
-
-INPUT FORMAT:
-Ingredients will be provided with unique IDs like I12345, I67890, etc.
-Steps will be numbered cooking instructions.
+OUTPUT FORMAT: Step1:ID1,ID2|Step2:ID3|Step3:ID4
+- Use actual step numbers from input
+- List all matched IDs for that step
+- Use empty after colon if no matches: Step4:|Step5:ID7
 
 EXAMPLES:
 
-Example 1 - Each ingredient used exactly once:
-Ingredients: I101: olive oil | I102: chicken breast | I103: salt | I104: garlic
-Steps: 1. Season chicken with salt | 2. Heat oil in pan | 3. Add seasoned chicken and garlic to pan
-Output: Step1:I102,I103|Step2:I101|Step3:I104
-Reasoning: Chicken and salt first used in step 1, oil first used in step 2, garlic first used in step 3. No duplicates.
+Example 1:
+Ingredients: I1:eggs | I2:flour | I3:milk | I4:butter
+Steps: 1.Mix flour and eggs | 2.Add milk | 3.Pour batter into pan
+Output: Step1:I2,I1|Step2:I3|Step3:
 
-Example 2 - Avoid "mixture" inference:
-Ingredients: I201: cream cheese | I202: eggs | I203: sugar | I204: vanilla
-Steps: 1. Beat cream cheese until fluffy | 2. Add eggs and sugar | 3. Stir in vanilla | 4. Pour mixture into pan
-Output: Step1:I201|Step2:I202,I203|Step3:I204|Step4:
-Reasoning: Step 4 says "pour mixture" but doesn't mention specific ingredients, so no ingredients assigned.
+Example 2:
+Ingredients: I10:cream cheese | I11:sugar | I12:vanilla
+Steps: 1.Beat cream cheese with sugar | 2.Add vanilla | 3.Transfer mixture to pan
+Output: Step1:I10,I11|Step2:I12|Step3:
 
-Example 3 - Transfer steps get zero ingredients:
-Ingredients: I301: flour | I302: butter | I303: milk | I304: cheese
-Steps: 1. Mix flour and butter | 2. Gradually add milk | 3. Stir in cheese | 4. Transfer sauce to serving dish
-Output: Step1:I301,I302|Step2:I303|Step3:I304|Step4:
-Reasoning: Step 4 is just transferring - no new ingredients mentioned.
-
-Now analyze the following:
-
+Now process:
 Ingredients: {ingredients_with_ids}
-
 Steps: {numbered_steps}
 
-Output format: Step1:ID1,ID2|Step2:ID3|Step3:ID1,ID4 etc.
-
-ERROR Handling:
-If no clear ingredient matches can be determined, return: "No Matches Available"
-
-Output only the step-ingredient mapping (no explanations):
+Output only the mapping (no explanations):

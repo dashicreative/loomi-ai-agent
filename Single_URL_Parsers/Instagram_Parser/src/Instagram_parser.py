@@ -98,7 +98,7 @@ class InstagramTranscriber:
         self.step_ingredient_matcher = StepIngredientMatcher(self.google_model)
         self.meta_step_extractor = MetaStepExtractor(self.google_model)
     
-    def call_llm(self, prompt: str, provider: str = "openai", max_tokens: int = 500) -> str:
+    def call_llm(self, prompt: str, provider: str = "openai", max_tokens: int = 1200) -> str:
         """
         Unified LLM call method that can use OpenAI, Claude, Google Gemini, or XAI Grok.
         
@@ -646,7 +646,7 @@ class InstagramTranscriber:
                 prompt,
                 generation_config=genai.types.GenerationConfig(
                     temperature=0.1,
-                    max_output_tokens=500
+                    max_output_tokens=1200
                 ),
                 safety_settings=[
                     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
@@ -714,7 +714,7 @@ class InstagramTranscriber:
                 prompt,
                 generation_config=genai.types.GenerationConfig(
                     temperature=0.1,
-                    max_output_tokens=800
+                    max_output_tokens=1200
                 ),
                 safety_settings=[
                     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
@@ -782,7 +782,7 @@ class InstagramTranscriber:
                 prompt,
                 generation_config=genai.types.GenerationConfig(
                     temperature=0.1,
-                    max_output_tokens=50  # Very small since we only expect one word
+                    max_output_tokens=1200  # Increased for Gemini 2.5 compatibility
                 ),
                 safety_settings=[
                     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},

@@ -45,7 +45,8 @@ class SiteRecipeProcessor:
         google_key = os.getenv('GOOGLE_GEMINI_KEY')
         if google_key:
             genai.configure(api_key=google_key)
-            self.google_model = genai.GenerativeModel('gemini-2.0-flash-exp')
+            #self.google_model = genai.GenerativeModel('gemini-2.0-flash-exp')
+            self.google_model = genai.GenerativeModel('gemini-2.5-flash-lite')
         else:
             raise ValueError("Google Gemini API key is required. Please add GOOGLE_GEMINI_KEY to your .env file.")
         
@@ -56,7 +57,7 @@ class SiteRecipeProcessor:
         self.step_ingredient_matcher = StepIngredientMatcher(self.google_model)
         self.meta_step_extractor = MetaStepExtractor(self.google_model)
     
-    def call_llm(self, prompt: str, max_tokens: int = 800) -> str:
+    def call_llm(self, prompt: str, max_tokens: int = 1200) -> str:
         """
         Call Gemini LLM for instruction formatting.
         
@@ -80,6 +81,7 @@ class SiteRecipeProcessor:
                 {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
             ]
         )
+        
         
         if hasattr(response, 'text') and response.text:
             return response.text.strip()
@@ -174,7 +176,7 @@ class SiteRecipeProcessor:
         print(f"   📝 Formatting instructions with GEMINI...")
         start_time = time.time()
         
-        llm_response = self.call_llm(prompt, max_tokens=1000)
+        llm_response = self.call_llm(prompt, max_tokens=1200)
         
         elapsed = time.time() - start_time
         print(f"   ✅ Instructions formatted in {elapsed:.2f}s")
@@ -227,7 +229,7 @@ class SiteRecipeProcessor:
             print(f"   🍽️  Analyzing meal occasion with GEMINI...")
             start_time = time.time()
             
-            llm_response = self.call_llm(prompt, max_tokens=50)
+            llm_response = self.call_llm(prompt, max_tokens=1200)
             result = llm_response.strip()
             
             elapsed = time.time() - start_time

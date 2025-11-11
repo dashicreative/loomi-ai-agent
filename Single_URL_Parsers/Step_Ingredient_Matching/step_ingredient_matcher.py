@@ -114,7 +114,7 @@ class StepIngredientMatcher:
             prompt,
             generation_config=genai.types.GenerationConfig(
                 temperature=0.1,
-                max_output_tokens=500
+                max_output_tokens=2000
             ),
             safety_settings=[
                 {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
@@ -126,6 +126,7 @@ class StepIngredientMatcher:
         
         elapsed = time.time() - start_time
         print(f"   ✅ Step-ingredient matching completed in {elapsed:.2f}s")
+        
         
         # Extract response text
         if hasattr(response, 'text') and response.text:

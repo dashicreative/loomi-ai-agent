@@ -85,7 +85,7 @@ class MetaStepExtractor:
             prompt,
             generation_config=genai.types.GenerationConfig(
                 temperature=0.1,
-                max_output_tokens=600
+                max_output_tokens=2000
             ),
             safety_settings=[
                 {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
@@ -97,6 +97,7 @@ class MetaStepExtractor:
         
         elapsed = time.time() - start_time
         print(f"   ✅ Meta step extraction completed in {elapsed:.2f}s")
+        
         
         # Extract response text
         if hasattr(response, 'text') and response.text:
