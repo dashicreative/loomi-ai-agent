@@ -17,6 +17,19 @@ from instagram_json_structuring import RecipeStructurer
 env_path = Path(__file__).parent.parent.parent.parent / ".env"  # Go up to loomi_ai_agent directory
 load_dotenv(dotenv_path=env_path)
 
+# Add paths for shared modules
+import sys
+sys.path.append(str(Path(__file__).parent.parent.parent / "Step_Ingredient_Matching"))
+sys.path.append(str(Path(__file__).parent.parent.parent / "Meta_Step_Extraction"))
+
+# Import shared modules
+from step_ingredient_matcher import StepIngredientMatcher
+from meta_step_extractor import MetaStepExtractor
+
+# Import enhanced JSON model
+sys.path.append(str(Path(__file__).parent.parent.parent))
+from json_recipe_model import create_enhanced_recipe_json
+
 # Set up Deepgram environment variable if available (before importing)
 deepgram_key = os.getenv('DEEPGRAM_WISPER_API')
 if deepgram_key:
@@ -80,6 +93,10 @@ class InstagramTranscriber:
         self.temp_dir = tempfile.mkdtemp(prefix="instagram_transcriber_")
         self.temp_files = []  # Track files for cleanup
         self.recipe_structurer = RecipeStructurer()  # Initialize JSON structurer
+        
+        # Initialize shared recipe analysis modules
+        self.step_ingredient_matcher = StepIngredientMatcher(self.google_model)
+        self.meta_step_extractor = MetaStepExtractor(self.google_model)
     
     def call_llm(self, prompt: str, provider: str = "openai", max_tokens: int = 500) -> str:
         """
@@ -996,16 +1013,63 @@ class InstagramTranscriber:
             timings['llm_parsing'] = time.time() - step_start
             print(f"   ✅ LLM parsing complete ({timings['llm_parsing']:.2f}s)")
             
-            # Step 7: Structure into JSON format
-            print("📦 Step 7: Structuring into JSON...")
+            # Step 6.5: Enhanced recipe analysis (step-ingredient matching + meta step extraction)
+            print("🔗 Step 6.5: Running enhanced recipe analysis (GEMINI)...")
             step_start = time.time()
-            recipe_json = self.recipe_structurer.process_llm_outputs(
-                ingredients_output, 
-                directions_output, 
-                instagram_url,
-                apify_data.get("image_url", ""),
-                meal_occasion_output
+            
+            # Parse LLM outputs into structured format for analysis
+            parsed_ingredients = self.recipe_structurer.parse_ingredients(ingredients_output)
+            title, parsed_directions = self.recipe_structurer.parse_directions(directions_output)
+            
+            # Convert ParsedIngredient objects to dict format for matchers
+            ingredients_for_analysis = [
+                {
+                    "name": ing.name,
+                    "quantity": ing.quantity,
+                    "unit": ing.unit
+                }
+                for ing in parsed_ingredients
+            ]
+            
+            # Run step-ingredient matching and meta step extraction in parallel
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                # Submit both analysis tasks
+                step_ingredient_future = executor.submit(
+                    self.step_ingredient_matcher.match_steps_with_ingredients,
+                    ingredients_for_analysis,
+                    parsed_directions
+                )
+                meta_step_future = executor.submit(
+                    self.meta_step_extractor.extract_meta_steps,
+                    ingredients_for_analysis,
+                    parsed_directions
+                )
+                
+                # Get results
+                step_ingredient_result = step_ingredient_future.result()
+                meta_step_result = meta_step_future.result()
+            
+            timings['enhanced_analysis'] = time.time() - step_start
+            print(f"   ✅ Enhanced recipe analysis complete ({timings['enhanced_analysis']:.2f}s)")
+            
+            # Step 7: Structure into enhanced JSON format
+            print("📦 Step 7: Structuring into enhanced JSON...")
+            step_start = time.time()
+            
+            # Create enhanced recipe JSON with step-ingredient matching and meta steps
+            recipe_dict = create_enhanced_recipe_json(
+                title=title,
+                parser_method="Instagram",
+                source_url=instagram_url,
+                step_ingredient_result=step_ingredient_result,
+                meta_step_result=meta_step_result,
+                image=apify_data.get("image_url", ""),
+                meal_occasion=meal_occasion_output
             )
+            
+            # Format to JSON string
+            import json
+            recipe_json = json.dumps(recipe_dict, indent=2, ensure_ascii=False)
             timings['json_structuring'] = time.time() - step_start
             print(f"   ✅ JSON structuring complete ({timings['json_structuring']:.2f}s)")
             
@@ -1022,6 +1086,7 @@ class InstagramTranscriber:
             print(f"📋 Metadata Formatting:   {timings['metadata_formatting']:.2f}s ({timings['metadata_formatting']/timings['total_time']*100:.1f}%)")
             print(f"🔗 Content Combination:   {timings['content_combination']:.2f}s ({timings['content_combination']/timings['total_time']*100:.1f}%)")
             print(f"🤖 LLM Recipe Parsing:    {timings['llm_parsing']:.2f}s ({timings['llm_parsing']/timings['total_time']*100:.1f}%)")
+            print(f"🔗 Enhanced Analysis:     {timings['enhanced_analysis']:.2f}s ({timings['enhanced_analysis']/timings['total_time']*100:.1f}%)")
             print(f"📦 JSON Structuring:      {timings['json_structuring']:.2f}s ({timings['json_structuring']/timings['total_time']*100:.1f}%)")
             print(f"{'─' * 50}")
             print(f"🎯 TOTAL PROCESSING:      {timings['total_time']:.2f}s (100.0%)")

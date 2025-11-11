@@ -18,9 +18,15 @@ from dotenv import load_dotenv
 sys.path.append(str(Path(__file__).parent.parent))
 from ingredient_parser import IngredientParser, ParsedIngredient
 
-# Import from Instagram parser (shared model)
-sys.path.append(str(Path(__file__).parent.parent / "Instagram_Parser" / "src"))
-from json_recipe_model import create_standard_recipe_json, format_standard_recipe_json
+# Import from shared model
+sys.path.append(str(Path(__file__).parent.parent))
+from json_recipe_model import create_enhanced_recipe_json, format_standard_recipe_json
+
+# Import enhanced analysis modules
+sys.path.append(str(Path(__file__).parent.parent / "Step_Ingredient_Matching"))
+sys.path.append(str(Path(__file__).parent.parent / "Meta_Step_Extraction"))
+from step_ingredient_matcher import StepIngredientMatcher
+from meta_step_extractor import MetaStepExtractor
 
 # Load environment variables
 load_dotenv()
@@ -45,6 +51,10 @@ class SiteRecipeProcessor:
         
         # Initialize shared ingredient parser
         self.ingredient_parser = IngredientParser()
+        
+        # Initialize enhanced analysis modules
+        self.step_ingredient_matcher = StepIngredientMatcher(self.google_model)
+        self.meta_step_extractor = MetaStepExtractor(self.google_model)
     
     def call_llm(self, prompt: str, max_tokens: int = 800) -> str:
         """
@@ -308,13 +318,38 @@ class SiteRecipeProcessor:
         
         print(f"   📊 Parallel LLM analysis complete - meal occasion: {meal_occasion}")
         
-        # Create standard recipe JSON
-        recipe_dict = create_standard_recipe_json(
+        # Enhanced recipe analysis (step-ingredient matching + meta step extraction)
+        print("   🔗 Running enhanced recipe analysis (GEMINI)...")
+        start_time = time.time()
+        
+        # Run step-ingredient matching and meta step extraction in parallel
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            # Submit both analysis tasks
+            step_ingredient_future = executor.submit(
+                self.step_ingredient_matcher.match_steps_with_ingredients,
+                processed_ingredients,
+                formatted_directions
+            )
+            meta_step_future = executor.submit(
+                self.meta_step_extractor.extract_meta_steps,
+                processed_ingredients,
+                formatted_directions
+            )
+            
+            # Get results
+            step_ingredient_result = step_ingredient_future.result()
+            meta_step_result = meta_step_future.result()
+        
+        elapsed = time.time() - start_time
+        print(f"   ✅ Enhanced recipe analysis complete in {elapsed:.2f}s")
+        
+        # Create enhanced recipe JSON with step-ingredient matching and meta steps
+        recipe_dict = create_enhanced_recipe_json(
             title=key_fields["title"],
-            parser_method="RecipeSite", 
-            ingredients=processed_ingredients,
-            directions=formatted_directions,
+            parser_method="RecipeSite",
             source_url=key_fields["source_url"],
+            step_ingredient_result=step_ingredient_result,
+            meta_step_result=meta_step_result,
             nutrition=key_fields["nutrition"],
             meal_occasion=meal_occasion,
             total_time=key_fields["total_time"]
