@@ -1,46 +1,98 @@
-Your primary job is extraction with preservation, not improvement.
+CRITICAL HIERARCHY OF RULES:
 
-CRITICAL: Preserve all specific details exactly as mentioned. Only make minimal formatting adjustments to convert paragraph instructions to numbered steps. Never change:
-- Specific temperatures, timings, or techniques
-- Brand names or specific ingredient references  
-- Cooking methods, equipment, or measurements
-- Special instructions or notes or editorial words / direction itself
+1. RESPECT ORIGINAL NUMBERING (Priority #1)
+If the recipe already has numbered steps (1., 2., 3., etc. or Step 1, Step 2, etc.), preserve that exact numbering structure. Do NOT break numbered steps into smaller sub-steps. The author's numbering is authoritative.
 
-INSTRUCTIONS:
-1. Take the paragraph instructions and break them into clear, numbered steps
-2. Look for natural break points like "\n" (new lines) as step separators
-3. Look for sequential cooking actions as step indicators
-4. One cooking action per numbered step when possible
-5. Preserve exact wording - only add line breaks and numbers
-6. If instructions already have numbers, clean them up and re-number from 1
+Example:
+Original: "1. Preheat oven. Grease pan."
+Output: 1. Preheat oven. Grease pan.
+(Keep as single step - do NOT split into step 1 and step 2)
 
-STEP IDENTIFICATION HINTS:
-- Temperature changes (preheat, reduce heat, etc.)
-- Time-based actions (cook for 10 minutes, bake until golden, etc.) 
-- Preparation actions (combine, mix, add, stir, etc.)
-- Equipment changes (transfer to pan, place in oven, etc.)
-- Natural "\n" line breaks in the original text
+2. FOR UNNUMBERED RECIPES - USE LOGICAL COOKING PHASES
+When no numbers exist, group related actions into logical cooking phases rather than separating every micro-action.
+
+CORE PRINCIPLE: Your primary job is extraction with preservation, not improvement.
+
+WHAT DEFINES A NEW STEP:
+✅ Major technique changes
+   - Going from mixing → baking
+   - Going from stovetop → oven
+   - Starting a completely new component (crust → filling → topping)
+
+✅ Major waiting periods
+   - "Bake for 1 hour"
+   - "Refrigerate overnight"
+   - "Let cool for 30 minutes"
+
+✅ Equipment transitions with new ingredients
+   - Moving mixture to a new pan
+   - Starting work in a different bowl with new ingredients
+
+✅ Explicit numbered steps in original text
+   - If original says "Step 1:" or "1." - that's a step boundary
+
+WHAT SHOULD NOT BE ITS OWN STEP:
+❌ Follow-up micro-actions to the same ingredient/mixture
+   - "Beat. Scrape again. Beat again." = ONE step
+   - "Mix. Set aside." = ONE step
+   - "Add sugar. Stir." = ONE step
+
+❌ Single-word directives
+   - "Enjoy!" should be combined with serving step
+   - "Serve." should be combined with plating step
+
+❌ Continuation of the same action in the same location
+   - "Scrape the bowl" after "Beat the cream cheese" = same step
+   - "Stir for another minute" after "Add garlic" = same step
+
+STEP GROUPING LOGIC:
+If multiple sentences describe actions on the SAME mixture/component in the SAME location without a major transition, they belong in the SAME step.
+
+Example of CORRECT grouping:
+"Beat the cream cheese until smooth. Scrape the bowl. Add the sugar and beat for a few more minutes. Scrape again."
+→ ONE step (all actions on cream cheese in same bowl)
+
+"Add the eggs one at a time, beating after each addition."
+→ ONE step (continuous process on same mixture)
+
+"Pour batter into pan. Bake for 60 minutes."
+→ TWO steps (major transition: assembly → baking)
 
 FORMATTING RULES:
 - Start each step with number: "1. ", "2. ", "3. ", etc.
 - One step per line
-- Preserve all original details and measurements
-- Keep preparation notes and tips intact
+- Preserve all original details, temperatures, timings, measurements, and wording exactly
+- Never editorialize or change the author's language
+- If original has numbers, use those exactly
 
-EXAMPLE INPUT:
-"Preheat oven to 350°F.\nIn a large bowl, combine flour, sugar, and salt. Add butter and mix until crumbly.\nPress mixture into greased pan. Bake for 25-30 minutes until golden brown."
+EXAMPLE INPUT (unnumbered):
+"Preheat oven to 350°F. Grease a 9-inch pan.
+Beat cream cheese until smooth. Scrape the bowl. Add sugar and beat for 2 minutes. Scrape again.
+Add eggs one at a time, beating after each addition.
+Pour into prepared pan. Bake for 1 hour."
 
 EXAMPLE OUTPUT:
-1. Preheat oven to 350°F.
-2. In a large bowl, combine flour, sugar, and salt.
-3. Add butter and mix until crumbly.  
-4. Press mixture into greased pan.
-5. Bake for 25-30 minutes until golden brown.
+1. Preheat oven to 350°F. Grease a 9-inch pan.
+2. Beat cream cheese until smooth. Scrape the bowl. Add sugar and beat for 2 minutes. Scrape again.
+3. Add eggs one at a time, beating after each addition.
+4. Pour into prepared pan.
+5. Bake for 1 hour.
+
+EXAMPLE INPUT (already numbered):
+"1. Preheat oven to 350°F. Grease pan. Line with parchment.
+2. Combine flour, sugar, and salt in a bowl. Mix well. Set aside.
+3. Beat butter until fluffy. Add eggs one at a time."
+
+EXAMPLE OUTPUT:
+1. Preheat oven to 350°F. Grease pan. Line with parchment.
+2. Combine flour, sugar, and salt in a bowl. Mix well. Set aside.
+3. Beat butter until fluffy. Add eggs one at a time.
+(Numbers preserved exactly as in original)
 
 ERROR Handling:
-If no cooking steps can be determined from the instructions, return: "No Directions Available"
+If no cooking steps can be determined, return: "No Directions Available"
 
 Instructions to parse:
 {instructions}
 
-Output only the numbered steps (no explanations):
+Output only the numbered steps (no explanations)

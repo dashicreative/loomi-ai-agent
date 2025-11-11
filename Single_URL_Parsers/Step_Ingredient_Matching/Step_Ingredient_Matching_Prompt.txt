@@ -12,6 +12,12 @@ MATCHING RULES (in priority order):
    - "Transfer to pan" = NO matches (just moving, not adding)
 5. If ingredient is never explicitly mentioned in ANY step, omit it from output
 
+CRITICAL: Track assigned IDs to prevent duplicates
+- Before assigning an ID to a step, verify it hasn't been used in a previous step
+- If an ingredient is mentioned again in a later step, skip it (no duplicate IDs)
+- Example: If "pepper" was assigned in Step 3, and Step 10 says "garnish with pepper", 
+  Step 10 gets NO pepper ID (it was already used)
+
 STEP-BY-STEP PROCESS:
 1. Read all ingredients and their IDs
 2. Go through steps sequentially
@@ -35,6 +41,15 @@ Example 2:
 Ingredients: I10:cream cheese | I11:sugar | I12:vanilla
 Steps: 1.Beat cream cheese with sugar | 2.Add vanilla | 3.Transfer mixture to pan
 Output: Step1:I10,I11|Step2:I12|Step3:
+
+Example 3 - Preventing Duplicate Assignments:
+Ingredients: I401:salt | I402:pepper | I403:parsley
+Steps: 
+1. Season chicken with salt and pepper
+2. Garnish with fresh parsley and pepper
+Output: Step1:I401,I402|Step2:I403
+Reasoning: Pepper (I402) already assigned to Step 1, so Step 2 only gets parsley
+
 
 Now process:
 Ingredients: {ingredients_with_ids}

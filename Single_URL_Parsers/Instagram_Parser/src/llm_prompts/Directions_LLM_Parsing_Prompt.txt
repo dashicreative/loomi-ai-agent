@@ -1,38 +1,102 @@
-Role: Your primary job is extraction with preservation, not improvement. However, there will be some cases where slight surgical improvements are totally okay and needed.
+CRITICAL HIERARCHY OF RULES:
 
-CRITICAL: Preserve all specific details and references exactly as mentioned. Only make minimal tone adjustments to convert first-person narrative ("I did") to instructional format ("Do this"). Never change:
-- Specific recipe references ("my recipe", "her method") 
-- Personal references and mentions
-- Temperatures, timings, or techniques
-- Brand names or specific ingredient details
-- Cooking methods or equipment mentioned
+1. RESPECT ORIGINAL NUMBERING (Priority #1)
+If the post/transcript already has numbered steps (1., 2., 3., etc. or "Step 1", "Step 2", etc.), preserve that exact numbering structure. The creator's numbering is authoritative.
 
-When converting narrative to instructions:
-GOOD: From: "I mixed the dough" To: "Mix the dough"
-GOOD: From: "I used my pizza dough recipe" To: "Use my pizza dough recipe"  
-BAD: From: "my pizza dough recipe" To: "a pizza dough recipe"
-BAD: From "I baked at 450" To: "bake at high heat"
+2. EXTRACTION WITH PRESERVATION
+Your primary job is extraction and preservation, not improvement. Make only minimal tone adjustments to convert first-person narrative to instructional format.
 
-INSTRUCTIONS:
-1. First line should be the recipe title
-2. Then list the cooking directions/steps (one per line)
-3. If a step appears in BOTH description and transcript, combine them into one cohesive step
-4. Focus on actual cooking actions, ignore narrative/story elements
-5. Look through BOTH the post description AND video transcript
-6. Have the understanding that BOTh the post description and video transcript could be useful, or one of them could be completely useless. Like description of the post jsut said "happy halloween" And nothing else. Then obviously you'd be able to just focus solely on the transcript to try 
-and pull the info you need and vice versa. For example, some video transcripts will just be background music lyrics, and ALL the recipe info is solely stored in the description.
-7. Number the steps (1., 2., 3., etc.)
+CONVERSION RULES - TONE ONLY:
+✅ Convert first-person to instructional:
+   - "I mixed the dough" → "Mix the dough"
+   - "I baked it for 30 minutes" → "Bake for 30 minutes"
+   - "Then I added the eggs" → "Add the eggs"
+
+✅ Keep all specific references intact:
+   - "my pizza dough recipe" → "my pizza dough recipe" (NOT "a pizza dough recipe")
+   - "her method" → "her method" (NOT "the method")
+   - "this technique from my mom" → "this technique from my mom"
+
+❌ NEVER change:
+   - Temperatures, timings, techniques
+   - Brand names or ingredient specifics
+   - Cooking methods or equipment
+   - Personal references or mentions
+   - Recipe names or cross-references
+
+CONTENT SOURCE STRATEGY:
+Analyze BOTH the post description AND video transcript. Either or both may contain useful recipe information:
+- Description may have full recipe, transcript may be music/narrative
+- Transcript may have full recipe, description may be just caption/story
+- Both may have complementary information to combine
+- One may be completely useless (e.g., "Happy Halloween!" or just song lyrics)
+
+Use whichever source(s) contain actual cooking steps.
+
+STEP DEFINITION - LOGICAL COOKING PHASES:
+When original numbering doesn't exist, group related actions into logical cooking phases.
+
+✅ What STARTS a new step:
+   - Major technique changes (mixing → baking, stovetop → oven)
+   - Major component transitions (making crust → making filling)
+   - Significant waiting periods (bake 1 hour, refrigerate overnight)
+   - Equipment changes with new ingredients
+   - Explicit step markers in original ("Step 1:", "First,", "Next,")
+
+❌ What should NOT be its own step:
+   - Follow-up micro-actions on same mixture ("Stir. Mix well. Set aside." = ONE step)
+   - Single-word directives ("Enjoy!" combine with serving)
+   - Continuation in same location ("Add sugar. Stir for 1 minute." = ONE step)
+
+GROUPING RULE:
+If multiple actions work on the SAME mixture/component in the SAME location without a major transition, they belong in the SAME step.
+
+FORMATTING:
+- First line: Recipe title (extracted from post)
+- Then numbered steps: 1., 2., 3., etc.
+- One step per line
+- Focus on cooking actions, ignore pure narrative/story elements
+- If step appears in BOTH description and transcript, combine into one cohesive step
+
+EXAMPLES:
+
+Example 1 (Description with numbered steps):
+Post Description: "1. Preheat your oven to 375F. Grease your pan.
+2. In a bowl, I mixed my special flour blend with sugar. Set it aside.
+3. Beat the eggs and add them to the mixture."
+
+Output:
+My Special Baked Goods
+1. Preheat your oven to 375F. Grease your pan.
+2. In a bowl, mix my special flour blend with sugar. Set it aside.
+3. Beat the eggs and add them to the mixture.
+
+Example 2 (Unnumbered with micro-actions):
+Post Description: "First, heat oil in a pan. Add the onions. Stir them around. Cook for 5 minutes. Next, add the tomatoes. Let them simmer for 15 minutes. Season with salt. Taste and adjust. Serve hot!"
+
+Output:
+Quick Tomato Sauce
+1. Heat oil in a pan. Add the onions. Stir them around. Cook for 5 minutes.
+2. Add the tomatoes. Let them simmer for 15 minutes. Season with salt. Taste and adjust.
+3. Serve hot!
+
+Example 3 (Description + Transcript combination):
+Post Description: "Making my famous banana bread today! 🍌"
+Transcript: "Okay so first you're gonna mash three bananas. Then I mixed them with sugar and eggs. After that I added the flour and baking soda. Mixed it all up. Poured into a greased pan. Baked at 350 for an hour."
+
+Output:
+Famous Banana Bread
+1. Mash three bananas.
+2. Mix them with sugar and eggs.
+3. Add the flour and baking soda. Mix it all up.
+4. Pour into a greased pan.
+5. Bake at 350 for an hour.
+
+ERROR HANDLING:
+If NO recipe steps can be determined from either the description OR the transcript, return exactly:
+"No Directions Available"
 
 Content to analyze:
 {combined_content}
 
-Output format:
-[Recipe Title]
-1. [First cooking step]
-2. [Second cooking step]
-etc.
-
-ERROR Handling:
-1. IF AND ONLY IF, No recipe steps can be determined from the entirety of either the video transcript or the description, simply return the text: "No Directions Avaialble" as your output. Nothing more, nothing less.
-
-Output only the title and steps (no explanations):
+Output only the title and numbered steps (no explanations):
