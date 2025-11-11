@@ -1,39 +1,54 @@
-Role: Your job is meta step identification with preservation, not editorial changes. Analyze cooking directions and identify which steps are section headers (meta steps) vs detailed implementation steps.
+Role: Your job is meta step identification using the ANCHOR WORD STRATEGY. Find cooking phases by looking for anchor words that reference completed components, then work backwards to identify which steps created those components.
 
-CRITICAL: This is extraction with preservation, not recipe improvement. Meta steps are OPTIONAL - do not force matches or hallucinate them. Only identify meta steps that are:
-- Explicitly mentioned as section headers in the original recipe
-- Short, punchy cooking actions (1-4 words like "Saute the veggies", "Poach the chicken")
-- Followed by detailed implementation steps
-- 100% clearly identifiable as section organizers
-- If a step has no clear meta step to belong to, mark it as REGULAR with no meta step assignment
+ANCHOR WORD STRATEGY:
+Look for steps that mention completed items like "pour the batter", "add to the sauce", "transfer the mixture", "bake the cheesecake". These are your anchor points. Then work backwards to identify which previous steps created that batter/sauce/mixture/cheesecake.
 
-IDENTIFICATION RULES:
-1. Meta steps are typically short phrases that describe a cooking technique or phase
-2. They're usually followed by detailed steps explaining HOW to do that technique
-3. Preserve the exact original step order - never rearrange
-4. Only mark steps as meta steps if you're 100% confident they're section headers
-5. It's perfectly fine if no meta steps exist - they are OPTIONAL, not required. If they are clearly stated YES its required to identify but if they are not dont assume.
-6. Many steps will have NO meta step assignment - this is normal and correct
-7. Don't get creative or guess - stick to what's explicitly there
-8. Don't move steps around or change the cooking sequence
+CRITICAL REQUIREMENTS:
+- Meta steps are OPTIONAL - only identify them if anchor words clearly indicate cooking phases
+- NEVER create meta steps that aren't supported by anchor word evidence  
+- If a recipe mentions "filling" somewhere, trace back to find the steps that made the filling
+- Preserve exact original step order - never rearrange or edit steps
+- Each step can only belong to ONE meta step section (no overlaps)
+
+IDENTIFICATION PROCESS:
+1. Scan ALL steps for anchor words: "pour the X", "add to the X", "transfer the X", "bake the X"
+2. Identify what "X" represents (batter, sauce, filling, crust, etc.)
+3. Work backwards to find which steps created that component
+4. Group those creation steps under the appropriate meta step name
+5. Only assign meta steps when anchor words provide clear evidence
+
+ANCHOR WORD EXAMPLES:
+✅ "pour the batter into pan" → Look for steps that made the batter
+✅ "add vegetables to the sauce" → Look for steps that made the sauce  
+✅ "transfer filling to crust" → Look for steps that made filling AND crust
+✅ "simmer the soup" → Look for steps that built the soup base
+❌ "mix everything together" → Too vague, no clear component reference
 
 EXAMPLES:
 
-Example 1 - Clear Meta Steps:
-Steps: 1. Saute the veggies | 2. Heat oil in pan | 3. Add carrots and cook | 4. Poach the chicken | 5. Add chicken to pot | 6. Simmer for 15 minutes | 7. Serve | 8. Remove herbs and garnish
-Output: Step1:META|Step2:REGULAR:Saute the veggies|Step3:REGULAR:Saute the veggies|Step4:META|Step5:REGULAR:Poach the chicken|Step6:REGULAR:Poach the chicken|Step7:META|Step8:REGULAR:Serve
+Example 1 - Vegetable Soup (Anchor: "add to the soup"):
+Recipe Title: Hearty Vegetable Soup
+Steps: 1. Heat oil in large pot | 2. Add onions and celery, cook until soft | 3. Add carrots and cook 5 minutes | 4. Pour in broth | 5. Add potatoes and herbs | 6. Simmer the soup for 20 minutes | 7. Season with salt and pepper
+Output: Step1:REGULAR:Sauté the vegetables|Step2:REGULAR:Sauté the vegetables|Step3:REGULAR:Sauté the vegetables|Step4:REGULAR:Build the soup|Step5:REGULAR:Build the soup|Step6:REGULAR:Build the soup|Step7:REGULAR
+Reasoning: Steps 1-3 prepare vegetables, steps 4-6 build and simmer the soup. Step 6 "simmer the soup" is the anchor.
 
-Example 2 - No Clear Meta Steps:
-Steps: 1. Heat oil in large pot | 2. Add onions and cook until soft | 3. Add garlic and spices | 4. Pour in broth and simmer
-Output: Step1:REGULAR|Step2:REGULAR|Step3:REGULAR|Step4:REGULAR
+Example 2 - Protein Cheesecake (Anchor: "transfer mixture to crust"):
+Recipe Title: Protein Cheesecake  
+Steps: 1. Preheat oven to 320°F | 2. Crush protein cookies for crust | 3. Mix cookies with melted butter | 4. Press crust into pan | 5. Beat cream cheese until fluffy | 6. Add eggs, sugar, and vanilla | 7. Stir in cornstarch | 8. Transfer the cheesecake mixture to the prepared crust | 9. Bake for 60 minutes | 10. Cool completely
+Output: Step1:REGULAR|Step2:REGULAR:Make the crust|Step3:REGULAR:Make the crust|Step4:REGULAR:Make the crust|Step5:REGULAR:Make the filling|Step6:REGULAR:Make the filling|Step7:REGULAR:Make the filling|Step8:REGULAR|Step9:REGULAR:Bake and finish|Step10:REGULAR:Bake and finish
+Reasoning: Step 8 "transfer the cheesecake mixture to the prepared crust" shows both crust (steps 2-4) and filling (steps 5-7) were made.
 
-Example 3 - Mixed Meta and Regular:
-Steps: 1. Prepare the dough | 2. Mix flour and water | 3. Knead for 10 minutes | 4. Let rise for 1 hour | 5. Add toppings | 6. Spread sauce on dough | 7. Add cheese and pepperoni
-Output: Step1:META|Step2:REGULAR:Prepare the dough|Step3:REGULAR:Prepare the dough|Step4:REGULAR:Prepare the dough|Step5:META|Step6:REGULAR:Add toppings|Step7:REGULAR:Add toppings
+Example 3 - Chicken Stir Fry (Multiple anchors):
+Recipe Title: Teriyaki Chicken Stir Fry
+Steps: 1. Mix soy sauce, honey, and ginger for sauce | 2. Cut chicken into strips | 3. Heat oil in wok | 4. Cook chicken until done | 5. Remove chicken | 6. Add broccoli and carrots to wok | 7. Stir-fry vegetables until crisp | 8. Return chicken to wok | 9. Pour the sauce over everything | 10. Toss to coat and serve
+Output: Step1:REGULAR:Make the sauce|Step2:REGULAR:Prepare the chicken|Step3:REGULAR:Prepare the chicken|Step4:REGULAR:Prepare the chicken|Step5:REGULAR:Prepare the chicken|Step6:REGULAR:Cook the vegetables|Step7:REGULAR:Cook the vegetables|Step8:REGULAR|Step9:REGULAR|Step10:REGULAR
+Reasoning: Step 9 "pour the sauce over everything" shows sauce was made in step 1. Multiple cooking phases identified.
 
-Example 4 - Partial Meta Steps (Mixed):
-Steps: 1. Make the batter | 2. Cream butter and sugar | 3. Add eggs one at a time | 4. Fold in flour | 5. Preheat oven to 350°F | 6. Pour batter into pan | 7. Bake for 25 minutes | 8. Cool completely before frosting
-Output: Step1:META|Step2:REGULAR:Make the batter|Step3:REGULAR:Make the batter|Step4:REGULAR:Make the batter|Step5:REGULAR|Step6:REGULAR|Step7:REGULAR|Step8:REGULAR
+Example 4 - Pancakes (Anchor: "pour batter"):
+Recipe Title: Fluffy Pancakes
+Steps: 1. Mix flour, baking powder, sugar in bowl | 2. Whisk eggs and milk in separate bowl | 3. Combine wet and dry ingredients | 4. Heat griddle over medium heat | 5. Pour batter onto griddle | 6. Cook until bubbles form | 7. Flip and cook other side | 8. Serve with syrup
+Output: Step1:REGULAR:Make the batter|Step2:REGULAR:Make the batter|Step3:REGULAR:Make the batter|Step4:REGULAR:Cook the pancakes|Step5:REGULAR:Cook the pancakes|Step6:REGULAR:Cook the pancakes|Step7:REGULAR:Cook the pancakes|Step8:REGULAR
+Reasoning: Step 5 "pour batter onto griddle" shows batter was made in steps 1-3. Steps 4-7 cook the pancakes.
 
 FORMAT EXPLANATION:
 - META = This step is a section header
@@ -42,6 +57,8 @@ FORMAT EXPLANATION:
 - Most steps will be REGULAR with no meta step - this is normal and correct
 
 Now analyze the following:
+
+Recipe Title: {recipe_title}
 
 Ingredients: {ingredients_list}
 

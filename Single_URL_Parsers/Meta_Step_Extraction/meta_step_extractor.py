@@ -20,16 +20,17 @@ class MetaStepExtractor:
         """Initialize with existing Gemini model instance."""
         self.google_model = google_model
     
-    def format_prompt_content(self, ingredients: List[Dict], steps: List[str]) -> Dict[str, str]:
+    def format_prompt_content(self, ingredients: List[Dict], steps: List[str], recipe_title: str = "") -> Dict[str, str]:
         """
-        Format ingredients and steps for LLM prompt.
+        Format ingredients, steps and recipe title for LLM prompt.
         
         Args:
             ingredients: List of ingredient dicts (for context)
             steps: List of cooking step strings
+            recipe_title: Recipe title for additional context
             
         Returns:
-            Dictionary with formatted ingredients and steps
+            Dictionary with formatted ingredients, steps and title
         """
         # Format ingredients for context: "chicken breast, olive oil, garlic"
         ingredient_names = [ingredient["name"] for ingredient in ingredients]
@@ -43,15 +44,17 @@ class MetaStepExtractor:
         steps_formatted = " | ".join(numbered_steps)
         
         return {
+            "recipe_title": recipe_title,
             "ingredients_list": ingredients_formatted,
             "numbered_steps": steps_formatted
         }
     
-    def call_llm_for_extraction(self, ingredients_formatted: str, steps_formatted: str) -> str:
+    def call_llm_for_extraction(self, recipe_title: str, ingredients_formatted: str, steps_formatted: str) -> str:
         """
         Call Gemini LLM to identify meta steps vs regular steps.
         
         Args:
+            recipe_title: Recipe title for additional context
             ingredients_formatted: Formatted ingredients string (for context)
             steps_formatted: Formatted steps string
             
@@ -66,6 +69,7 @@ class MetaStepExtractor:
                 prompt_template = f.read()
             
             prompt = prompt_template.format(
+                recipe_title=recipe_title,
                 ingredients_list=ingredients_formatted,
                 numbered_steps=steps_formatted
             )
@@ -220,13 +224,14 @@ class MetaStepExtractor:
                 for i, step in enumerate(original_steps)
             ]
     
-    def extract_meta_steps(self, ingredients: List[Dict], steps: List[str]) -> List[Dict]:
+    def extract_meta_steps(self, ingredients: List[Dict], steps: List[str], recipe_title: str = "") -> List[Dict]:
         """
         Main method: Extract meta step organization from recipe directions.
         
         Args:
             ingredients: List of ingredient dicts (for context)
             steps: List of cooking step strings
+            recipe_title: Recipe title for additional context (optional)
             
         Returns:
             List of step dictionaries with meta step organization
@@ -237,11 +242,12 @@ class MetaStepExtractor:
         print(f"📋 Analyzing {len(steps)} steps for meta step organization...")
         
         # Step 1: Format for LLM prompt
-        formatted_content = self.format_prompt_content(ingredients, steps)
+        formatted_content = self.format_prompt_content(ingredients, steps, recipe_title)
         
         # Step 2: Call LLM for meta step extraction
         try:
             llm_response = self.call_llm_for_extraction(
+                formatted_content["recipe_title"],
                 formatted_content["ingredients_list"],
                 formatted_content["numbered_steps"]
             )

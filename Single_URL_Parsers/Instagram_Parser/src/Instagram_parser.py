@@ -1042,7 +1042,8 @@ class InstagramTranscriber:
                 meta_step_future = executor.submit(
                     self.meta_step_extractor.extract_meta_steps,
                     ingredients_for_analysis,
-                    parsed_directions
+                    parsed_directions,
+                    title
                 )
                 
                 # Get results

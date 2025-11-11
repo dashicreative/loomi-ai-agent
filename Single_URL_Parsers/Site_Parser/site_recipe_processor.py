@@ -333,7 +333,8 @@ class SiteRecipeProcessor:
             meta_step_future = executor.submit(
                 self.meta_step_extractor.extract_meta_steps,
                 processed_ingredients,
-                formatted_directions
+                formatted_directions,
+                key_fields["title"]
             )
             
             # Get results
