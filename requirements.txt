@@ -24,6 +24,7 @@ deepgram-sdk>=5.3.0
 
 # Additional dependencies
 aiohttp>=3.10.10
+aioapns>=3.0.0
 pathlib  # Built-in, but explicit for clarity
 asyncio  # Built-in, but explicit for clarity
 

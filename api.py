@@ -1,9 +1,9 @@
 """
-Lean Recipe Parser API - Instagram & Site Recipe Parsing
-Minimal FastAPI service with just 2 endpoints for URL parsing.
+Recipe Parser API - Instagram & Site Recipe Parsing with Silent Push
+FastAPI service for URL parsing with background processing and APNs integration.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
@@ -12,8 +12,12 @@ import json
 import asyncio
 import time
 import socket
+import uuid
+import ssl
+import httpx
 from pathlib import Path
 from urllib.parse import urlparse
+from aioapns import APNs, NotificationRequest
 
 # Add parser directories to path
 sys.path.append(str(Path(__file__).parent / "Single_URL_Parsers" / "Instagram_Parser" / "src"))
@@ -34,11 +38,22 @@ class ParseResponse(BaseModel):
     elapsed_seconds: float = None
     debug_info: dict = None
 
+class SilentPushRequest(BaseModel):
+    url: str
+    deviceToken: str
+    timestamp: float = None
+    source: str = "share_extension"
+
+class SilentPushResponse(BaseModel):
+    success: bool
+    message: str
+    jobId: str
+
 # Create FastAPI app
 app = FastAPI(
     title="Recipe Parser API",
-    description="Parse Instagram videos and recipe sites into structured JSON",
-    version="2.0.0"
+    description="Parse Instagram videos and recipe sites into structured JSON. Includes silent push processing for background recipe parsing.",
+    version="2.1.0"
 )
 
 # Add CORS middleware
@@ -52,6 +67,21 @@ app.add_middleware(
 
 # Initialize Instagram parser (once at startup)
 instagram_parser = InstagramTranscriber()
+
+# Initialize APNs client (once at startup)
+apns_client = None
+try:
+    apns_client = APNs(
+        key=os.getenv("APNS_P8_KEY"),        # Raw .p8 key content
+        key_id=os.getenv("APNS_KEY_ID"),     # e.g., ABC123DEFG  
+        team_id=os.getenv("APNS_TEAM_ID"),   # e.g., TEAM123456
+        topic=os.getenv("APNS_TOPIC"),       # e.g., com.loomi.app
+        use_sandbox=bool(os.getenv("APNS_USE_SANDBOX", "false").lower() == "true")
+    )
+    print("✅ APNs client initialized successfully")
+except Exception as e:
+    print(f"⚠️  APNs client not initialized: {e}")
+    print("   Silent push notifications will be disabled until APNs credentials are provided")
 
 # DNS validation function
 async def is_valid_domain(url: str) -> bool:
@@ -69,6 +99,90 @@ async def is_valid_domain(url: str) -> bool:
         return True
     except (socket.gaierror, socket.error, ValueError):
         return False
+
+async def send_silent_push(device_token: str, payload: dict) -> bool:
+    """Send silent push notification via APNs using aioapns"""
+    try:
+        if not apns_client:
+            print("❌ APNs client not initialized - silent push skipped")
+            return False
+        
+        # Create notification request
+        request = NotificationRequest(
+            device_token=device_token,
+            message=payload
+        )
+        
+        # Send notification
+        await apns_client.send_notification(request)
+        print(f"✅ Silent push sent successfully to {device_token[:8]}...")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Silent push failed: {str(e)}")
+        return False
+
+def determine_parser_type(url: str) -> str:
+    """Determine if URL should use Instagram or Site parser"""
+    if "instagram.com" in url.lower():
+        return "instagram"
+    else:
+        return "site"
+
+async def process_recipe_background(url: str, device_token: str, job_id: str):
+    """Background task to parse recipe and send silent push"""
+    try:
+        print(f"🚀 Starting background processing for job {job_id}")
+        start_time = time.time()
+        
+        # Determine parser type
+        parser_type = determine_parser_type(url)
+        print(f"📱 Using {parser_type} parser for {url}")
+        
+        # Parse recipe using existing logic
+        if parser_type == "instagram":
+            recipe_json = instagram_parser.parse_instagram_recipe_to_json(url)
+            parser_method = "Instagram"
+        else:
+            recipe_json = await parse_single_recipe_url(url)
+            parser_method = "RecipeSite"
+        
+        # Parse the JSON to get structured data for push payload
+        recipe_data = json.loads(recipe_json)
+        
+        # Create silent push payload
+        push_payload = {
+            "aps": {
+                "content-available": 1
+            },
+            "recipe": recipe_data
+        }
+        
+        # Send silent push
+        push_success = await send_silent_push(device_token, push_payload)
+        
+        elapsed = time.time() - start_time
+        print(f"✅ Background processing complete for job {job_id} in {elapsed:.2f}s")
+        
+        if not push_success:
+            print(f"⚠️  Recipe parsed but push notification failed for job {job_id}")
+            
+    except Exception as e:
+        print(f"❌ Background processing failed for job {job_id}: {str(e)}")
+        
+        # Send error push
+        error_payload = {
+            "aps": {
+                "content-available": 1
+            },
+            "error": {
+                "message": "Failed to parse recipe",
+                "code": "PARSE_FAILED",
+                "details": str(e)
+            }
+        }
+        
+        await send_silent_push(device_token, error_payload)
 
 @app.get("/")
 async def root():
@@ -228,6 +342,58 @@ async def parse_site_recipe(request: URLRequest):
             status_code = 500
             
         raise HTTPException(status_code=status_code, detail=error_message)
+
+@app.post("/queue-recipe-silent-push", response_model=SilentPushResponse)
+async def queue_recipe_silent_push(request: SilentPushRequest, background_tasks: BackgroundTasks):
+    """
+    Queue recipe parsing and send result via silent push notification.
+    Returns immediately while processing happens in background.
+    """
+    try:
+        # Validate URL format
+        if not request.url.strip():
+            raise HTTPException(status_code=400, detail="URL is required")
+        
+        # Add https if missing
+        if not request.url.startswith(('http://', 'https://')):
+            request.url = f"https://{request.url}"
+        
+        # Validate device token
+        if not request.deviceToken.strip():
+            raise HTTPException(status_code=400, detail="Device token is required")
+        
+        # DNS validation
+        if not await is_valid_domain(request.url):
+            raise HTTPException(status_code=400, detail="Invalid or unreachable URL domain")
+        
+        # Generate job ID
+        job_id = str(uuid.uuid4())
+        
+        print(f"📋 Queuing recipe processing job {job_id}")
+        print(f"   📱 URL: {request.url}")
+        print(f"   🔔 Device: {request.deviceToken[:8]}...")
+        print(f"   📦 Source: {request.source}")
+        
+        # Add background task
+        background_tasks.add_task(
+            process_recipe_background,
+            request.url,
+            request.deviceToken,
+            job_id
+        )
+        
+        return SilentPushResponse(
+            success=True,
+            message="Recipe queued for background processing",
+            jobId=job_id
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_message = str(e)
+        print(f"❌ Silent Push Queue Error: {error_message}")
+        raise HTTPException(status_code=500, detail=error_message)
 
 if __name__ == "__main__":
     import uvicorn
