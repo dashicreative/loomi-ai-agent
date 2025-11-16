@@ -68,19 +68,21 @@ app.add_middleware(
 # Initialize Instagram parser (once at startup)
 instagram_parser = InstagramTranscriber()
 
-# Initialize APNs client (once at startup)
-apns_client = None
-try:
-    apns_client = APNs(
-        key=os.getenv("APNS_P8_KEY"),        # Raw .p8 key content
-        key_id=os.getenv("APNS_KEY_ID"),     # e.g., ABC123DEFG  
-        team_id=os.getenv("APNS_TEAM_ID"),   # e.g., TEAM123456
-        topic=os.getenv("APNS_TOPIC"),       # e.g., com.loomi.app
-        use_sandbox=bool(os.getenv("APNS_USE_SANDBOX", "false").lower() == "true")
-    )
-    print("✅ APNs client initialized successfully")
-except Exception as e:
-    print(f"⚠️  APNs client not initialized: {e}")
+# APNs configuration (initialize per request to avoid event loop conflicts)
+apns_config = {
+    "key": os.getenv("APNS_P8_KEY"),
+    "key_id": os.getenv("APNS_KEY_ID"), 
+    "team_id": os.getenv("APNS_TEAM_ID"),
+    "topic": os.getenv("APNS_TOPIC"),
+    "use_sandbox": bool(os.getenv("APNS_USE_SANDBOX", "false").lower() == "true")
+}
+
+# Check if APNs is configured
+apns_configured = all(apns_config.values())
+if apns_configured:
+    print("✅ APNs configuration loaded successfully")
+else:
+    print("⚠️  APNs not configured - missing environment variables")
     print("   Silent push notifications will be disabled until APNs credentials are provided")
 
 # DNS validation function
@@ -101,22 +103,31 @@ async def is_valid_domain(url: str) -> bool:
         return False
 
 async def send_silent_push(device_token: str, payload: dict) -> bool:
-    """Send silent push notification via APNs using aioapns"""
+    """Send silent push notification via APNs using fresh client per request"""
     try:
-        if not apns_client:
-            print("❌ APNs client not initialized - silent push skipped")
+        if not apns_configured:
+            print("❌ APNs not configured - silent push skipped")
             return False
         
-        # Create notification request
-        request = NotificationRequest(
-            device_token=device_token,
-            message=payload
-        )
-        
-        # Send notification
-        await apns_client.send_notification(request)
-        print(f"✅ Silent push sent successfully to {device_token[:8]}...")
-        return True
+        # Create fresh APNs client for this request to avoid event loop conflicts
+        async with APNs(
+            key=apns_config["key"],
+            key_id=apns_config["key_id"],
+            team_id=apns_config["team_id"],
+            topic=apns_config["topic"],
+            use_sandbox=apns_config["use_sandbox"]
+        ) as apns_client:
+            
+            # Create notification request
+            request = NotificationRequest(
+                device_token=device_token,
+                message=payload
+            )
+            
+            # Send notification
+            await apns_client.send_notification(request)
+            print(f"✅ Silent push sent successfully to {device_token[:8]}...")
+            return True
         
     except Exception as e:
         print(f"❌ Silent push failed: {str(e)}")
@@ -130,7 +141,7 @@ def determine_parser_type(url: str) -> str:
         return "site"
 
 async def process_recipe_background(url: str, device_token: str, job_id: str):
-    """Background task to parse recipe and send silent push"""
+    """Background task to parse recipe and send silent push with proper async context"""
     try:
         print(f"🚀 Starting background processing for job {job_id}")
         start_time = time.time()
@@ -139,11 +150,18 @@ async def process_recipe_background(url: str, device_token: str, job_id: str):
         parser_type = determine_parser_type(url)
         print(f"📱 Using {parser_type} parser for {url}")
         
-        # Parse recipe using existing logic
+        # Parse recipe using existing logic - wrap sync calls properly
         if parser_type == "instagram":
-            recipe_json = instagram_parser.parse_instagram_recipe_to_json(url)
+            # Instagram parser is sync, so run in thread pool to avoid blocking
+            loop = asyncio.get_event_loop()
+            recipe_json = await loop.run_in_executor(
+                None, 
+                instagram_parser.parse_instagram_recipe_to_json, 
+                url
+            )
             parser_method = "Instagram"
         else:
+            # Site parser is already async
             recipe_json = await parse_single_recipe_url(url)
             parser_method = "RecipeSite"
         
@@ -158,7 +176,7 @@ async def process_recipe_background(url: str, device_token: str, job_id: str):
             "recipe": recipe_data
         }
         
-        # Send silent push
+        # Send silent push with proper async context
         push_success = await send_silent_push(device_token, push_payload)
         
         elapsed = time.time() - start_time
@@ -170,7 +188,7 @@ async def process_recipe_background(url: str, device_token: str, job_id: str):
     except Exception as e:
         print(f"❌ Background processing failed for job {job_id}: {str(e)}")
         
-        # Send error push
+        # Send error push with proper async context
         error_payload = {
             "aps": {
                 "content-available": 1
@@ -182,7 +200,10 @@ async def process_recipe_background(url: str, device_token: str, job_id: str):
             }
         }
         
-        await send_silent_push(device_token, error_payload)
+        try:
+            await send_silent_push(device_token, error_payload)
+        except Exception as push_error:
+            print(f"❌ Error push also failed for job {job_id}: {str(push_error)}")
 
 @app.get("/")
 async def root():
