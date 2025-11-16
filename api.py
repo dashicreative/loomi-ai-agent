@@ -150,7 +150,7 @@ async def process_recipe_background(url: str, device_token: str, job_id: str):
         parser_type = determine_parser_type(url)
         print(f"📱 Using {parser_type} parser for {url}")
         
-        # Parse recipe using existing logic - wrap sync calls properly
+        # Parse recipe using existing logic - handle different return formats
         if parser_type == "instagram":
             # Instagram parser is sync, so run in thread pool to avoid blocking
             loop = asyncio.get_event_loop()
@@ -159,14 +159,21 @@ async def process_recipe_background(url: str, device_token: str, job_id: str):
                 instagram_parser.parse_instagram_recipe_to_json, 
                 url
             )
+            # Instagram parser returns JSON string directly
+            recipe_data = json.loads(recipe_json)
             parser_method = "Instagram"
         else:
-            # Site parser is already async
-            recipe_json = await parse_single_recipe_url(url)
-            parser_method = "RecipeSite"
+            # Site parser is already async - returns dict with success status
+            result = await parse_single_recipe_url(url)
+            
+            if result["success"]:
+                # Extract JSON string from site parser response
+                recipe_json = result["processed_json"]
+                recipe_data = json.loads(recipe_json)
+                parser_method = "RecipeSite"
+            else:
+                raise Exception(f"Site parser failed: {result.get('error', 'Unknown parsing error')}")
         
-        # Parse the JSON to get structured data for push payload
-        recipe_data = json.loads(recipe_json)
         
         # Create silent push payload
         push_payload = {
