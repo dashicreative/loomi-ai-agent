@@ -114,25 +114,25 @@ async def send_silent_push(device_token: str, payload: dict) -> bool:
             print("❌ APNs not configured - silent push skipped")
             return False
         
-        # Create fresh APNs client for this request to avoid event loop conflicts
-        async with APNs(
+        # Create fresh APNs client for this request (no async context manager)
+        apns_client = APNs(
             key=apns_config["key"],
             key_id=apns_config["key_id"],
             team_id=apns_config["team_id"],
             topic=apns_config["topic"],
             use_sandbox=apns_config["use_sandbox"]
-        ) as apns_client:
-            
-            # Create notification request
-            request = NotificationRequest(
-                device_token=device_token,
-                message=payload
-            )
-            
-            # Send notification
-            await apns_client.send_notification(request)
-            print(f"✅ Silent push sent successfully to {device_token[:8]}...")
-            return True
+        )
+        
+        # Create notification request
+        request = NotificationRequest(
+            device_token=device_token,
+            message=payload
+        )
+        
+        # Send notification
+        await apns_client.send_notification(request)
+        print(f"✅ Silent push sent successfully to {device_token[:8]}...")
+        return True
         
     except Exception as e:
         print(f"❌ Silent push failed: {str(e)}")
