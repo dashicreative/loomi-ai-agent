@@ -77,8 +77,13 @@ apns_config = {
     "use_sandbox": bool(os.getenv("APNS_USE_SANDBOX", "false").lower() == "true")
 }
 
-# Check if APNs is configured
-apns_configured = all(apns_config.values())
+# Check if APNs is configured (exclude boolean use_sandbox flag)
+apns_configured = all([
+    apns_config["key"],
+    apns_config["key_id"], 
+    apns_config["team_id"],
+    apns_config["topic"]
+])
 if apns_configured:
     print("✅ APNs configuration loaded successfully")
 else:
