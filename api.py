@@ -110,12 +110,23 @@ async def is_valid_domain(url: str) -> bool:
 
 async def send_silent_push(device_token: str, payload: dict) -> bool:
     """Send silent push notification via APNs using per-task client creation (event loop safe)"""
+    print(f"🔔 [DEBUG] send_silent_push called")
+    print(f"   [DEBUG] APNs configured: {apns_configured}")
+    print(f"   [DEBUG] Device token: {device_token[:8]}...")
+    print(f"   [DEBUG] Payload size: {len(json.dumps(payload))} chars")
+    print(f"   [DEBUG] Running in event loop: {id(asyncio.get_event_loop())}")
+    
     if not apns_configured:
-        print("❌ APNs not configured - silent push skipped")
+        print("❌ [DEBUG] APNs not configured - silent push skipped")
         return False
     
     apns_client = None
     try:
+        print(f"🔧 [DEBUG] Creating fresh APNs client...")
+        print(f"   [DEBUG] Use sandbox: {apns_config['use_sandbox']}")
+        print(f"   [DEBUG] Topic: {apns_config['topic']}")
+        print(f"   [DEBUG] Key ID: {apns_config['key_id']}")
+        
         # Create fresh APNs client inside background task (binds to current event loop)
         apns_client = APNs(
             key=apns_config["key"],
@@ -124,31 +135,40 @@ async def send_silent_push(device_token: str, payload: dict) -> bool:
             topic=apns_config["topic"],
             use_sandbox=apns_config["use_sandbox"]
         )
+        print(f"   [DEBUG] APNs client created successfully")
         
         # Create notification request with proper APNs format
+        print(f"📝 [DEBUG] Creating notification request...")
         request = NotificationRequest(
             device_token=device_token,
             message=payload,
             push_type="background",
             priority=5
         )
+        print(f"   [DEBUG] Notification request created")
         
         # Send notification
+        print(f"📤 [DEBUG] Sending notification to APNs servers...")
         response = await apns_client.send_notification(request)
-        print(f"✅ Silent push sent successfully to {device_token[:8]}... (APNs response: {response})")
+        print(f"✅ [DEBUG] APNs response received: {response}")
+        print(f"✅ Silent push sent successfully to {device_token[:8]}...")
         return True
         
     except Exception as e:
-        print(f"❌ Silent push failed: {str(e)}")
+        print(f"❌ [DEBUG] Silent push exception occurred")
+        print(f"   [DEBUG] Exception type: {type(e).__name__}")
+        print(f"   [DEBUG] Exception message: {str(e)}")
         return False
         
     finally:
         # Always close the client to free resources
         if apns_client:
+            print(f"🧹 [DEBUG] Cleaning up APNs client...")
             try:
                 await apns_client.close()
+                print(f"   [DEBUG] APNs client closed successfully")
             except Exception as cleanup_error:
-                print(f"⚠️  APNs client cleanup warning: {cleanup_error}")
+                print(f"⚠️  [DEBUG] APNs client cleanup warning: {cleanup_error}")
 
 def determine_parser_type(url: str) -> str:
     """Determine if URL should use Instagram or Site parser"""
@@ -158,61 +178,95 @@ def determine_parser_type(url: str) -> str:
         return "site"
 
 async def process_recipe_background(url: str, device_token: str, job_id: str):
-    """Background task to parse recipe and send silent push with proper async context"""
+    """Background task to parse recipe and send silent push with comprehensive debug logging"""
+    print(f"🚀 [DEBUG] Background task STARTED for job {job_id}")
+    print(f"   [DEBUG] Task running in event loop: {id(asyncio.get_event_loop())}")
+    print(f"   [DEBUG] URL: {url}")
+    print(f"   [DEBUG] Device token: {device_token[:8]}...")
+    
     try:
-        print(f"🚀 Starting background processing for job {job_id}")
         start_time = time.time()
+        print(f"⏱️  [DEBUG] Background processing timer started")
         
         # Determine parser type
         parser_type = determine_parser_type(url)
-        print(f"📱 Using {parser_type} parser for {url}")
+        print(f"📱 [DEBUG] Parser type determined: {parser_type}")
         
         # Parse recipe using existing logic - handle different return formats
+        print(f"🔄 [DEBUG] Starting recipe parsing with {parser_type} parser...")
+        
         if parser_type == "instagram":
+            print(f"   [DEBUG] Instagram parser: Running in thread pool executor...")
             # Instagram parser is sync, so run in thread pool to avoid blocking
             loop = asyncio.get_event_loop()
+            print(f"   [DEBUG] Got event loop: {id(loop)}")
+            
             recipe_json = await loop.run_in_executor(
                 None, 
                 instagram_parser.parse_instagram_recipe_to_json, 
                 url
             )
+            print(f"   [DEBUG] Instagram parser completed, JSON length: {len(recipe_json)} chars")
+            
             # Instagram parser returns JSON string directly
             recipe_data = json.loads(recipe_json)
+            print(f"   [DEBUG] Instagram JSON parsed successfully, recipe title: {recipe_data.get('title', 'Unknown')}")
             parser_method = "Instagram"
+            
         else:
+            print(f"   [DEBUG] Site parser: Calling async parse_single_recipe_url...")
             # Site parser is already async - returns dict with success status
             result = await parse_single_recipe_url(url)
+            print(f"   [DEBUG] Site parser completed, success: {result.get('success', False)}")
             
             if result["success"]:
                 # Extract JSON string from site parser response
                 recipe_json = result["processed_json"]
+                print(f"   [DEBUG] Site parser JSON extracted, length: {len(recipe_json)} chars")
+                
                 recipe_data = json.loads(recipe_json)
+                print(f"   [DEBUG] Site parser JSON parsed successfully, recipe title: {recipe_data.get('title', 'Unknown')}")
                 parser_method = "RecipeSite"
             else:
-                raise Exception(f"Site parser failed: {result.get('error', 'Unknown parsing error')}")
+                error_msg = result.get('error', 'Unknown parsing error')
+                print(f"   [DEBUG] Site parser failed with error: {error_msg}")
+                raise Exception(f"Site parser failed: {error_msg}")
         
+        print(f"✅ [DEBUG] Recipe parsing completed successfully")
+        print(f"   [DEBUG] Recipe has {len(recipe_data.get('ingredients', []))} ingredients")
+        print(f"   [DEBUG] Recipe has {len(recipe_data.get('directions', []))} steps")
         
         # Create silent push payload
+        print(f"🔔 [DEBUG] Creating silent push payload...")
         push_payload = {
             "aps": {
                 "content-available": 1
             },
             "recipe": recipe_data
         }
+        print(f"   [DEBUG] Push payload created, total size: {len(json.dumps(push_payload))} chars")
         
         # Send silent push with proper async context
+        print(f"📤 [DEBUG] Attempting to send silent push...")
         push_success = await send_silent_push(device_token, push_payload)
+        print(f"   [DEBUG] Silent push result: {push_success}")
         
         elapsed = time.time() - start_time
-        print(f"✅ Background processing complete for job {job_id} in {elapsed:.2f}s")
+        print(f"✅ [DEBUG] Background processing complete for job {job_id} in {elapsed:.2f}s")
         
         if not push_success:
-            print(f"⚠️  Recipe parsed but push notification failed for job {job_id}")
+            print(f"⚠️  [DEBUG] Recipe parsed successfully but push notification failed for job {job_id}")
+        else:
+            print(f"🎉 [DEBUG] Complete success! Recipe parsed AND push notification sent for job {job_id}")
             
     except Exception as e:
-        print(f"❌ Background processing failed for job {job_id}: {str(e)}")
+        print(f"❌ [DEBUG] Background processing FAILED for job {job_id}")
+        print(f"   [DEBUG] Exception type: {type(e).__name__}")
+        print(f"   [DEBUG] Exception message: {str(e)}")
+        print(f"   [DEBUG] Exception occurred in background task")
         
         # Send error push with proper async context
+        print(f"🔔 [DEBUG] Attempting to send error push notification...")
         error_payload = {
             "aps": {
                 "content-available": 1
@@ -225,9 +279,12 @@ async def process_recipe_background(url: str, device_token: str, job_id: str):
         }
         
         try:
-            await send_silent_push(device_token, error_payload)
+            error_push_success = await send_silent_push(device_token, error_payload)
+            print(f"   [DEBUG] Error push result: {error_push_success}")
         except Exception as push_error:
-            print(f"❌ Error push also failed for job {job_id}: {str(push_error)}")
+            print(f"❌ [DEBUG] Error push ALSO failed for job {job_id}: {str(push_error)}")
+            
+    print(f"🏁 [DEBUG] Background task FINISHED for job {job_id}")
 
 @app.get("/")
 async def root():
@@ -414,19 +471,23 @@ async def queue_recipe_silent_push(request: SilentPushRequest, background_tasks:
         # Generate job ID
         job_id = str(uuid.uuid4())
         
-        print(f"📋 Queuing recipe processing job {job_id}")
-        print(f"   📱 URL: {request.url}")
-        print(f"   🔔 Device: {request.deviceToken[:8]}...")
-        print(f"   📦 Source: {request.source}")
+        print(f"📋 [DEBUG] Queuing recipe processing job {job_id}")
+        print(f"   [DEBUG] URL: {request.url}")
+        print(f"   [DEBUG] Device: {request.deviceToken[:8]}...")
+        print(f"   [DEBUG] Source: {request.source}")
+        print(f"   [DEBUG] Main event loop: {id(asyncio.get_event_loop())}")
         
         # Add background task
+        print(f"🔄 [DEBUG] Adding background task to FastAPI...")
         background_tasks.add_task(
             process_recipe_background,
             request.url,
             request.deviceToken,
             job_id
         )
+        print(f"   [DEBUG] Background task added successfully")
         
+        print(f"✅ [DEBUG] Returning success response for job {job_id}")
         return SilentPushResponse(
             success=True,
             message="Recipe queued for background processing",
