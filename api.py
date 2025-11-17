@@ -68,32 +68,28 @@ app.add_middleware(
 # Initialize Instagram parser (once at startup)
 instagram_parser = InstagramTranscriber()
 
-# Initialize APNs client (singleton pattern for persistent connections)
-apns_client = None
-try:
-    # Check if all required APNs environment variables are present
-    apns_key = os.getenv("APNS_P8_KEY")
-    apns_key_id = os.getenv("APNS_KEY_ID")
-    apns_team_id = os.getenv("APNS_TEAM_ID")
-    apns_topic = os.getenv("APNS_TOPIC")
-    
-    if all([apns_key, apns_key_id, apns_team_id, apns_topic]):
-        apns_client = APNs(
-            key=apns_key,
-            key_id=apns_key_id,
-            team_id=apns_team_id,
-            topic=apns_topic,
-            use_sandbox=bool(os.getenv("APNS_USE_SANDBOX", "false").lower() == "true")
-        )
-        print("✅ APNs singleton client initialized successfully with persistent connections")
-    else:
-        print("⚠️  APNs not configured - missing environment variables")
-        print("   Silent push notifications will be disabled until APNs credentials are provided")
-        
-except Exception as e:
-    print(f"❌ Failed to initialize APNs client: {str(e)}")
-    print("   Silent push notifications will be disabled")
-    apns_client = None
+# APNs configuration (for per-task client creation)
+apns_config = {
+    "key": os.getenv("APNS_P8_KEY"),
+    "key_id": os.getenv("APNS_KEY_ID"),
+    "team_id": os.getenv("APNS_TEAM_ID"),
+    "topic": os.getenv("APNS_TOPIC"),
+    "use_sandbox": bool(os.getenv("APNS_USE_SANDBOX", "false").lower() == "true")
+}
+
+# Check if APNs is configured (exclude boolean flag)
+apns_configured = all([
+    apns_config["key"],
+    apns_config["key_id"],
+    apns_config["team_id"],
+    apns_config["topic"]
+])
+
+if apns_configured:
+    print("✅ APNs configuration loaded successfully - will create clients per background task")
+else:
+    print("⚠️  APNs not configured - missing environment variables")
+    print("   Silent push notifications will be disabled until APNs credentials are provided")
 
 # DNS validation function
 async def is_valid_domain(url: str) -> bool:
@@ -113,26 +109,46 @@ async def is_valid_domain(url: str) -> bool:
         return False
 
 async def send_silent_push(device_token: str, payload: dict) -> bool:
-    """Send silent push notification via APNs using singleton client with persistent connections"""
+    """Send silent push notification via APNs using per-task client creation (event loop safe)"""
+    if not apns_configured:
+        print("❌ APNs not configured - silent push skipped")
+        return False
+    
+    apns_client = None
     try:
-        if not apns_client:
-            print("❌ APNs client not available - silent push skipped")
-            return False
-        
-        # Create notification request
-        request = NotificationRequest(
-            device_token=device_token,
-            message=payload
+        # Create fresh APNs client inside background task (binds to current event loop)
+        apns_client = APNs(
+            key=apns_config["key"],
+            key_id=apns_config["key_id"],
+            team_id=apns_config["team_id"],
+            topic=apns_config["topic"],
+            use_sandbox=apns_config["use_sandbox"]
         )
         
-        # Send notification using singleton client (persistent connection)
-        await apns_client.send_notification(request)
-        print(f"✅ Silent push sent successfully to {device_token[:8]}...")
+        # Create notification request with proper APNs format
+        request = NotificationRequest(
+            device_token=device_token,
+            message=payload,
+            push_type="background",
+            priority=5
+        )
+        
+        # Send notification
+        response = await apns_client.send_notification(request)
+        print(f"✅ Silent push sent successfully to {device_token[:8]}... (APNs response: {response})")
         return True
         
     except Exception as e:
         print(f"❌ Silent push failed: {str(e)}")
         return False
+        
+    finally:
+        # Always close the client to free resources
+        if apns_client:
+            try:
+                await apns_client.close()
+            except Exception as cleanup_error:
+                print(f"⚠️  APNs client cleanup warning: {cleanup_error}")
 
 def determine_parser_type(url: str) -> str:
     """Determine if URL should use Instagram or Site parser"""
