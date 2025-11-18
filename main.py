@@ -22,10 +22,11 @@ if __name__ == "__main__":
     # Get port from environment (Railway sets this automatically)
     port = int(os.getenv("PORT", 8000))
     
-    # Run FastAPI server
+    # Run FastAPI server with single worker (fixes background task multi-worker issues)
     uvicorn.run(
         app, 
         host="0.0.0.0", 
         port=port,
+        workers=1,
         log_level="info"
     )
