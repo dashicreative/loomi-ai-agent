@@ -17,7 +17,7 @@ import ssl
 import httpx
 from pathlib import Path
 from urllib.parse import urlparse
-from aioapns import APNs, NotificationRequest
+from aioapns import APNs, NotificationRequest, PushType
 
 # Add parser directories to path
 sys.path.append(str(Path(__file__).parent / "Single_URL_Parsers" / "Instagram_Parser" / "src"))
@@ -142,8 +142,7 @@ async def send_silent_push(device_token: str, payload: dict) -> bool:
         request = NotificationRequest(
             device_token=device_token,
             message=payload,
-            push_type="background",
-            priority=5
+            push_type=PushType.BACKGROUND
         )
         print(f"   [DEBUG] Notification request created")
         
@@ -161,14 +160,9 @@ async def send_silent_push(device_token: str, payload: dict) -> bool:
         return False
         
     finally:
-        # Always close the client to free resources
+        # APNs client automatically cleans up - no manual close() method needed
         if apns_client:
-            print(f"🧹 [DEBUG] Cleaning up APNs client...")
-            try:
-                await apns_client.close()
-                print(f"   [DEBUG] APNs client closed successfully")
-            except Exception as cleanup_error:
-                print(f"⚠️  [DEBUG] APNs client cleanup warning: {cleanup_error}")
+            print(f"🧹 [DEBUG] APNs client cleanup complete (automatic)")
 
 def determine_parser_type(url: str) -> str:
     """Determine if URL should use Instagram or Site parser"""
