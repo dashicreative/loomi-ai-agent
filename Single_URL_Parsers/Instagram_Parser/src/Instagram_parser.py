@@ -1065,7 +1065,8 @@ class InstagramTranscriber:
                 step_ingredient_result=step_ingredient_result,
                 meta_step_result=meta_step_result,
                 image=apify_data.get("image_url", ""),
-                meal_occasion=meal_occasion_output
+                meal_occasion=meal_occasion_output,
+                servings=0  # Instagram videos rarely specify servings
             )
             
             # Format to JSON string

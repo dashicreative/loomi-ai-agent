@@ -69,6 +69,7 @@ def create_enhanced_recipe_json(
     nutrition: Dict[str, str] = None,
     image: str = "",
     meal_occasion: str = "Other",
+    servings: int = 0,
     total_time: str = ""
 ) -> Dict[str, Any]:
     """
@@ -83,6 +84,7 @@ def create_enhanced_recipe_json(
         nutrition: Optional nutrition dict
         image: Optional image URL
         meal_occasion: Meal occasion category
+        servings: Number of servings (0 if not found or invalid)
         total_time: Optional total cooking/prep time
         
     Returns:
@@ -131,6 +133,7 @@ def create_enhanced_recipe_json(
         "title": title,
         "parser_method": parser_method,
         "meal_occasion": meal_occasion,
+        "servings": servings,
         "total_time": total_time,
         "ingredients": ingredients_list,
         "directions": enhanced_directions,

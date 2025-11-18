@@ -111,6 +111,11 @@ class SiteRecipeProcessor:
         image_url = apify_response.get("image", "")
         source_url = apify_response.get("url", "")
         total_time = apify_response.get("total_time", "")
+        servings_raw = apify_response.get("servings", "")
+        
+        # Extract servings count (default to 0 if no valid int found)
+        servings_numeric = self._extract_numeric_value(servings_raw)
+        servings_count = int(float(servings_numeric)) if servings_numeric else 0
         
         # Extract nutrition data (convert to simple format)
         nutrition = {}
@@ -136,7 +141,8 @@ class SiteRecipeProcessor:
             "image": image_url,
             "nutrition": nutrition,
             "source_url": source_url,
-            "total_time": total_time
+            "total_time": total_time,
+            "servings": servings_count
         }
     
     def _extract_numeric_value(self, value: str) -> Optional[str]:
@@ -355,6 +361,7 @@ class SiteRecipeProcessor:
             meta_step_result=meta_step_result,
             nutrition=key_fields["nutrition"],
             meal_occasion=meal_occasion,
+            servings=key_fields["servings"],
             total_time=key_fields["total_time"]
         )
         
