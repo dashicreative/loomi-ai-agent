@@ -15,9 +15,12 @@ import socket
 import uuid
 import ssl
 import httpx
+import random
 from pathlib import Path
 from urllib.parse import urlparse
 from aioapns import APNs, NotificationRequest, PushType
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # Add parser directories to path
 sys.path.append(str(Path(__file__).parent / "Single_URL_Parsers" / "Instagram_Parser" / "src"))
@@ -30,6 +33,7 @@ from recipe_site_parser_actor import parse_single_recipe_url
 # Pydantic models
 class URLRequest(BaseModel):
     url: str
+    userId: str
 
 class ParseResponse(BaseModel):
     success: bool
@@ -41,6 +45,7 @@ class ParseResponse(BaseModel):
 class SilentPushRequest(BaseModel):
     url: str
     deviceToken: str
+    userId: str
     timestamp: float = None
     source: str = "share_extension"
 
@@ -90,6 +95,33 @@ if apns_configured:
 else:
     print("⚠️  APNs not configured - missing environment variables")
     print("   Silent push notifications will be disabled until APNs credentials are provided")
+
+# Initialize Firebase Admin
+firebase_db = None
+try:
+    # Load service account from environment variable
+    service_account_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+    if service_account_json:
+        # Parse JSON string into dict
+        service_account_info = json.loads(service_account_json)
+        
+        # Initialize Firebase Admin SDK
+        cred = credentials.Certificate(service_account_info)
+        firebase_admin.initialize_app(cred, {
+            'projectId': 'loomi-cec3e'
+        })
+        
+        # Get Firestore client
+        firebase_db = firestore.client()
+        print("✅ Firebase Admin initialized successfully for project: loomi-cec3e")
+    else:
+        print("⚠️  Firebase not configured - missing FIREBASE_SERVICE_ACCOUNT_JSON")
+        print("   Recipe storage will be disabled until Firebase credentials are provided")
+        
+except Exception as e:
+    print(f"❌ Failed to initialize Firebase: {str(e)}")
+    print("   Recipe storage will be disabled")
+    firebase_db = None
 
 # DNS validation function
 async def is_valid_domain(url: str) -> bool:
@@ -171,12 +203,60 @@ def determine_parser_type(url: str) -> str:
     else:
         return "site"
 
-async def process_recipe_background(url: str, device_token: str, job_id: str):
-    """Background task to parse recipe and send silent push with comprehensive debug logging"""
+def generate_recipe_id() -> str:
+    """Generate unique recipe ID with timestamp and random component"""
+    timestamp = int(time.time())
+    random_part = random.randint(1000, 9999)
+    return f"recipe_{timestamp}_{random_part}"
+
+async def save_recipe_to_firebase(user_id: str, recipe_id: str, recipe_data: dict) -> bool:
+    """Save complete recipe to Firebase user collection"""
+    try:
+        if not firebase_db:
+            print("❌ [DEBUG] Firebase not available - recipe save skipped")
+            return False
+        
+        print(f"💾 [DEBUG] Saving recipe to Firebase...")
+        print(f"   [DEBUG] User ID: {user_id}")
+        print(f"   [DEBUG] Recipe ID: {recipe_id}")
+        print(f"   [DEBUG] Recipe title: {recipe_data.get('title', 'Unknown')}")
+        
+        # Save to /users/{userId}/recipes/{recipeId}
+        doc_ref = firebase_db.collection('users').document(user_id).collection('recipes').document(recipe_id)
+        doc_ref.set(recipe_data)
+        
+        print(f"✅ [DEBUG] Recipe saved to Firebase successfully")
+        return True
+        
+    except Exception as e:
+        print(f"❌ [DEBUG] Firebase save failed: {str(e)}")
+        return False
+
+async def get_recipe_from_firebase(user_id: str, recipe_id: str) -> dict:
+    """Retrieve recipe from Firebase (for future download endpoint)"""
+    try:
+        if not firebase_db:
+            raise Exception("Firebase not available")
+        
+        doc_ref = firebase_db.collection('users').document(user_id).collection('recipes').document(recipe_id)
+        doc = doc_ref.get()
+        
+        if doc.exists:
+            return doc.to_dict()
+        else:
+            raise Exception(f"Recipe {recipe_id} not found for user {user_id}")
+            
+    except Exception as e:
+        print(f"❌ Firebase retrieve failed: {str(e)}")
+        raise
+
+async def process_recipe_background(url: str, device_token: str, user_id: str, job_id: str):
+    """Background task to parse recipe and send silent push with Firebase storage"""
     print(f"🚀 [DEBUG] Background task STARTED for job {job_id}")
     print(f"   [DEBUG] Task running in event loop: {id(asyncio.get_event_loop())}")
     print(f"   [DEBUG] URL: {url}")
     print(f"   [DEBUG] Device token: {device_token[:8]}...")
+    print(f"   [DEBUG] User ID: {user_id}")
     
     try:
         start_time = time.time()
@@ -230,20 +310,36 @@ async def process_recipe_background(url: str, device_token: str, job_id: str):
         print(f"   [DEBUG] Recipe has {len(recipe_data.get('ingredients', []))} ingredients")
         print(f"   [DEBUG] Recipe has {len(recipe_data.get('directions', []))} steps")
         
-        # Create silent push payload
-        print(f"🔔 [DEBUG] Creating silent push payload...")
-        push_payload = {
-            "aps": {
-                "content-available": 1
-            },
-            "recipe": recipe_data
-        }
-        print(f"   [DEBUG] Push payload created, total size: {len(json.dumps(push_payload))} chars")
+        # Generate unique recipe ID
+        recipe_id = generate_recipe_id()
+        print(f"🆔 [DEBUG] Generated recipe ID: {recipe_id}")
         
-        # Send silent push with proper async context
-        print(f"📤 [DEBUG] Attempting to send silent push...")
-        push_success = await send_silent_push(device_token, push_payload)
-        print(f"   [DEBUG] Silent push result: {push_success}")
+        # Save complete recipe to Firebase
+        print(f"💾 [DEBUG] Saving recipe to Firebase...")
+        firebase_success = await save_recipe_to_firebase(user_id, recipe_id, recipe_data)
+        
+        if firebase_success:
+            # Create minimal silent push payload (no full recipe data)
+            print(f"🔔 [DEBUG] Creating minimal push payload...")
+            push_payload = {
+                "aps": {
+                    "content-available": 1
+                },
+                "recipeAdded": {
+                    "recipeId": recipe_id,
+                    "title": recipe_data.get("title", "Unknown Recipe"),
+                    "action": "refresh_collection"
+                }
+            }
+            print(f"   [DEBUG] Minimal push payload created, size: {len(json.dumps(push_payload))} chars")
+            
+            # Send minimal silent push
+            print(f"📤 [DEBUG] Attempting to send minimal silent push...")
+            push_success = await send_silent_push(device_token, push_payload)
+            print(f"   [DEBUG] Silent push result: {push_success}")
+        else:
+            print(f"❌ [DEBUG] Firebase save failed - skipping push notification")
+            push_success = False
         
         elapsed = time.time() - start_time
         print(f"✅ [DEBUG] Background processing complete for job {job_id} in {elapsed:.2f}s")
@@ -471,12 +567,13 @@ async def queue_recipe_silent_push(request: SilentPushRequest, background_tasks:
         print(f"   [DEBUG] Source: {request.source}")
         print(f"   [DEBUG] Main event loop: {id(asyncio.get_event_loop())}")
         
-        # Add background task
+        # Add background task with user ID
         print(f"🔄 [DEBUG] Adding background task to FastAPI...")
         background_tasks.add_task(
             process_recipe_background,
             request.url,
             request.deviceToken,
+            request.userId,
             job_id
         )
         print(f"   [DEBUG] Background task added successfully")
