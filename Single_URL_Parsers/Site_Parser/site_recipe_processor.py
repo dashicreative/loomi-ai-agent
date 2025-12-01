@@ -207,6 +207,70 @@ class SiteRecipeProcessor:
         
         return steps
     
+    def paraphrase_directions_with_llm(self, formatted_directions: List[str]) -> List[str]:
+        """
+        Use Gemini LLM to paraphrase directions for copyright compliance.
+        
+        Args:
+            formatted_directions: List of numbered cooking steps
+            
+        Returns:
+            List of paraphrased cooking steps (same structure, different wording)
+        """
+        if not formatted_directions:
+            return []
+        
+        # Convert list to pipe-delimited format for LLM reasoning
+        steps_text = "|".join([f"{i+1}. {step}" for i, step in enumerate(formatted_directions)])
+        
+        # Load paraphrasing prompt
+        prompt_path = Path(__file__).parent / "llm_prompts" / "Directions_Paraphrasing_Prompt.txt"
+        
+        try:
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                prompt_template = f.read()
+            
+            prompt = prompt_template.format(formatted_steps=steps_text)
+            
+        except FileNotFoundError:
+            raise Exception(f"Paraphrasing prompt file not found: {prompt_path}")
+        
+        # Call Gemini for conservative paraphrasing
+        print(f"   ✏️  Paraphrasing directions with GEMINI...")
+        start_time = time.time()
+        
+        llm_response = self.call_llm(prompt, max_tokens=1200)
+        
+        elapsed = time.time() - start_time
+        print(f"   ✅ Directions paraphrased in {elapsed:.2f}s")
+        
+        # Parse LLM response back to list of steps
+        if "No Paraphrasing Available" in llm_response:
+            print(f"   ⚠️  LLM couldn't safely paraphrase - using original directions")
+            return formatted_directions
+        
+        # Split by pipe delimiter and clean up numbering
+        paraphrased_steps = []
+        raw_steps = llm_response.strip().split('|')
+        
+        for raw_step in raw_steps:
+            step = raw_step.strip()
+            if not step:
+                continue
+            
+            # Remove number prefixes and keep the step text
+            step_text = re.sub(r'^\d+\.\s*', '', step).strip()
+            if step_text:
+                paraphrased_steps.append(step_text)
+        
+        # Ensure we have same number of steps
+        if len(paraphrased_steps) != len(formatted_directions):
+            print(f"   ⚠️  Paraphrasing changed step count ({len(formatted_directions)} → {len(paraphrased_steps)}) - using original")
+            return formatted_directions
+        
+        print(f"   ✅ Successfully paraphrased {len(paraphrased_steps)} steps")
+        return paraphrased_steps
+    
     def extract_meal_occasion(self, combined_content: str) -> str:
         """
         Extract meal occasion using Gemini LLM.
@@ -352,13 +416,31 @@ class SiteRecipeProcessor:
         elapsed = time.time() - start_time
         print(f"   ✅ Enhanced recipe analysis complete in {elapsed:.2f}s")
         
+        # Step 5: Paraphrase directions for copyright compliance (final LLM call)
+        print("   ✏️  Running directions paraphrasing (GEMINI)...")
+        paraphrase_start = time.time()
+        
+        paraphrased_directions = self.paraphrase_directions_with_llm(formatted_directions)
+        
+        # Update meta step result with paraphrased text
+        updated_meta_step_result = []
+        for i, step_info in enumerate(meta_step_result):
+            updated_step = step_info.copy()
+            # Replace original text with paraphrased text (if available)
+            if i < len(paraphrased_directions):
+                updated_step["text"] = paraphrased_directions[i]
+            updated_meta_step_result.append(updated_step)
+        
+        paraphrase_elapsed = time.time() - paraphrase_start
+        print(f"   ✅ Directions paraphrasing complete in {paraphrase_elapsed:.2f}s")
+        
         # Create enhanced recipe JSON with step-ingredient matching and meta steps
         recipe_dict = create_enhanced_recipe_json(
             title=key_fields["title"],
             parser_method="RecipeSite",
             source_url=key_fields["source_url"],
             step_ingredient_result=step_ingredient_result,
-            meta_step_result=meta_step_result,
+            meta_step_result=updated_meta_step_result,
             nutrition=key_fields["nutrition"],
             meal_occasion=meal_occasion,
             servings=key_fields["servings"],
@@ -368,6 +450,6 @@ class SiteRecipeProcessor:
         # Add image field (not in standard model yet)
         recipe_dict["image"] = key_fields["image"]
         
-        print(f"   ✅ Final JSON: {len(processed_ingredients)} ingredients, {len(formatted_directions)} steps, image included")
+        print(f"   ✅ Final JSON: {len(processed_ingredients)} ingredients, {len(paraphrased_directions)} steps (paraphrased), image included")
         
         return format_standard_recipe_json(recipe_dict)

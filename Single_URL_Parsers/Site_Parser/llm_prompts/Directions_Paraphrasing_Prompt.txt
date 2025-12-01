@@ -1,0 +1,83 @@
+TASK: Conservative paraphrasing of cooking directions to address copyright concerns while maintaining identical cooking results.
+
+CRITICAL PRINCIPLE: Your job is SURGICAL EDITORIAL CLEANUP, not recipe rewriting. Make minimal word/phrase changes only.
+
+NEVER CHANGE (Preserve 100%):
+• Temperatures: "350°F", "medium heat", "boiling" 
+• Times: "bake for 25 minutes", "cook until tender", "rest for 5 minutes"
+• Measurements: "1 cup", "2 tablespoons", "1/2 teaspoon"
+• Cooking techniques: "whisk", "fold", "sauté", "braise" (these have specific meanings)
+• Safety instructions: "cook until internal temperature reaches 165°F"
+• Ingredient names: "heavy cream", "kosher salt", "vanilla extract"
+• Equipment: "stand mixer", "9-inch pan", "large skillet"
+
+ACCEPTABLE SURGICAL CHANGES (Editorial cleanup):
+• Personal voice: "I like to add" → "add"
+• Subjective descriptors: "beautifully golden" → "golden brown"
+• Editorial flourishes: "lovingly combine" → "combine"
+• Possessive references: "my favorite method" → "this method"
+• Flowery language: "gently fold with care" → "gently fold"
+• Opinion words: "perfectly seasoned" → "well seasoned"
+
+CONSERVATIVE WORD SWAPPING EXAMPLES:
+
+✅ GOOD Examples (Surgical changes):
+Original: "Gently fold the flour into the wet ingredients until just combined"
+Paraphrased: "Fold flour into wet ingredients until just combined"
+[Removed "gently" - editorial, kept technique "fold"]
+
+Original: "I love to season generously with my favorite kosher salt"
+Paraphrased: "Season generously with kosher salt"
+[Removed personal voice, kept "generously" and "kosher salt"]
+
+Original: "Whisk the eggs until they're beautifully pale and fluffy"
+Paraphrased: "Whisk eggs until pale and fluffy" 
+[Removed "beautifully", kept technical result "pale and fluffy"]
+
+Original: "Carefully transfer the delicate mixture to your prepared pan"
+Paraphrased: "Transfer mixture to prepared pan"
+[Removed editorial words, kept core action]
+
+❌ BAD Examples (Too aggressive):
+Original: "Fold the chocolate chips gently into the batter"
+BAD: "Mix chocolate chips into batter" [WRONG - changed technique!]
+GOOD: "Fold chocolate chips into batter" [Kept technique, removed editorial]
+
+Original: "Bake at 350°F for 25-30 minutes until golden brown"  
+BAD: "Bake at moderate heat until done" [WRONG - lost specifics!]
+GOOD: "Bake at 350°F for 25-30 minutes until golden brown" [No change needed]
+
+ADVANCED EXAMPLES:
+
+Original: "In a large bowl, I like to cream the butter and sugar together using my stand mixer until the mixture becomes light and fluffy, which usually takes about 3-4 minutes on medium speed."
+Paraphrased: "In a large bowl, cream butter and sugar together using stand mixer until mixture becomes light and fluffy, about 3-4 minutes on medium speed."
+[Removed personal voice, kept all technical details]
+
+Original: "Next, you'll want to gradually add the eggs one at a time, making sure to beat well after each addition to ensure a smooth, homogeneous mixture."
+Paraphrased: "Add eggs one at a time, beating well after each addition to ensure smooth mixture."
+[Simplified language, kept technique and purpose]
+
+Original: "Pour the beautiful batter into your lovingly prepared springform pan and gently tap to release any air bubbles."
+Paraphrased: "Pour batter into prepared springform pan and tap to release air bubbles."
+[Removed flowery language, kept all actions]
+
+FORMATTING REQUIREMENTS:
+• Input: Numbered steps separated by | delimiter
+• Output: Paraphrased steps separated by | delimiter  
+• Maintain exact same number of steps
+• Preserve step numbering and order
+• Focus on reasoning (what to change) not formatting
+
+INPUT FORMAT: 1. First step text|2. Second step text|3. Third step text
+OUTPUT FORMAT: 1. Paraphrased first step|2. Paraphrased second step|3. Paraphrased third step
+
+ERROR HANDLING:
+If the directions cannot be safely paraphrased while maintaining cooking accuracy, return: "No Paraphrasing Available"
+
+SAFETY CHECK:
+Before making ANY change, ask: "Would this change affect the cooking result?" If yes, keep original.
+
+Steps to paraphrase:
+{formatted_steps}
+
+Output only the paraphrased steps with | delimiter (no explanations):
