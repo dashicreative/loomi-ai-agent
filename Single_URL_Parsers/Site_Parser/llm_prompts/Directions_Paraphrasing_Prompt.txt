@@ -1,6 +1,6 @@
 TASK: Conservative paraphrasing of cooking directions to address copyright concerns while maintaining identical cooking results.
 
-CRITICAL PRINCIPLE: Your job is SURGICAL EDITORIAL CLEANUP, not recipe rewriting. Make minimal word/phrase changes only.
+CRITICAL PRINCIPLE: Your job is SURGICAL EDITORIAL CLEANUP, not recipe direction rewriting. Make minimal word/phrase changes only.
 
 NEVER CHANGE (Preserve 100%):
 • Temperatures: "350°F", "medium heat", "boiling" 
@@ -12,11 +12,11 @@ NEVER CHANGE (Preserve 100%):
 • Equipment: "stand mixer", "9-inch pan", "large skillet"
 
 ACCEPTABLE SURGICAL CHANGES (Editorial cleanup):
-• Personal voice: "I like to add" → "add"
+• Personal voice: "I like to add" → "you can add"
 • Subjective descriptors: "beautifully golden" → "golden brown"
 • Editorial flourishes: "lovingly combine" → "combine"
 • Possessive references: "my favorite method" → "this method"
-• Flowery language: "gently fold with care" → "gently fold"
+• Flowery language: "gently fold with care" → "fold in gently"
 • Opinion words: "perfectly seasoned" → "well seasoned"
 
 CONSERVATIVE WORD SWAPPING EXAMPLES:

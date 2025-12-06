@@ -1,0 +1,89 @@
+TASK: Conservative quality control cleanup of ingredient list to fix parsing issues and remove editorial content.
+
+CRITICAL PRINCIPLE: Your job is SURGICAL QUALITY CONTROL, not ingredient rewriting. Most ingredients should pass through UNCHANGED.
+
+WHEN TO LEAVE UNCHANGED (95% of ingredients):
+• Normal ingredients: "2 cups flour", "1 lb chicken breast", "3 cloves garlic"
+• Cooking descriptors: "chicken breast, diced", "onion, chopped", "cheese, shredded"
+• Preparation notes: "garlic, minced", "tomatoes, crushed", "butter, softened"
+• Brands/varieties: "kosher salt", "extra virgin olive oil", "sharp cheddar cheese"
+• Alternative ingredients: "chicken breast or thigh", "paprika or cayenne"
+
+ONLY MODIFY IN THESE EXTREME CASES:
+
+1. MULTI-INGREDIENT LUMPING (Split into separate ingredients):
+✅ "1 tsp EACH:onion powder, cumin, paprika" → "1 tsp onion powder;1 tsp cumin;1 tsp paprika"
+✅ "2 tbsp each of: salt, pepper, garlic powder" → "2 tbsp salt;2 tbsp pepper;2 tbsp garlic powder"
+✅ "1/2 cup combined: flour and cornstarch" → "1/2 cup flour;1/2 cup cornstarch"
+
+2. EDITORIAL/WEBSITE TEXT REMOVAL (Remove parenthetical comments):
+✅ "2 cups flour (I highly recommend King Arthur)" → "2 cups flour"
+✅ "1 lb chicken breast (see notes)" → "1 lb chicken breast"
+✅ "3 eggs (check full recipe for details)" → "3 eggs"
+✅ "1 tsp vanilla (optional)" → "1 tsp vanilla"
+✅ "salt to taste (about 1 tsp)" → "salt to taste"
+
+CONSERVATIVE EXAMPLES:
+
+✅ KEEP UNCHANGED (Good ingredients):
+- "2 cups all-purpose flour" → NO CHANGE
+- "1 lb chicken breast, diced" → NO CHANGE  
+- "3 cloves garlic, minced" → NO CHANGE
+- "1/2 cup olive oil, extra virgin" → NO CHANGE
+- "1 tsp salt, kosher" → NO CHANGE
+- "2 tbsp butter, unsalted" → NO CHANGE
+- "1 cup cheese, grated" → NO CHANGE
+
+✅ SPLIT MULTI-INGREDIENTS (Fix parsing issues):
+- "1 tsp EACH:salt, pepper, garlic powder" → "1 tsp salt;1 tsp pepper;1 tsp garlic powder"
+- "2 cups each: flour and sugar" → "2 cups flour;2 cups sugar"
+- "1/4 cup combined fresh herbs: basil, oregano, thyme" → "1/4 cup fresh basil;1/4 cup fresh oregano;1/4 cup fresh thyme"
+
+✅ REMOVE EDITORIAL NOTES (Clean up website text):
+- "2 lbs chicken (I love organic but regular is fine)" → "2 lbs chicken"
+- "1 cup flour (see recipe notes for gluten-free option)" → "1 cup flour"
+- "3 eggs (room temperature works best)" → "3 eggs"
+- "1 tsp vanilla extract (pure, not imitation!)" → "1 tsp vanilla extract"
+
+❌ DO NOT CHANGE (Keep cooking descriptors):
+- "chicken breast, shredded" → DO NOT CHANGE (shredded is cooking instruction)
+- "1 onion, diced" → DO NOT CHANGE (diced is preparation)
+- "2 tomatoes, crushed" → DO NOT CHANGE (crushed is preparation)
+- "1/2 cup butter, melted" → DO NOT CHANGE (melted is preparation)
+
+❌ NEVER ADD CONTENT:
+- DO NOT add quantities if missing
+- DO NOT add units if missing  
+- DO NOT add preparation methods
+- DO NOT add ingredient alternatives
+- DO NOT add cooking notes
+
+EDGE CASES:
+
+Complex Editorial Removal:
+- "2 cups flour (I've tested 5 brands and King Arthur works best - see my blog post)" → "2 cups flour"
+- "1 lb ground beef (85/15 lean ratio recommended, but 80/20 works too)" → "1 lb ground beef"
+
+Multi-ingredient with Editorial:
+- "1 tsp EACH of my favorite spices: cumin, paprika (see notes for substitutions)" → "1 tsp cumin;1 tsp paprika"
+
+Quantity Inheritance for Splits:
+- "3 tbsp each: olive oil and butter" → "3 tbsp olive oil;3 tbsp butter"
+- "1/2 cup EACH: flour, sugar, cocoa powder" → "1/2 cup flour;1/2 cup sugar;1/2 cup cocoa powder"
+
+FORMAT REQUIREMENTS:
+• Input: Semicolon-separated list of ingredients
+• Output: Semicolon-separated list of cleaned ingredients
+• Maintain same order when possible
+• When splitting, place split ingredients in sequence
+
+ERROR HANDLING:
+If an ingredient cannot be safely cleaned without losing meaning, leave it unchanged.
+
+SAFETY CHECK:
+Before making ANY change, ask: "Is this ingredient clear and unambiguous for cooking?" If yes, leave unchanged.
+
+Ingredients to clean:
+{ingredients_list}
+
+Output only the cleaned ingredient list with ; delimiter (no explanations):

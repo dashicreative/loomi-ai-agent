@@ -271,6 +271,97 @@ class SiteRecipeProcessor:
         print(f"   ✅ Successfully paraphrased {len(paraphrased_steps)} steps")
         return paraphrased_steps
     
+    def clean_ingredients_with_llm(self, processed_ingredients: List[Dict]) -> List[Dict]:
+        """
+        Use Gemini LLM to perform conservative quality control cleanup on ingredients.
+        
+        Args:
+            processed_ingredients: List of ingredient dictionaries from regex parser
+            
+        Returns:
+            List of cleaned ingredient dictionaries (same structure, cleaned content)
+        """
+        if not processed_ingredients:
+            return []
+        
+        # Convert ingredient objects to semicolon-delimited format for LLM reasoning
+        ingredients_text_list = []
+        for ingredient in processed_ingredients:
+            # Format as "quantity unit name" or just "name" if no quantity/unit
+            if ingredient.get("quantity") and ingredient.get("unit"):
+                ingredient_text = f"{ingredient['quantity']} {ingredient['unit']} {ingredient['name']}"
+            elif ingredient.get("quantity"):
+                ingredient_text = f"{ingredient['quantity']} {ingredient['name']}"
+            else:
+                ingredient_text = ingredient['name']
+            ingredients_text_list.append(ingredient_text)
+        
+        ingredients_input = ";".join(ingredients_text_list)
+        
+        # Load quality control prompt
+        prompt_path = Path(__file__).parent / "llm_prompts" / "Ingredients_Quality_Control_Prompt.txt"
+        
+        try:
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                prompt_template = f.read()
+            
+            prompt = prompt_template.format(ingredients_list=ingredients_input)
+            
+        except FileNotFoundError:
+            raise Exception(f"Ingredients quality control prompt file not found: {prompt_path}")
+        
+        # Call Gemini for conservative ingredient cleanup
+        print(f"   🧹 Performing ingredient quality control with GEMINI...")
+        start_time = time.time()
+        
+        llm_response = self.call_llm(prompt, max_tokens=1200)
+        
+        elapsed = time.time() - start_time
+        print(f"   ✅ Ingredient quality control completed in {elapsed:.2f}s")
+        
+        # Parse LLM response back to ingredient objects
+        if not llm_response.strip():
+            print(f"   ⚠️  LLM returned empty response - using original ingredients")
+            return processed_ingredients
+        
+        # Split by semicolon delimiter and parse back to ingredient objects
+        cleaned_ingredients = []
+        raw_ingredients = llm_response.strip().split(';')
+        
+        for raw_ingredient in raw_ingredients:
+            ingredient_text = raw_ingredient.strip()
+            if not ingredient_text:
+                continue
+            
+            # Parse back into quantity/unit/name using shared ingredient parser
+            try:
+                # Use single ingredient parsing
+                parsed_ingredient = self.ingredient_parser.parse_ingredients_list(ingredient_text)
+                if parsed_ingredient:
+                    ingredient_obj = parsed_ingredient[0]  # Get first parsed ingredient
+                    cleaned_ingredients.append({
+                        "name": ingredient_obj.name,
+                        "quantity": ingredient_obj.quantity,
+                        "unit": ingredient_obj.unit
+                    })
+                else:
+                    # Fallback: treat as name-only ingredient
+                    cleaned_ingredients.append({
+                        "name": ingredient_text,
+                        "quantity": "",
+                        "unit": ""
+                    })
+            except Exception:
+                # Fallback: treat as name-only ingredient
+                cleaned_ingredients.append({
+                    "name": ingredient_text,
+                    "quantity": "",
+                    "unit": ""
+                })
+        
+        print(f"   ✅ Quality control: {len(processed_ingredients)} → {len(cleaned_ingredients)} ingredients")
+        return cleaned_ingredients
+    
     def extract_meal_occasion(self, combined_content: str) -> str:
         """
         Extract meal occasion using Gemini LLM.
@@ -377,18 +468,20 @@ class SiteRecipeProcessor:
         # Prepare combined content for meal occasion analysis
         combined_content = f"Title: {key_fields['title']}\n\nIngredients: {', '.join(key_fields['ingredients'])}\n\nInstructions: {key_fields['instructions']}"
         
-        # Run LLM calls in parallel (instructions formatting + meal occasion)
+        # Run LLM calls in parallel (instructions formatting + meal occasion + ingredient quality control)
         print("   🤖 Running parallel LLM analysis...")
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            # Submit both LLM tasks
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            # Submit all three LLM tasks
             instructions_future = executor.submit(self.format_instructions_with_llm, key_fields["instructions"])
             meal_occasion_future = executor.submit(self.extract_meal_occasion, combined_content)
+            clean_ingredients_future = executor.submit(self.clean_ingredients_with_llm, processed_ingredients)
             
             # Get results
             formatted_directions = instructions_future.result()
             meal_occasion = meal_occasion_future.result()
+            clean_ingredients = clean_ingredients_future.result()
         
-        print(f"   📊 Parallel LLM analysis complete - meal occasion: {meal_occasion}")
+        print(f"   📊 Parallel LLM analysis complete - meal occasion: {meal_occasion}, ingredients: {len(clean_ingredients)}")
         
         # Enhanced recipe analysis (step-ingredient matching + meta step extraction)
         print("   🔗 Running enhanced recipe analysis (GEMINI)...")
@@ -396,15 +489,15 @@ class SiteRecipeProcessor:
         
         # Run step-ingredient matching and meta step extraction in parallel
         with ThreadPoolExecutor(max_workers=2) as executor:
-            # Submit both analysis tasks
+            # Submit both analysis tasks (using cleaned ingredients)
             step_ingredient_future = executor.submit(
                 self.step_ingredient_matcher.match_steps_with_ingredients,
-                processed_ingredients,
+                clean_ingredients,
                 formatted_directions
             )
             meta_step_future = executor.submit(
                 self.meta_step_extractor.extract_meta_steps,
-                processed_ingredients,
+                clean_ingredients,
                 formatted_directions,
                 key_fields["title"]
             )
@@ -450,6 +543,6 @@ class SiteRecipeProcessor:
         # Add image field (not in standard model yet)
         recipe_dict["image"] = key_fields["image"]
         
-        print(f"   ✅ Final JSON: {len(processed_ingredients)} ingredients, {len(paraphrased_directions)} steps (paraphrased), image included")
+        print(f"   ✅ Final JSON: {len(clean_ingredients)} ingredients (cleaned), {len(paraphrased_directions)} steps (paraphrased), image included")
         
         return format_standard_recipe_json(recipe_dict)
