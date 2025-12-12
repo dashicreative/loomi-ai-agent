@@ -61,6 +61,12 @@ class SilentPushResponse(BaseModel):
     message: str
     jobId: str
 
+class IngredientRequestModel(BaseModel):
+    ingredientName: str
+    userEmail: str = None 
+    userId: str = None     
+
+
 # Create FastAPI app
 app = FastAPI(
     title="Recipe Parser API",
@@ -598,6 +604,65 @@ async def send_support_message(request: SupportMessageRequest):
           error_message = str(e)
           print(f"❌ Support Email Error: {error_message}")
           raise HTTPException(status_code=500, detail=f"Failed to send support message: {error_message}")
+
+@app.post("/api/ingredients/submit-request")
+async def submit_ingredient_request(request: IngredientRequestModel):
+      """
+      Submit ingredient photo request via email.
+      
+      Input: {"ingredientName": "Turmeric", "userEmail": "user@example.com", "userId": "abc123"}
+      Output: {"success": true, "message": "Ingredient request submitted successfully"}
+      """
+      try:
+          print(f"🥕 Ingredient Request")
+          print(f"   Ingredient: {request.ingredientName}")
+          print(f"   User email: {request.userEmail or 'Not provided'}")
+
+          # Get SendGrid API key
+          sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
+          if not sendgrid_api_key:
+              raise HTTPException(status_code=500, detail="Email service not configured")
+
+          # Create email subject
+          email_subject = f"Ingredient Photo Request: {request.ingredientName}"
+
+          # Build email body
+          email_body = f"""
+  New ingredient photo request from Loomi app:
+
+  INGREDIENT REQUESTED:
+  {request.ingredientName}
+
+  ---
+  User Email: {request.userEmail or 'Not provided'}
+  User ID: {request.userId or 'Not provided'}
+  Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}
+          """
+
+          # Create SendGrid email
+          message = Mail(
+              from_email='careteam@liveloomi.com',
+              to_emails='careteam@liveloomi.com',
+              subject=email_subject,
+              plain_text_content=email_body
+          )
+
+          # Send email
+          sg = SendGridAPIClient(sendgrid_api_key)
+          response = sg.send(message)
+
+          print(f"✅ Ingredient request email sent successfully (Status: {response.status_code})")
+
+          return {
+              "success": True,
+              "message": "Ingredient request submitted successfully"
+          }
+
+      except Exception as e:
+          error_message = str(e)
+          print(f"❌ Ingredient Request Error: {error_message}")
+          raise HTTPException(status_code=500, detail=f"Failed to submit ingredient request: {error_message}")
+
 
 
 @app.post("/queue-recipe-silent-push", response_model=SilentPushResponse)
