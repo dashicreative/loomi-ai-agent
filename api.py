@@ -6,6 +6,7 @@ FastAPI service for URL parsing with background processing and APNs integration.
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Optional
 import os
 import sys
 import json
@@ -721,6 +722,172 @@ async def queue_recipe_silent_push(request: SilentPushRequest, background_tasks:
         error_message = str(e)
         print(f"❌ Silent Push Queue Error: {error_message}")
         raise HTTPException(status_code=500, detail=error_message)
+
+# ============================================================================
+# LEARNED ALIASES ENDPOINTS
+# ============================================================================
+
+def get_db():
+    """Get database connection - placeholder function, implement based on your DB setup"""
+    # TODO: Implement your database connection here
+    # This is a placeholder that needs to be replaced with actual DB connection logic
+    raise NotImplementedError("Database connection not configured")
+
+@app.post("/api/learned-aliases/learn")
+async def learn_alias(
+    alias_text: str,
+    ingredient_id: int,
+    confidence: float
+):
+    """Learn a new ingredient alias from LLM matching."""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    try:
+        # Check if alias already exists
+        cursor.execute(
+            "SELECT id, usage_count FROM learned_ingredient_aliases WHERE alias_text = %s",
+            (alias_text.lower(),)
+        )
+        existing = cursor.fetchone()
+
+        if existing:
+            # Already exists - increment usage
+            cursor.execute(
+                "UPDATE learned_ingredient_aliases SET usage_count = usage_count + 1, last_used = NOW() WHERE id = %s RETURNING usage_count",
+                (existing['id'],)
+            )
+            result = cursor.fetchone()
+            conn.commit()
+            return {"status": "updated", "usage_count": result['usage_count']}
+        else:
+            # New alias - insert
+            cursor.execute(
+                "INSERT INTO learned_ingredient_aliases (alias_text, ingredient_id, confidence) VALUES (%s, %s, %s) RETURNING id",
+                (alias_text.lower(), ingredient_id, confidence)
+            )
+            result = cursor.fetchone()
+            conn.commit()
+            return {"status": "created", "alias_id": result['id']}
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@app.get("/api/learned-aliases/lookup/{alias_text}")
+async def lookup_alias(alias_text: str):
+    """Check if alias exists. Returns matched ingredient if found."""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    try:
+        # Join with ingredients table to get full data
+        cursor.execute("""
+            SELECT
+                a.ingredient_id,
+                i.name as ingredient_name,
+                i.category_name,
+                i.primary_image_url as image_url,
+                a.confidence,
+                a.usage_count
+            FROM learned_ingredient_aliases a
+            JOIN ingredients i ON a.ingredient_id = i.id
+            WHERE a.alias_text = %s AND a.status = 'active'
+        """, (alias_text.lower(),))
+
+        result = cursor.fetchone()
+
+        if result:
+            # Update usage
+            cursor.execute(
+                "UPDATE learned_ingredient_aliases SET usage_count = usage_count + 1, last_used = NOW() WHERE alias_text = %s",
+                (alias_text.lower(),)
+            )
+            conn.commit()
+            return {"found": True, **result}
+        else:
+            return {"found": False}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@app.get("/api/learned-aliases/sync")
+async def sync_aliases(since: Optional[str] = None):
+    """Get all active aliases for app cache sync."""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    try:
+        if since:
+            cursor.execute(
+                "SELECT * FROM learned_ingredient_aliases WHERE status = 'active' AND updated_at > %s",
+                (since,)
+            )
+        else:
+            cursor.execute("SELECT * FROM learned_ingredient_aliases WHERE status = 'active'")
+
+        aliases = cursor.fetchall()
+        return {"aliases": aliases, "count": len(aliases)}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@app.get("/api/learned-aliases/analytics")
+async def get_alias_analytics():
+    """Analytics for admin - shows ingredient gaps."""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    try:
+        # Top ingredients by alias count (these have the most variations/gaps)
+        cursor.execute("""
+            SELECT
+                i.name as ingredient_name,
+                i.category_name,
+                COUNT(a.id) as alias_count,
+                AVG(a.confidence) as avg_confidence,
+                SUM(a.usage_count) as total_usage
+            FROM ingredients i
+            JOIN learned_ingredient_aliases a ON i.id = a.ingredient_id
+            WHERE a.status = 'active'
+            GROUP BY i.id, i.name, i.category_name
+            ORDER BY alias_count DESC
+            LIMIT 20
+        """)
+        top_ingredients = cursor.fetchall()
+
+        # Recent learnings
+        cursor.execute("""
+            SELECT a.*, i.name as ingredient_name
+            FROM learned_ingredient_aliases a
+            JOIN ingredients i ON a.ingredient_id = i.id
+            ORDER BY a.learned_date DESC
+            LIMIT 50
+        """)
+        recent = cursor.fetchall()
+
+        return {
+            "top_ingredients": top_ingredients,
+            "recent_learnings": recent
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+        conn.close()
 
 if __name__ == "__main__":
     import uvicorn
