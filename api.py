@@ -578,7 +578,7 @@ async def send_support_message(request: SupportMessageRequest):
 
           # Create SendGrid email
           message = Mail(
-              from_email='noreply@liveloomi.com',  # Must be verified in SendGrid
+              from_email='careteam@liveloomi.com',  # Must be verified in SendGrid
               to_emails='careteam@liveloomi.com',
               subject=email_subject,
               plain_text_content=email_body
