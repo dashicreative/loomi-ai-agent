@@ -6,7 +6,8 @@ FastAPI service for URL parsing with background processing and APNs integration.
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
+from datetime import datetime
 import os
 import sys
 import json
@@ -24,6 +25,8 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 # Add parser directories to path
 sys.path.append(str(Path(__file__).parent / "Single_URL_Parsers" / "Instagram_Parser" / "src"))
@@ -728,10 +731,15 @@ async def queue_recipe_silent_push(request: SilentPushRequest, background_tasks:
 # ============================================================================
 
 def get_db():
-    """Get database connection - placeholder function, implement based on your DB setup"""
-    # TODO: Implement your database connection here
-    # This is a placeholder that needs to be replaced with actual DB connection logic
-    raise NotImplementedError("Database connection not configured")
+    """Get PostgreSQL database connection for learned aliases"""
+    return psycopg2.connect(
+        host=os.getenv("PGHOST"),
+        database=os.getenv("PGDATABASE"),
+        user=os.getenv("PGUSER"),
+        password=os.getenv("PGPASSWORD"),
+        port=os.getenv("PGPORT", "5432"),
+        cursor_factory=RealDictCursor
+    )
 
 @app.post("/api/learned-aliases/learn")
 async def learn_alias(
