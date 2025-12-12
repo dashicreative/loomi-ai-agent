@@ -561,8 +561,7 @@ async def send_support_message(request: SupportMessageRequest):
               raise HTTPException(status_code=500, detail="Email service not configured")
 
           # Create email content
-          email_subject = "Customer Message from Loomi App: " + request.userEmail
-
+          email_subject = "Customer Message from Loomi App"
           # Build email body with user info
           email_body = f"""
   New support message from Loomi app:
