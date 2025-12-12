@@ -535,6 +535,65 @@ async def parse_site_recipe(request: URLRequest):
             
         raise HTTPException(status_code=status_code, detail=error_message)
 
+@app.post("/api/support/send-message")
+async def send_support_message(request: SupportMessageRequest):
+      """
+      Send support message to Loomi care team via email.
+      
+      Input: {"message": "User's support message", "userEmail": "user@example.com"}
+      Output: {"success": true, "message": "Support message sent successfully"}
+      """
+      try:
+          print(f"📧 Support Message Request")
+          print(f"   Message length: {len(request.message)} chars")
+          print(f"   User email: {request.userEmail or 'Not provided'}")
+
+          # Get SendGrid API key from environment
+          sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
+          if not sendgrid_api_key:
+              raise HTTPException(status_code=500, detail="Email service not configured")
+
+          # Create email content
+          email_subject = "Support Request from Loomi App"
+
+          # Build email body with user info
+          email_body = f"""
+  New support message from Loomi app:
+
+  MESSAGE:
+  {request.message}
+
+  ---
+  User Email: {request.userEmail or 'Not provided'}
+  User ID: {request.userId or 'Not provided'}
+  Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}
+          """
+
+          # Create SendGrid email
+          message = Mail(
+              from_email='noreply@liveloomi.com',  # Must be verified in SendGrid
+              to_emails='careteam@liveloomi.com',
+              subject=email_subject,
+              plain_text_content=email_body
+          )
+
+          # Send email
+          sg = SendGridAPIClient(sendgrid_api_key)
+          response = sg.send(message)
+
+          print(f"✅ Support email sent successfully (Status: {response.status_code})")
+
+          return {
+              "success": True,
+              "message": "Support message sent successfully"
+          }
+
+      except Exception as e:
+          error_message = str(e)
+          print(f"❌ Support Email Error: {error_message}")
+          raise HTTPException(status_code=500, detail=f"Failed to send support message: {error_message}")
+
+
 @app.post("/queue-recipe-silent-push", response_model=SilentPushResponse)
 async def queue_recipe_silent_push(request: SilentPushRequest, background_tasks: BackgroundTasks):
     """

@@ -16,7 +16,7 @@ R2_BUCKET = 'loomi-ingredient-data'
 R2_PUBLIC_URL = 'https://pub-4559f4553008447b97be2209a19f3b75.r2.dev'
 
 
-INGREDIENT_IMAGES_FOLDER = '/Users/agustin/Library/Mobile Documents/com~apple~CloudDocs/Loomi/Ingredient Database/Ingredient Images/DELETE LATER'
+INGREDIENT_IMAGES_FOLDER = '/Users/agustin/Desktop/Temp'
 CATEGORY_IMAGES_FOLDER = 'X'
 SQUARE_SIZE = 800
 # =========================
