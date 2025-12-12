@@ -21,6 +21,8 @@ from urllib.parse import urlparse
 from aioapns import APNs, NotificationRequest, PushType
 import firebase_admin
 from firebase_admin import credentials, firestore
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
 
 # Add parser directories to path
 sys.path.append(str(Path(__file__).parent / "Single_URL_Parsers" / "Instagram_Parser" / "src"))
@@ -34,6 +36,11 @@ from recipe_site_parser_actor import parse_single_recipe_url
 class URLRequest(BaseModel):
     url: str
     userId: str
+
+class SupportMessageRequest(BaseModel):
+    message: str
+    userEmail: str = None  # Optional - user's email if they want a response
+    userId: str = None     # Optional - for tracking
 
 class ParseResponse(BaseModel):
     success: bool
@@ -554,7 +561,7 @@ async def send_support_message(request: SupportMessageRequest):
               raise HTTPException(status_code=500, detail="Email service not configured")
 
           # Create email content
-          email_subject = "Support Request from Loomi App"
+          email_subject = "Customer Message from Loomi App: " + request.userEmail
 
           # Build email body with user info
           email_body = f"""

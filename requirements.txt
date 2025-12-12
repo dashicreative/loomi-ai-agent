@@ -32,3 +32,6 @@ asyncio  # Built-in, but explicit for clarity
 # Optional - Testing (remove for production if needed)
 pytest>=7.4.3
 pytest-asyncio>=0.21.1
+
+#Sendgrid for app to email support team communication
+sendgrid==6.10.0
