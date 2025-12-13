@@ -67,8 +67,8 @@ class SilentPushResponse(BaseModel):
 
 class IngredientRequestModel(BaseModel):
     ingredientName: str
-    userEmail: str = None 
-    userId: str = None     
+    userEmail: str = None
+    userId: str = None
 
 class LearnAliasRequest(BaseModel):
     alias_text: str
@@ -744,8 +744,9 @@ def get_db():
         port=os.getenv("PGPORT", "5432"),
         cursor_factory=RealDictCursor
     )
+
 @app.post("/api/learned-aliases/learn")
-async def learn_alias(request: LearnAliasRequest): 
+async def learn_alias(request: LearnAliasRequest):
     """Learn a new ingredient alias from LLM matching."""
     conn = get_db()
     cursor = conn.cursor()
@@ -753,8 +754,7 @@ async def learn_alias(request: LearnAliasRequest):
     try:
         cursor.execute(
             "SELECT id, usage_count FROM learned_ingredient_aliases WHERE alias_text = %s",
-            (request.alias_text.lower(),)  
-            # ✅ Use request.alias_text
+            (request.alias_text.lower(),)
         )
 
         existing = cursor.fetchone()
@@ -767,16 +767,24 @@ async def learn_alias(request: LearnAliasRequest):
             )
             result = cursor.fetchone()
             conn.commit()
-            return {"status": "updated", "usage_count": result['usage_count']}
+            return {
+                "status": "updated",
+                "usage_count": result['usage_count'],
+                "message": f"Alias '{request.alias_text}' usage count updated"
+            }
         else:
             # New alias - insert
             cursor.execute(
                 "INSERT INTO learned_ingredient_aliases (alias_text, ingredient_id, confidence) VALUES (%s, %s, %s) RETURNING id",
-                (alias_text.lower(), ingredient_id, confidence)
+                (request.alias_text.lower(), request.ingredient_id, request.confidence)
             )
             result = cursor.fetchone()
             conn.commit()
-            return {"status": "created", "alias_id": result['id']}
+            return {
+                "status": "created",
+                "alias_id": result['id'],
+                "message": "New alias learned successfully"
+            }
 
     except Exception as e:
         conn.rollback()
