@@ -736,22 +736,42 @@ async def queue_recipe_silent_push(request: SilentPushRequest, background_tasks:
 
 def get_db():
     """Get PostgreSQL database connection for learned aliases"""
-    return psycopg2.connect(
-        host=os.getenv("PGHOST"),
-        database=os.getenv("PGDATABASE"),
-        user=os.getenv("PGUSER"),
-        password=os.getenv("PGPASSWORD"),
-        port=os.getenv("PGPORT", "5432"),
-        cursor_factory=RealDictCursor
-    )
+    print("🔌 [DB] Attempting database connection...")
+    print(f"   [DB] Host: {os.getenv('PGHOST')}")
+    print(f"   [DB] Database: {os.getenv('PGDATABASE')}")
+    print(f"   [DB] User: {os.getenv('PGUSER')}")
+    print(f"   [DB] Port: {os.getenv('PGPORT', '5432')}")
+
+    try:
+        conn = psycopg2.connect(
+            host=os.getenv("PGHOST"),
+            database=os.getenv("PGDATABASE"),
+            user=os.getenv("PGUSER"),
+            password=os.getenv("PGPASSWORD"),
+            port=os.getenv("PGPORT", "5432"),
+            cursor_factory=RealDictCursor
+        )
+        print("✅ [DB] Database connection successful")
+        return conn
+    except Exception as e:
+        print(f"❌ [DB] Database connection failed: {type(e).__name__}: {str(e)}")
+        raise
 
 @app.post("/api/learned-aliases/learn")
 async def learn_alias(request: LearnAliasRequest):
     """Learn a new ingredient alias from LLM matching."""
-    conn = get_db()
-    cursor = conn.cursor()
+    print(f"📝 [LEARN] Received request to learn alias")
+    print(f"   [LEARN] Alias text: '{request.alias_text}'")
+    print(f"   [LEARN] Ingredient ID: {request.ingredient_id}")
+    print(f"   [LEARN] Confidence: {request.confidence}")
 
     try:
+        print(f"   [LEARN] Getting database connection...")
+        conn = get_db()
+        cursor = conn.cursor()
+        print(f"   [LEARN] Database cursor created")
+
+        print(f"   [LEARN] Checking if alias already exists...")
         cursor.execute(
             "SELECT id, usage_count FROM learned_ingredient_aliases WHERE alias_text = %s",
             (request.alias_text.lower(),)
@@ -760,6 +780,7 @@ async def learn_alias(request: LearnAliasRequest):
         existing = cursor.fetchone()
 
         if existing:
+            print(f"   [LEARN] Alias exists (ID: {existing['id']}), incrementing usage count...")
             # Already exists - increment usage
             cursor.execute(
                 "UPDATE learned_ingredient_aliases SET usage_count = usage_count + 1, last_used = NOW() WHERE id = %s RETURNING usage_count",
@@ -767,12 +788,14 @@ async def learn_alias(request: LearnAliasRequest):
             )
             result = cursor.fetchone()
             conn.commit()
+            print(f"✅ [LEARN] Alias updated successfully, new usage count: {result['usage_count']}")
             return {
                 "status": "updated",
                 "usage_count": result['usage_count'],
                 "message": f"Alias '{request.alias_text}' usage count updated"
             }
         else:
+            print(f"   [LEARN] Alias is new, inserting into database...")
             # New alias - insert
             cursor.execute(
                 "INSERT INTO learned_ingredient_aliases (alias_text, ingredient_id, confidence) VALUES (%s, %s, %s) RETURNING id",
@@ -780,18 +803,31 @@ async def learn_alias(request: LearnAliasRequest):
             )
             result = cursor.fetchone()
             conn.commit()
+            print(f"✅ [LEARN] New alias created successfully with ID: {result['id']}")
             return {
                 "status": "created",
                 "alias_id": result['id'],
                 "message": "New alias learned successfully"
             }
 
+    except psycopg2.Error as db_error:
+        print(f"❌ [LEARN] Database error: {type(db_error).__name__}: {str(db_error)}")
+        if 'conn' in locals():
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {type(db_error).__name__}: {str(db_error)}")
     except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"❌ [LEARN] Unexpected error: {type(e).__name__}: {str(e)}")
+        import traceback
+        print(f"   [LEARN] Traceback: {traceback.format_exc()}")
+        if 'conn' in locals():
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error: {type(e).__name__}: {str(e)}")
     finally:
-        cursor.close()
-        conn.close()
+        if 'cursor' in locals():
+            cursor.close()
+        if 'conn' in locals():
+            conn.close()
+        print(f"   [LEARN] Database connection closed")
 
 
 @app.get("/api/learned-aliases/lookup/{alias_text}")
@@ -907,6 +943,61 @@ async def get_alias_analytics():
     finally:
         cursor.close()
         conn.close()
+
+@app.get("/api/learned-aliases/health")
+async def learned_aliases_health():
+    """Health check endpoint specifically for learned aliases feature."""
+    print("🏥 [HEALTH] Learned aliases health check requested")
+
+    health_status = {
+        "service": "learned_aliases",
+        "status": "healthy",
+        "endpoints_registered": True,
+        "database_configured": False,
+        "database_connection": "not_tested"
+    }
+
+    # Check if DB env vars are set
+    required_env_vars = ["PGHOST", "PGDATABASE", "PGUSER", "PGPASSWORD"]
+    missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+
+    if missing_vars:
+        print(f"⚠️  [HEALTH] Missing environment variables: {missing_vars}")
+        health_status["database_configured"] = False
+        health_status["missing_env_vars"] = missing_vars
+    else:
+        print(f"✅ [HEALTH] All environment variables configured")
+        health_status["database_configured"] = True
+
+        # Try to connect to database
+        try:
+            print(f"   [HEALTH] Testing database connection...")
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.close()
+            conn.close()
+            print(f"✅ [HEALTH] Database connection successful")
+            health_status["database_connection"] = "successful"
+        except Exception as e:
+            print(f"❌ [HEALTH] Database connection failed: {type(e).__name__}: {str(e)}")
+            health_status["database_connection"] = "failed"
+            health_status["database_error"] = f"{type(e).__name__}: {str(e)}"
+
+    return health_status
+
+# Startup event to confirm endpoints are registered
+@app.on_event("startup")
+async def startup_event():
+    print("\n" + "="*80)
+    print("🚀 LEARNED ALIASES ENDPOINTS REGISTERED")
+    print("="*80)
+    print("📍 POST   /api/learned-aliases/learn")
+    print("📍 GET    /api/learned-aliases/lookup/{alias_text}")
+    print("📍 GET    /api/learned-aliases/sync")
+    print("📍 GET    /api/learned-aliases/analytics")
+    print("📍 GET    /api/learned-aliases/health")
+    print("="*80 + "\n")
 
 if __name__ == "__main__":
     import uvicorn
