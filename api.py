@@ -70,6 +70,10 @@ class IngredientRequestModel(BaseModel):
     userEmail: str = None 
     userId: str = None     
 
+class LearnAliasRequest(BaseModel):
+    alias_text: str
+    ingredient_id: int
+    confidence: float
 
 # Create FastAPI app
 app = FastAPI(
@@ -740,23 +744,19 @@ def get_db():
         port=os.getenv("PGPORT", "5432"),
         cursor_factory=RealDictCursor
     )
-
 @app.post("/api/learned-aliases/learn")
-async def learn_alias(
-    alias_text: str,
-    ingredient_id: int,
-    confidence: float
-):
+async def learn_alias(request: LearnAliasRequest): 
     """Learn a new ingredient alias from LLM matching."""
     conn = get_db()
     cursor = conn.cursor()
 
     try:
-        # Check if alias already exists
         cursor.execute(
             "SELECT id, usage_count FROM learned_ingredient_aliases WHERE alias_text = %s",
-            (alias_text.lower(),)
+            (request.alias_text.lower(),)  
+            # ✅ Use request.alias_text
         )
+
         existing = cursor.fetchone()
 
         if existing:
@@ -834,16 +834,19 @@ async def sync_aliases(since: Optional[str] = None):
     cursor = conn.cursor()
 
     try:
-        if since:
-            cursor.execute(
-                "SELECT * FROM learned_ingredient_aliases WHERE status = 'active' AND updated_at > %s",
-                (since,)
-            )
-        else:
-            cursor.execute("SELECT * FROM learned_ingredient_aliases WHERE status = 'active'")
+        cursor.execute("""
+            SELECT a.*, i.name as ingredient_name, i.category_name, i.primary_image_url as image_url
+            FROM learned_ingredient_aliases a
+            JOIN ingredients i ON a.ingredient_id = i.id
+            WHERE a.status = 'active'
+        """)
 
         aliases = cursor.fetchall()
-        return {"aliases": aliases, "count": len(aliases)}
+        return {
+            "aliases": aliases,
+            "total_count": len(aliases),
+            "last_sync": datetime.utcnow().isoformat()
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
