@@ -233,24 +233,87 @@ def generate_recipe_id() -> str:
 async def save_recipe_to_firebase(user_id: str, recipe_id: str, recipe_data: dict) -> bool:
     """Save complete recipe to Firebase user collection"""
     try:
+        print(f"\n{'='*60}")
+        print(f"💾 [FIREBASE] SAVE ATTEMPT STARTED")
+        print(f"{'='*60}")
+
+        # Log user_id immediately (critical for debugging)
+        print(f"👤 [FIREBASE] User ID: '{user_id}'")
+        print(f"   [FIREBASE] User ID type: {type(user_id)}")
+        print(f"   [FIREBASE] User ID length: {len(user_id) if user_id else 0}")
+        print(f"   [FIREBASE] User ID is empty: {not user_id or user_id.strip() == ''}")
+
+        # Check Firebase initialization
         if not firebase_db:
-            print("❌ [DEBUG] Firebase not available - recipe save skipped")
+            print("❌ [FIREBASE] Firebase client not initialized!")
+            print("   [FIREBASE] Check FIREBASE_SERVICE_ACCOUNT_JSON env var")
+            print("   [FIREBASE] Recipe save ABORTED")
             return False
-        
-        print(f"💾 [DEBUG] Saving recipe to Firebase...")
-        print(f"   [DEBUG] User ID: {user_id}")
-        print(f"   [DEBUG] Recipe ID: {recipe_id}")
-        print(f"   [DEBUG] Recipe title: {recipe_data.get('title', 'Unknown')}")
-        
-        # Save to /users/{userId}/recipes/{recipeId}
+
+        print(f"✅ [FIREBASE] Firebase client initialized")
+
+        # Log recipe details
+        print(f"🆔 [FIREBASE] Recipe ID: '{recipe_id}'")
+        print(f"📝 [FIREBASE] Recipe title: '{recipe_data.get('title', 'Unknown')}'")
+        print(f"🥕 [FIREBASE] Ingredients count: {len(recipe_data.get('ingredients', []))}")
+        print(f"📋 [FIREBASE] Directions count: {len(recipe_data.get('directions', []))}")
+        print(f"📊 [FIREBASE] Recipe data keys: {list(recipe_data.keys())}")
+
+        # Construct Firebase path
+        firebase_path = f"users/{user_id}/recipes/{recipe_id}"
+        print(f"🔗 [FIREBASE] Full document path: {firebase_path}")
+
+        # Validate user_id is not empty
+        if not user_id or user_id.strip() == '':
+            print(f"❌ [FIREBASE] User ID is EMPTY or whitespace!")
+            print(f"   [FIREBASE] Cannot save recipe without valid user_id")
+            return False
+
+        # Create document reference
+        print(f"📍 [FIREBASE] Creating document reference...")
         doc_ref = firebase_db.collection('users').document(user_id).collection('recipes').document(recipe_id)
+        print(f"   [FIREBASE] Document reference created: {doc_ref.path}")
+
+        # Perform the write
+        print(f"💾 [FIREBASE] Writing recipe data to Firestore...")
         doc_ref.set(recipe_data)
-        
-        print(f"✅ [DEBUG] Recipe saved to Firebase successfully")
+        print(f"✅ [FIREBASE] Write operation completed")
+
+        # Verify the write was successful by reading it back
+        print(f"🔍 [FIREBASE] Verifying save by reading document back...")
+        saved_doc = doc_ref.get()
+
+        if saved_doc.exists:
+            saved_data = saved_doc.to_dict()
+            print(f"✅ [FIREBASE] VERIFICATION SUCCESSFUL - Document exists in Firestore")
+            print(f"   [FIREBASE] Verified title: '{saved_data.get('title', 'N/A')}'")
+            print(f"   [FIREBASE] Verified ingredients: {len(saved_data.get('ingredients', []))}")
+            print(f"   [FIREBASE] Verified directions: {len(saved_data.get('directions', []))}")
+        else:
+            print(f"⚠️  [FIREBASE] WARNING - Document write succeeded but verification read found no document!")
+            print(f"   [FIREBASE] Path checked: {firebase_path}")
+            print(f"   [FIREBASE] This may indicate a permission or timing issue")
+            return False
+
+        print(f"{'='*60}")
+        print(f"✅ [FIREBASE] SAVE COMPLETE - Recipe successfully saved and verified")
+        print(f"{'='*60}\n")
         return True
-        
+
     except Exception as e:
-        print(f"❌ [DEBUG] Firebase save failed: {str(e)}")
+        print(f"\n{'='*60}")
+        print(f"❌ [FIREBASE] SAVE FAILED - Exception occurred")
+        print(f"{'='*60}")
+        print(f"   [FIREBASE] Exception type: {type(e).__name__}")
+        print(f"   [FIREBASE] Exception message: {str(e)}")
+        print(f"   [FIREBASE] User ID at time of error: '{user_id}'")
+        print(f"   [FIREBASE] Recipe ID at time of error: '{recipe_id}'")
+
+        # Print full traceback for debugging
+        import traceback
+        print(f"   [FIREBASE] Full traceback:")
+        print(traceback.format_exc())
+        print(f"{'='*60}\n")
         return False
 
 async def get_recipe_from_firebase(user_id: str, recipe_id: str) -> dict:
@@ -273,75 +336,89 @@ async def get_recipe_from_firebase(user_id: str, recipe_id: str) -> dict:
 
 async def process_recipe_background(url: str, device_token: str, user_id: str, job_id: str):
     """Background task to parse recipe and send silent push with Firebase storage"""
-    print(f"🚀 [DEBUG] Background task STARTED for job {job_id}")
-    print(f"   [DEBUG] Task running in event loop: {id(asyncio.get_event_loop())}")
-    print(f"   [DEBUG] URL: {url}")
-    print(f"   [DEBUG] Device token: {device_token[:8]}...")
-    print(f"   [DEBUG] User ID: {user_id}")
-    
+    print(f"\n{'='*60}")
+    print(f"🚀 [BACKGROUND] TASK STARTED for job {job_id}")
+    print(f"{'='*60}")
+    print(f"⏱️  [BACKGROUND] Task running in event loop: {id(asyncio.get_event_loop())}")
+
+    # Log user_id immediately at the start of background task
+    print(f"👤 [BACKGROUND] User ID received in background task: '{user_id}'")
+    print(f"   [BACKGROUND] User ID type: {type(user_id)}")
+    print(f"   [BACKGROUND] User ID length: {len(user_id) if user_id else 0}")
+    print(f"   [BACKGROUND] User ID valid: {bool(user_id and user_id.strip())}")
+
+    print(f"📋 [BACKGROUND] URL: {url}")
+    print(f"📱 [BACKGROUND] Device token: {device_token[:8]}...")
+
     try:
         start_time = time.time()
-        print(f"⏱️  [DEBUG] Background processing timer started")
-        
+
         # Determine parser type
         parser_type = determine_parser_type(url)
-        print(f"📱 [DEBUG] Parser type determined: {parser_type}")
-        
+        print(f"\n📱 [BACKGROUND] Parser type determined: {parser_type}")
+
         # Parse recipe using existing logic - handle different return formats
-        print(f"🔄 [DEBUG] Starting recipe parsing with {parser_type} parser...")
-        
+        print(f"🔄 [BACKGROUND] Starting recipe parsing with {parser_type} parser...")
+
         if parser_type == "instagram":
-            print(f"   [DEBUG] Instagram parser: Running in thread pool executor...")
+            print(f"   [BACKGROUND] Instagram parser: Running in thread pool executor...")
             # Instagram parser is sync, so run in thread pool to avoid blocking
             loop = asyncio.get_event_loop()
-            print(f"   [DEBUG] Got event loop: {id(loop)}")
-            
+            print(f"   [BACKGROUND] Got event loop: {id(loop)}")
+
             recipe_json = await loop.run_in_executor(
-                None, 
-                instagram_parser.parse_instagram_recipe_to_json, 
+                None,
+                instagram_parser.parse_instagram_recipe_to_json,
                 url
             )
-            print(f"   [DEBUG] Instagram parser completed, JSON length: {len(recipe_json)} chars")
-            
+            print(f"   [BACKGROUND] Instagram parser completed, JSON length: {len(recipe_json)} chars")
+
             # Instagram parser returns JSON string directly
             recipe_data = json.loads(recipe_json)
-            print(f"   [DEBUG] Instagram JSON parsed successfully, recipe title: {recipe_data.get('title', 'Unknown')}")
+            print(f"   [BACKGROUND] Instagram JSON parsed successfully, recipe title: {recipe_data.get('title', 'Unknown')}")
             parser_method = "Instagram"
-            
+
         else:
-            print(f"   [DEBUG] Site parser: Calling async parse_single_recipe_url...")
+            print(f"   [BACKGROUND] Site parser: Calling async parse_single_recipe_url...")
             # Site parser is already async - returns dict with success status
             result = await parse_single_recipe_url(url)
-            print(f"   [DEBUG] Site parser completed, success: {result.get('success', False)}")
-            
+            print(f"   [BACKGROUND] Site parser completed, success: {result.get('success', False)}")
+
             if result["success"]:
                 # Extract JSON string from site parser response
                 recipe_json = result["processed_json"]
-                print(f"   [DEBUG] Site parser JSON extracted, length: {len(recipe_json)} chars")
-                
+                print(f"   [BACKGROUND] Site parser JSON extracted, length: {len(recipe_json)} chars")
+
                 recipe_data = json.loads(recipe_json)
-                print(f"   [DEBUG] Site parser JSON parsed successfully, recipe title: {recipe_data.get('title', 'Unknown')}")
+                print(f"   [BACKGROUND] Site parser JSON parsed successfully, recipe title: {recipe_data.get('title', 'Unknown')}")
                 parser_method = "RecipeSite"
             else:
                 error_msg = result.get('error', 'Unknown parsing error')
-                print(f"   [DEBUG] Site parser failed with error: {error_msg}")
+                print(f"   [BACKGROUND] Site parser failed with error: {error_msg}")
                 raise Exception(f"Site parser failed: {error_msg}")
-        
-        print(f"✅ [DEBUG] Recipe parsing completed successfully")
-        print(f"   [DEBUG] Recipe has {len(recipe_data.get('ingredients', []))} ingredients")
-        print(f"   [DEBUG] Recipe has {len(recipe_data.get('directions', []))} steps")
-        
+
+        print(f"\n✅ [BACKGROUND] Recipe parsing completed successfully")
+        print(f"   [BACKGROUND] Recipe title: '{recipe_data.get('title', 'Unknown')}'")
+        print(f"   [BACKGROUND] Recipe has {len(recipe_data.get('ingredients', []))} ingredients")
+        print(f"   [BACKGROUND] Recipe has {len(recipe_data.get('directions', []))} steps")
+
         # Generate unique recipe ID
         recipe_id = generate_recipe_id()
-        print(f"🆔 [DEBUG] Generated recipe ID: {recipe_id}")
-        
+        print(f"\n🆔 [BACKGROUND] Generated recipe ID: {recipe_id}")
+
         # Save complete recipe to Firebase
-        print(f"💾 [DEBUG] Saving recipe to Firebase...")
+        print(f"\n💾 [BACKGROUND] About to call save_recipe_to_firebase()...")
+        print(f"   [BACKGROUND] Passing user_id: '{user_id}'")
+        print(f"   [BACKGROUND] Passing recipe_id: '{recipe_id}'")
+        print(f"   [BACKGROUND] Recipe data has {len(recipe_data)} keys")
+
         firebase_success = await save_recipe_to_firebase(user_id, recipe_id, recipe_data)
-        
+
+        print(f"\n📊 [BACKGROUND] Firebase save result: {firebase_success}")
+
         if firebase_success:
             # Create minimal silent push payload (no full recipe data)
-            print(f"🔔 [DEBUG] Creating minimal push payload...")
+            print(f"\n🔔 [BACKGROUND] Firebase save succeeded, creating push notification...")
             push_payload = {
                 "aps": {
                     "content-available": 1
@@ -352,32 +429,42 @@ async def process_recipe_background(url: str, device_token: str, user_id: str, j
                     "action": "refresh_collection"
                 }
             }
-            print(f"   [DEBUG] Minimal push payload created, size: {len(json.dumps(push_payload))} chars")
-            
+            print(f"   [BACKGROUND] Push payload created, size: {len(json.dumps(push_payload))} chars")
+
             # Send minimal silent push
-            print(f"📤 [DEBUG] Attempting to send minimal silent push...")
+            print(f"📤 [BACKGROUND] Sending silent push notification...")
             push_success = await send_silent_push(device_token, push_payload)
-            print(f"   [DEBUG] Silent push result: {push_success}")
+            print(f"   [BACKGROUND] Silent push result: {push_success}")
         else:
-            print(f"❌ [DEBUG] Firebase save failed - skipping push notification")
+            print(f"\n❌ [BACKGROUND] Firebase save FAILED - skipping push notification")
+            print(f"   [BACKGROUND] User will NOT be notified of this recipe")
             push_success = False
-        
+
         elapsed = time.time() - start_time
-        print(f"✅ [DEBUG] Background processing complete for job {job_id} in {elapsed:.2f}s")
-        
+        print(f"\n{'='*60}")
+        print(f"✅ [BACKGROUND] Processing complete for job {job_id} in {elapsed:.2f}s")
+
         if not push_success:
-            print(f"⚠️  [DEBUG] Recipe parsed successfully but push notification failed for job {job_id}")
+            print(f"⚠️  [BACKGROUND] Recipe parsed successfully but push notification failed")
         else:
-            print(f"🎉 [DEBUG] Complete success! Recipe parsed AND push notification sent for job {job_id}")
-            
+            print(f"🎉 [BACKGROUND] Complete success! Recipe parsed AND push sent")
+        print(f"{'='*60}\n")
+
     except Exception as e:
-        print(f"❌ [DEBUG] Background processing FAILED for job {job_id}")
-        print(f"   [DEBUG] Exception type: {type(e).__name__}")
-        print(f"   [DEBUG] Exception message: {str(e)}")
-        print(f"   [DEBUG] Exception occurred in background task")
-        
+        print(f"\n{'='*60}")
+        print(f"❌ [BACKGROUND] PROCESSING FAILED for job {job_id}")
+        print(f"{'='*60}")
+        print(f"   [BACKGROUND] Exception type: {type(e).__name__}")
+        print(f"   [BACKGROUND] Exception message: {str(e)}")
+        print(f"   [BACKGROUND] User ID at time of error: '{user_id}'")
+
+        # Print full traceback
+        import traceback
+        print(f"   [BACKGROUND] Full traceback:")
+        print(traceback.format_exc())
+
         # Send error push with proper async context
-        print(f"🔔 [DEBUG] Attempting to send error push notification...")
+        print(f"\n🔔 [BACKGROUND] Attempting to send error push notification...")
         error_payload = {
             "aps": {
                 "content-available": 1
@@ -388,14 +475,16 @@ async def process_recipe_background(url: str, device_token: str, user_id: str, j
                 "details": str(e)
             }
         }
-        
+
         try:
             error_push_success = await send_silent_push(device_token, error_payload)
-            print(f"   [DEBUG] Error push result: {error_push_success}")
+            print(f"   [BACKGROUND] Error push result: {error_push_success}")
         except Exception as push_error:
-            print(f"❌ [DEBUG] Error push ALSO failed for job {job_id}: {str(push_error)}")
-            
-    print(f"🏁 [DEBUG] Background task FINISHED for job {job_id}")
+            print(f"❌ [BACKGROUND] Error push ALSO failed: {str(push_error)}")
+
+        print(f"{'='*60}\n")
+
+    print(f"🏁 [BACKGROUND] Task FINISHED for job {job_id}\n")
 
 @app.get("/")
 async def root():
@@ -680,33 +769,48 @@ async def queue_recipe_silent_push(request: SilentPushRequest, background_tasks:
     Returns immediately while processing happens in background.
     """
     try:
+        print(f"\n{'='*60}")
+        print(f"📥 [SILENT-PUSH] NEW REQUEST RECEIVED")
+        print(f"{'='*60}")
+
+        # Log user_id FIRST (critical for debugging)
+        print(f"👤 [SILENT-PUSH] User ID from request: '{request.userId}'")
+        print(f"   [SILENT-PUSH] User ID type: {type(request.userId)}")
+        print(f"   [SILENT-PUSH] User ID length: {len(request.userId) if request.userId else 0}")
+
         # Validate URL format
         if not request.url.strip():
             raise HTTPException(status_code=400, detail="URL is required")
-        
+
         # Add https if missing
         if not request.url.startswith(('http://', 'https://')):
             request.url = f"https://{request.url}"
-        
+
         # Validate device token
         if not request.deviceToken.strip():
             raise HTTPException(status_code=400, detail="Device token is required")
-        
+
+        # Validate user ID
+        if not request.userId or request.userId.strip() == '':
+            print(f"❌ [SILENT-PUSH] User ID is EMPTY or missing!")
+            raise HTTPException(status_code=400, detail="User ID is required")
+
         # DNS validation
         if not await is_valid_domain(request.url):
             raise HTTPException(status_code=400, detail="Invalid or unreachable URL domain")
-        
+
         # Generate job ID
         job_id = str(uuid.uuid4())
-        
-        print(f"📋 [DEBUG] Queuing recipe processing job {job_id}")
-        print(f"   [DEBUG] URL: {request.url}")
-        print(f"   [DEBUG] Device: {request.deviceToken[:8]}...")
-        print(f"   [DEBUG] Source: {request.source}")
-        print(f"   [DEBUG] Main event loop: {id(asyncio.get_event_loop())}")
-        
+
+        print(f"📋 [SILENT-PUSH] Queuing recipe processing job {job_id}")
+        print(f"   [SILENT-PUSH] URL: {request.url}")
+        print(f"   [SILENT-PUSH] Device: {request.deviceToken[:8]}...")
+        print(f"   [SILENT-PUSH] User ID being passed: '{request.userId}'")
+        print(f"   [SILENT-PUSH] Source: {request.source}")
+        print(f"   [SILENT-PUSH] Main event loop: {id(asyncio.get_event_loop())}")
+
         # Add background task with user ID
-        print(f"🔄 [DEBUG] Adding background task to FastAPI...")
+        print(f"🔄 [SILENT-PUSH] Adding background task to FastAPI...")
         background_tasks.add_task(
             process_recipe_background,
             request.url,
@@ -714,20 +818,20 @@ async def queue_recipe_silent_push(request: SilentPushRequest, background_tasks:
             request.userId,
             job_id
         )
-        print(f"   [DEBUG] Background task added successfully")
-        
-        print(f"✅ [DEBUG] Returning success response for job {job_id}")
+        print(f"✅ [SILENT-PUSH] Background task added successfully")
+        print(f"{'='*60}\n")
+
         return SilentPushResponse(
             success=True,
             message="Recipe queued for background processing",
             jobId=job_id
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
         error_message = str(e)
-        print(f"❌ Silent Push Queue Error: {error_message}")
+        print(f"❌ [SILENT-PUSH] Queue Error: {error_message}")
         raise HTTPException(status_code=500, detail=error_message)
 
 # ============================================================================
