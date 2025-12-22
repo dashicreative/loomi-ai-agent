@@ -110,17 +110,23 @@ class RecipeSiteParser:
         async with httpx.AsyncClient(timeout=120.0) as client:
             try:
                 endpoint_url = f"https://api.apify.com/v2/acts/web.harvester~recipes-scraper/run-sync-get-dataset-items?token={self.apify_token}"
-                
+                print(f"🔌 [APIFY] Calling actor at: {endpoint_url[:80]}...")
+                print(f"🔌 [APIFY] Input: {actor_input}") 
                 response = await client.post(
                     endpoint_url,
                     json=actor_input,
                     headers={"Content-Type": "application/json"}
                 )
+
+                print(f"🔌 [APIFY] Response status: {response.status_code}")
+                print(f"🔌 [APIFY] Response preview: {str(response.text[:200])}")
                 response.raise_for_status()
                 
                 raw_results = response.json()
                 
+                print(f"🔌 [APIFY] Parsed {len(raw_results)} results")
                 if not raw_results or len(raw_results) == 0:
+                    print(f"❌ [APIFY] No data returned!")
                     return {
                         "success": False,
                         "error": "No data returned from Apify actor",
@@ -134,6 +140,8 @@ class RecipeSiteParser:
                 has_title = bool(recipe_data.get("title"))
                 has_ingredients = bool(recipe_data.get("ingredients"))
                 has_instructions = bool(recipe_data.get("instructions"))
+
+                print(f"✅ [APIFY] Validation: title={has_title}, ingredients={has_ingredients}, instructions={has_instructions}")
                 
                 return {
                     "success": has_title and has_ingredients and has_instructions,
@@ -146,11 +154,24 @@ class RecipeSiteParser:
                 }
                 
             except Exception as e:
-                return {
-                    "success": False,
-                    "error": f"Apify actor failed: {str(e)}",
-                    "raw_response": None
-                }
+              print(f"❌❌❌ [APIFY] EXCEPTION CAUGHT ❌❌❌")
+              print(f"❌ [APIFY] Exception type: {type(e).__name__}")
+              print(f"❌ [APIFY] Exception message: {str(e)}")
+              print(f"❌ [APIFY] Full traceback:")
+              import traceback
+              print(traceback.format_exc())
+
+              # Also log response details if it's an HTTP error
+              if hasattr(e, 'response'):
+                  print(f"❌ [APIFY] HTTP Response status: {e.response.status_code}")
+                  print(f"❌ [APIFY] HTTP Response body: {e.response.text[:500]}")
+
+              return {
+                  "success": False,
+                  "error": f"Apify actor failed: {str(e)}",
+                  "raw_response": None
+              }
+
 
 
 # Standalone function for API use
