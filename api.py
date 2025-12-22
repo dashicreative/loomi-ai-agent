@@ -598,6 +598,8 @@ async def parse_instagram_recipe(request: URLRequest):
 
 @app.post("/parse-site-recipe", response_model=ParseResponse)
 async def parse_site_recipe(request: URLRequest):
+    print(f"🔍 [PARSE-SITE] Received request: url={request.url}, userId={request.userId}")
+    print(f"🔍 [PARSE-SITE] Request type: {type(request)}")
     """
     Parse recipe website into structured recipe JSON.
     
@@ -725,7 +727,7 @@ async def send_support_message(request: SupportMessageRequest):
           email_body = f"""
   Ingredient(s) missed during ingredient enrichmentment. 
   {request.message}
-
+  /Users/agustin/Library/Mobile Documents/com~apple~CloudDocs/Loomi
   ---
   User Email: {request.userEmail or 'Not provided'}
   User ID: {request.userId or 'Not provided'}
