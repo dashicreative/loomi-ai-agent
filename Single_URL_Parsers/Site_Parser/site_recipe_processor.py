@@ -409,7 +409,106 @@ class SiteRecipeProcessor:
         except Exception as e:
             print(f"   ⚠️  Meal occasion extraction failed: {str(e)}, defaulting to 'Other'")
             return "Other"
-    
+
+    def rescue_failed_ingredient_parses(self, ingredients: List[Dict]) -> List[Dict]:
+        """
+        Use Gemini LLM to rescue ingredients that failed regex parsing.
+        Identifies ingredients with quantity="1" and unit="count" (likely failures),
+        then extracts the real quantity/unit from the name field.
+
+        Args:
+            ingredients: List of ingredient dicts (already editorial-cleaned)
+
+        Returns:
+            List of ingredient dictionaries with rescued quantity/unit/name
+        """
+        if not ingredients:
+            return []
+
+        # Identify failed parses (defaulted to "1 count")
+        failed_ingredients = []
+        failed_indices = []
+
+        for i, ingredient in enumerate(ingredients):
+            qty = ingredient.get("quantity", "")
+            unit = ingredient.get("unit", "")
+
+            # Heuristic: If quantity is "1" and unit is "count", likely a failed parse
+            # (unless the name is something clearly countable like "egg" or "apple")
+            if qty == "1" and unit == "count":
+                name = ingredient.get("name", "")
+                # Check if name still contains quantity/unit patterns (strong signal of failure)
+                if any(char.isdigit() for char in name) or any(u in name.lower() for u in ["cup", "oz", "lb", "tsp", "tbsp", "tablespoon", "teaspoon"]):
+                    failed_ingredients.append(name)
+                    failed_indices.append(i)
+
+        if not failed_ingredients:
+            print(f"   ✅ No failed parses detected to rescue")
+            return ingredients
+
+        print(f"   🚨 Detected {len(failed_ingredients)} failed parses, attempting rescue...")
+
+        # Format for LLM: semicolon-delimited list of ingredient names
+        failed_input = ";".join(failed_ingredients)
+
+        # Load rescue prompt
+        prompt_path = Path(__file__).parent / "llm_prompts" / "Failed_Parse_Rescue_Prompt.txt"
+
+        try:
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                prompt_template = f.read()
+
+            prompt = prompt_template.format(failed_ingredients=failed_input)
+
+        except FileNotFoundError:
+            raise Exception(f"Failed parse rescue prompt file not found: {prompt_path}")
+
+        # Call Gemini for rescue
+        print(f"   🔧 Rescuing failed parses with GEMINI...")
+        start_time = time.time()
+
+        llm_response = self.call_llm(prompt, max_tokens=1500)
+
+        elapsed = time.time() - start_time
+        print(f"   ✅ Failed parse rescue completed in {elapsed:.2f}s")
+
+        # Parse LLM response: "quantity|unit|name;quantity|unit|name"
+        rescued_ingredients = []
+        raw_rescued = llm_response.strip().split(';')
+
+        for raw_ingredient in raw_rescued:
+            ingredient_text = raw_ingredient.strip()
+            if not ingredient_text or '|' not in ingredient_text:
+                continue
+
+            parts = ingredient_text.split('|', 2)
+            if len(parts) == 3:
+                quantity, unit, name = parts
+                rescued_ingredients.append({
+                    "name": name.strip(),
+                    "quantity": quantity.strip(),
+                    "unit": unit.strip()
+                })
+
+        # Verify we got the expected number of rescues
+        if len(rescued_ingredients) != len(failed_indices):
+            print(f"   ⚠️  Expected {len(failed_indices)} rescues, got {len(rescued_ingredients)} - using partial results")
+
+        # Merge rescued results back into original ingredient list
+        result = ingredients.copy()
+        rescue_count = 0
+
+        for i, failed_idx in enumerate(failed_indices):
+            if i < len(rescued_ingredients):
+                original_name = ingredients[failed_idx]["name"]
+                rescued = rescued_ingredients[i]
+                result[failed_idx] = rescued
+                rescue_count += 1
+                print(f"   ✅ Rescued: '{original_name}' → {rescued['quantity']} {rescued['unit']} {rescued['name']}")
+
+        print(f"   🎯 Successfully rescued {rescue_count}/{len(failed_indices)} failed parses")
+        return result
+
     def process_ingredients_with_regex(self, ingredients_list: List[str]) -> List[Dict]:
         """
         Process ingredients using shared regex parser.
@@ -482,18 +581,17 @@ class SiteRecipeProcessor:
             clean_ingredients = clean_ingredients_future.result()
         
         print(f"   📊 Parallel LLM analysis complete - meal occasion: {meal_occasion}, ingredients: {len(clean_ingredients)}")
-        
-        # Enhanced recipe analysis (step-ingredient matching + meta step extraction)
+
+        # Enhanced recipe analysis (failed parse rescue + meta step extraction)
         print("   🔗 Running enhanced recipe analysis (GEMINI)...")
         start_time = time.time()
-        
-        # Run step-ingredient matching and meta step extraction in parallel
+
+        # Run failed parse rescue and meta step extraction in parallel
         with ThreadPoolExecutor(max_workers=2) as executor:
-            # Submit both analysis tasks (using cleaned ingredients)
-            step_ingredient_future = executor.submit(
-                self.step_ingredient_matcher.match_steps_with_ingredients,
-                clean_ingredients,
-                formatted_directions
+            # Submit both analysis tasks
+            rescue_future = executor.submit(
+                self.rescue_failed_ingredient_parses,
+                clean_ingredients
             )
             meta_step_future = executor.submit(
                 self.meta_step_extractor.extract_meta_steps,
@@ -501,13 +599,25 @@ class SiteRecipeProcessor:
                 formatted_directions,
                 key_fields["title"]
             )
-            
+
             # Get results
-            step_ingredient_result = step_ingredient_future.result()
+            rescued_ingredients = rescue_future.result()
             meta_step_result = meta_step_future.result()
-        
+
         elapsed = time.time() - start_time
         print(f"   ✅ Enhanced recipe analysis complete in {elapsed:.2f}s")
+
+        # Step-ingredient matching (uses rescued ingredients)
+        print("   🔗 Matching ingredients to steps (GEMINI)...")
+        step_start = time.time()
+
+        step_ingredient_result = self.step_ingredient_matcher.match_steps_with_ingredients(
+            rescued_ingredients,
+            formatted_directions
+        )
+
+        step_elapsed = time.time() - step_start
+        print(f"   ✅ Step-ingredient matching complete in {step_elapsed:.2f}s")
         
         # Step 5: Paraphrase directions for copyright compliance (final LLM call)
         print("   ✏️  Running directions paraphrasing (GEMINI)...")
@@ -542,7 +652,7 @@ class SiteRecipeProcessor:
         
         # Add image field (not in standard model yet)
         recipe_dict["image"] = key_fields["image"]
-        
-        print(f"   ✅ Final JSON: {len(clean_ingredients)} ingredients (cleaned), {len(paraphrased_directions)} steps (paraphrased), image included")
-        
+
+        print(f"   ✅ Final JSON: {len(rescued_ingredients)} ingredients (rescued & cleaned), {len(paraphrased_directions)} steps (paraphrased), image included")
+
         return format_standard_recipe_json(recipe_dict)
