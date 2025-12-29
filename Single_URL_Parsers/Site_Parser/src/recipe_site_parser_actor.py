@@ -101,76 +101,129 @@ class RecipeSiteParser:
             }
     
     async def _call_apify_actor(self, recipe_url: str) -> Dict:
-        """Call Apify recipe scraper actor (extracted from original logic)."""
-        
+        """Call Apify recipe scraper actor with retry logic for empty results."""
+
         actor_input = {
             "start_urls": [recipe_url]  # Working format
         }
-        
+
+        max_retries = 3
+        retry_delays = [1, 1, 1]  # Fast retries: 1s between each attempt
+
         async with httpx.AsyncClient(timeout=120.0) as client:
-            try:
-                endpoint_url = f"https://api.apify.com/v2/acts/web.harvester~recipes-scraper/run-sync-get-dataset-items?token={self.apify_token}"
-                print(f"🔌 [APIFY] Calling actor at: {endpoint_url[:80]}...")
-                print(f"🔌 [APIFY] Input: {actor_input}") 
-                response = await client.post(
-                    endpoint_url,
-                    json=actor_input,
-                    headers={"Content-Type": "application/json"}
-                )
+            for attempt in range(1, max_retries + 1):
+                try:
+                    endpoint_url = f"https://api.apify.com/v2/acts/web.harvester~recipes-scraper/run-sync-get-dataset-items?token={self.apify_token}"
 
-                print(f"🔌 [APIFY] Response status: {response.status_code}")
-                print(f"🔌 [APIFY] Response preview: {str(response.text[:200])}")
-                response.raise_for_status()
-                
-                raw_results = response.json()
-                
-                print(f"🔌 [APIFY] Parsed {len(raw_results)} results")
-                if not raw_results or len(raw_results) == 0:
-                    print(f"❌ [APIFY] No data returned!")
+                    if attempt == 1:
+                        print(f"🔌 [APIFY] Calling actor at: {endpoint_url[:80]}...")
+                        print(f"🔌 [APIFY] Input: {actor_input}")
+                    else:
+                        print(f"🔄 [APIFY] Retry attempt {attempt}/{max_retries}...")
+
+                    response = await client.post(
+                        endpoint_url,
+                        json=actor_input,
+                        headers={"Content-Type": "application/json"}
+                    )
+
+                    print(f"🔌 [APIFY] Response status: {response.status_code}")
+                    print(f"🔌 [APIFY] Response preview: {str(response.text[:200])}")
+                    response.raise_for_status()
+
+                    raw_results = response.json()
+
+                    print(f"🔌 [APIFY] Parsed {len(raw_results)} results")
+
+                    # Check if empty results
+                    if not raw_results or len(raw_results) == 0:
+                        print(f"⚠️ [APIFY] Empty results on attempt {attempt}/{max_retries}")
+
+                        # If not last attempt, wait and retry
+                        if attempt < max_retries:
+                            wait_time = retry_delays[attempt - 1]
+                            print(f"⏳ [APIFY] Waiting {wait_time}s before retry...")
+                            await asyncio.sleep(wait_time)
+                            continue  # Retry
+                        else:
+                            # Last attempt failed
+                            print(f"❌ [APIFY] All {max_retries} attempts returned empty results")
+                            return {
+                                "success": False,
+                                "error": f"No data returned from Apify actor after {max_retries} attempts",
+                                "raw_response": None
+                            }
+
+                    # Got results! Validate and return
+                    recipe_data = raw_results[0]
+
+                    # Basic validation
+                    has_title = bool(recipe_data.get("title"))
+                    has_ingredients = bool(recipe_data.get("ingredients"))
+                    has_instructions = bool(recipe_data.get("instructions"))
+
+                    print(f"✅ [APIFY] Validation: title={has_title}, ingredients={has_ingredients}, instructions={has_instructions}")
+
+                    if attempt > 1:
+                        print(f"🎉 [APIFY] Success on attempt {attempt}!")
+
                     return {
-                        "success": False,
-                        "error": "No data returned from Apify actor",
-                        "raw_response": None
+                        "success": has_title and has_ingredients and has_instructions,
+                        "raw_response": recipe_data,
+                        "validation": {
+                            "has_title": has_title,
+                            "has_ingredients": has_ingredients,
+                            "has_instructions": has_instructions
+                        },
+                        "attempts": attempt  # Track which attempt succeeded
                     }
-                
-                # Get first result
-                recipe_data = raw_results[0]
-                
-                # Basic validation
-                has_title = bool(recipe_data.get("title"))
-                has_ingredients = bool(recipe_data.get("ingredients"))
-                has_instructions = bool(recipe_data.get("instructions"))
 
-                print(f"✅ [APIFY] Validation: title={has_title}, ingredients={has_ingredients}, instructions={has_instructions}")
-                
-                return {
-                    "success": has_title and has_ingredients and has_instructions,
-                    "raw_response": recipe_data,
-                    "validation": {
-                        "has_title": has_title,
-                        "has_ingredients": has_ingredients,
-                        "has_instructions": has_instructions
-                    }
-                }
-                
-            except Exception as e:
-              print(f"❌❌❌ [APIFY] EXCEPTION CAUGHT ❌❌❌")
-              print(f"❌ [APIFY] Exception type: {type(e).__name__}")
-              print(f"❌ [APIFY] Exception message: {str(e)}")
-              print(f"❌ [APIFY] Full traceback:")
-              import traceback
-              print(traceback.format_exc())
+                except Exception as e:
+                    print(f"❌❌❌ [APIFY] EXCEPTION CAUGHT on attempt {attempt}/{max_retries} ❌❌❌")
+                    print(f"❌ [APIFY] Exception type: {type(e).__name__}")
+                    print(f"❌ [APIFY] Exception message: {str(e)}")
+                    print(f"❌ [APIFY] Full traceback:")
+                    import traceback
+                    print(traceback.format_exc())
 
-              # Also log response details if it's an HTTP error
-              if hasattr(e, 'response'):
-                  print(f"❌ [APIFY] HTTP Response status: {e.response.status_code}")
-                  print(f"❌ [APIFY] HTTP Response body: {e.response.text[:500]}")
+                    # Also log response details if it's an HTTP error
+                    if hasattr(e, 'response'):
+                        print(f"❌ [APIFY] HTTP Response status: {e.response.status_code}")
+                        print(f"❌ [APIFY] HTTP Response body: {e.response.text[:500]}")
 
-              return {
-                  "success": False,
-                  "error": f"Apify actor failed: {str(e)}",
-                  "raw_response": None
-              }
+                    # If not last attempt and it's a transient error, retry
+                    if attempt < max_retries and self._is_retryable_error(e):
+                        wait_time = retry_delays[attempt - 1]
+                        print(f"⏳ [APIFY] Retrying after {wait_time}s...")
+                        await asyncio.sleep(wait_time)
+                        continue  # Retry
+                    else:
+                        # Don't retry - return error
+                        return {
+                            "success": False,
+                            "error": f"Apify actor failed: {str(e)}",
+                            "raw_response": None
+                        }
+
+            # Should never reach here, but just in case
+            return {
+                "success": False,
+                "error": "Unexpected error in retry loop",
+                "raw_response": None
+            }
+
+    def _is_retryable_error(self, error: Exception) -> bool:
+        """Determine if an error is transient and worth retrying."""
+        # Retry on network errors, timeouts, and 5xx server errors
+        if isinstance(error, (httpx.TimeoutException, httpx.NetworkError)):
+            return True
+
+        if hasattr(error, 'response') and error.response is not None:
+            # Retry on server errors (500-599) and rate limits (429)
+            status = error.response.status_code
+            return status >= 500 or status == 429
+
+        return False  # Don't retry other errors
 
 
 
