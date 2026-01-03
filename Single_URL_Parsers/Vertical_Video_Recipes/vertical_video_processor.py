@@ -19,10 +19,14 @@ from recipe_quality_controller import RecipeQualityController
 
 # Import Instagram modules temporarily (will be moved to shared later)
 sys.path.insert(0, str(Path(__file__).parent.parent / "Instagram_Parser" / "src"))
-from Recipe_Structurer import RecipeStructurer
-from Meta_Step_Extractor import MetaStepExtractor
-from Step_Ingredient_Matcher import StepIngredientMatcher
-from Enhanced_JSON_Creator import create_enhanced_recipe_json
+sys.path.insert(0, str(Path(__file__).parent.parent / "Meta_Step_Extraction"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "Step_Ingredient_Matching"))
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from instagram_json_structuring import RecipeStructurer
+from meta_step_extractor import MetaStepExtractor
+from step_ingredient_matcher import StepIngredientMatcher
+from json_recipe_model import create_enhanced_recipe_json
 
 
 class VerticalVideoProcessor:
