@@ -1,0 +1,73 @@
+Your job is to determine the meal occasion for this recipe based on the content provided.
+
+CRITICAL RULES:
+1. You MUST return ONLY one of these six options: Breakfast, Lunch, Dinner, Dessert, Snack, Other
+2. If ANY of these meal occasions (Breakfast, Lunch, Dinner, Dessert, Snack) are explicitly mentioned in the title, description, or anywhere in the recipe content, return that exact meal occasion immediately
+3. Do not add explanations, reasoning, or any other text - just return the single meal occasion word
+
+MEAL OCCASION CATEGORIES:
+
+Breakfast:
+- Eggs (scrambled, fried, poached, etc.)
+- Pancakes, waffles, French toast
+- Bacon, sausage, ham
+- Cereal, oatmeal, grits
+- Hash browns, breakfast potatoes  
+- Coffee, tea, breakfast beverages
+- Bagels, croissants, breakfast pastries
+- Breakfast sandwiches or wraps
+
+Lunch:
+- Sandwiches (any type)
+- Soups (especially when served as main meal)
+- Salads (substantial/main course salads)
+- Wraps, paninis, burgers
+- Light pasta dishes
+- Grain bowls, Buddha bowls
+- Lunch-sized portions
+
+Dinner:
+- Steak, roasts, large meat dishes
+- Full pasta dishes, casseroles
+- Hearty soups and stews
+- Complete meals with multiple components
+- Grilled or roasted main courses
+- Rice dishes, risottos
+- Traditional dinner entrées
+
+Dessert:
+- Cakes, cupcakes, muffins
+- Ice cream, frozen treats
+- Candy, chocolates, sweets
+- Pies, tarts, pastries
+- Cookies, brownies
+- Puddings, mousses
+- Any sweet treats
+
+Snack:
+- Protein bites, energy balls
+- Chips, crackers, dips
+- Small portions meant for between meals
+- Trail mix, nuts
+- Fresh fruit preparations
+- Quick bites, appetizers
+- Raw vegetables with dips
+
+Other:
+- Marinades, sauces, dressings
+- Spice blends, seasoning mixes
+- Beverages (non-breakfast drinks)
+- Condiments, preserves
+- Base preparations (bread dough, pie crust)
+- Items that don't constitute a meal
+
+EXAMPLES:
+- "Delicious breakfast pancakes" → Breakfast
+- "Perfect dinner steak" → Dinner  
+- "Quick lunch salad" → Lunch
+- "Amazing chocolate cake" → Dessert
+- "Protein energy bites" → Snack
+- "Homemade BBQ sauce" → Other
+
+Content to analyze:
+{combined_content}

@@ -22,11 +22,13 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent.parent / "Step_Ingredient_Matching"))
 sys.path.append(str(Path(__file__).parent.parent.parent / "Meta_Step_Extraction"))
 sys.path.append(str(Path(__file__).parent.parent.parent / "Recipe_Quality_Control"))
+sys.path.append(str(Path(__file__).parent.parent.parent / "Vertical_Video_Recipes"))
 
 # Import shared modules
 from step_ingredient_matcher import StepIngredientMatcher
 from meta_step_extractor import MetaStepExtractor
 from recipe_quality_controller import RecipeQualityController
+from vertical_video_processor import VerticalVideoProcessor
 
 # Import enhanced JSON model
 sys.path.append(str(Path(__file__).parent.parent.parent))
@@ -100,6 +102,9 @@ class InstagramTranscriber:
         self.step_ingredient_matcher = StepIngredientMatcher(self.google_model)
         self.meta_step_extractor = MetaStepExtractor(self.google_model)
         self.quality_controller = RecipeQualityController(self.google_model)
+
+        # Initialize shared vertical video processor (handles steps 5-10)
+        self.vertical_video_processor = VerticalVideoProcessor(self.google_model)
     
     def call_llm(self, prompt: str, provider: str = "openai", max_tokens: int = 1200) -> str:
         """
@@ -1002,139 +1007,33 @@ class InstagramTranscriber:
             timings['metadata_formatting'] = time.time() - step_start
             print(f"   ✅ Metadata formatted ({timings['metadata_formatting']:.2f}s)")
             
-            # Step 5: Combine content for LLM parsing
-            print("🔗 Step 5: Combining content...")
-            step_start = time.time()
-            combined_content = self.combine_content_for_parsing(transcript, metadata)
-            timings['content_combination'] = time.time() - step_start
-            print(f"   ✅ Content combined ({timings['content_combination']:.2f}s)")
-            
-            # Step 6: Run parallel recipe extraction
-            print("🤖 Step 6: Running parallel LLM recipe extraction (GEMINI)...")
-            step_start = time.time()
-            ingredients_output, directions_output, meal_occasion_output = self.parse_recipe_parallel(combined_content)
-            timings['llm_parsing'] = time.time() - step_start
-            print(f"   ✅ LLM parsing complete ({timings['llm_parsing']:.2f}s)")
-            
-            # Step 6.5: Parse LLM outputs into structured format
-            print("📋 Step 6.5: Parsing LLM outputs...")
+            # Steps 5-10: Use shared VerticalVideoProcessor
+            print("\n🎬 Steps 5-10: Processing with shared Vertical Video Processor...")
             step_start = time.time()
 
-            # Parse LLM outputs into structured format for analysis
-            parsed_ingredients = self.recipe_structurer.parse_ingredients(ingredients_output)
-            title, parsed_directions = self.recipe_structurer.parse_directions(directions_output)
-
-            # Convert ParsedIngredient objects to dict format for quality control
-            ingredients_for_quality_control = [
-                {
-                    "name": ing.name,
-                    "quantity": ing.quantity,
-                    "unit": ing.unit
-                }
-                for ing in parsed_ingredients
-            ]
-
-            timings['parsing'] = time.time() - step_start
-            print(f"   ✅ Parsing complete ({timings['parsing']:.2f}s)")
-
-            # Step 7: PARALLEL BATCH 2 - Quality Control (clean ingredients + paraphrase directions)
-            print("🧹 Step 7: Running quality control (GEMINI)...")
-            step_start = time.time()
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-                # Submit both quality control tasks
-                clean_ingredients_future = executor.submit(
-                    self.quality_controller.clean_ingredients_with_llm,
-                    ingredients_for_quality_control
-                )
-                paraphrase_directions_future = executor.submit(
-                    self.quality_controller.paraphrase_directions_with_llm,
-                    parsed_directions
-                )
-
-                # Get results
-                cleaned_ingredients = clean_ingredients_future.result()
-                paraphrased_directions = paraphrase_directions_future.result()
-
-            timings['quality_control'] = time.time() - step_start
-            print(f"   ✅ Quality control complete ({timings['quality_control']:.2f}s)")
-
-            # Step 8: PARALLEL BATCH 3 - Rescue + Meta Steps
-            print("🔧 Step 8: Running rescue + meta step analysis (GEMINI)...")
-            step_start = time.time()
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-                # Submit rescue and meta step tasks
-                rescue_future = executor.submit(
-                    self.quality_controller.rescue_failed_ingredient_parses,
-                    cleaned_ingredients
-                )
-                meta_step_future = executor.submit(
-                    self.meta_step_extractor.extract_meta_steps,
-                    cleaned_ingredients,  # Use cleaned ingredients for context
-                    paraphrased_directions,  # Use paraphrased directions (Option B!)
-                    title
-                )
-
-                # Get results
-                rescued_ingredients = rescue_future.result()
-                meta_step_result = meta_step_future.result()  # Already has paraphrased text!
-
-            timings['rescue_and_meta'] = time.time() - step_start
-            print(f"   ✅ Rescue + meta step analysis complete ({timings['rescue_and_meta']:.2f}s)")
-
-            # Step 9: SEQUENTIAL - Step-Ingredient Matching (uses rescued ingredients)
-            print("🔗 Step 9: Matching ingredients to steps (GEMINI)...")
-            step_start = time.time()
-
-            step_ingredient_result = self.step_ingredient_matcher.match_steps_with_ingredients(
-                rescued_ingredients,  # Use final rescued ingredients
-                paraphrased_directions  # Use paraphrased directions
-            )
-
-            timings['step_matching'] = time.time() - step_start
-            print(f"   ✅ Step-ingredient matching complete ({timings['step_matching']:.2f}s)")
-
-            # Step 10: Structure into enhanced JSON format
-            print("📦 Step 10: Structuring into enhanced JSON...")
-            step_start = time.time()
-            
-            # Create enhanced recipe JSON with step-ingredient matching and meta steps
-            recipe_dict = create_enhanced_recipe_json(
-                title=title,
-                parser_method="Instagram",
+            recipe_json = self.vertical_video_processor.process_recipe(
+                transcript=transcript,
+                metadata=metadata,
                 source_url=instagram_url,
-                step_ingredient_result=step_ingredient_result,
-                meta_step_result=meta_step_result,
-                image=apify_data.get("image_url", ""),
-                meal_occasion=meal_occasion_output,
-                servings=0  # Instagram videos rarely specify servings
+                parser_method="Instagram"
             )
-            
-            # Format to JSON string
-            import json
-            recipe_json = json.dumps(recipe_dict, indent=2, ensure_ascii=False)
-            timings['json_structuring'] = time.time() - step_start
-            print(f"   ✅ JSON structuring complete ({timings['json_structuring']:.2f}s)")
+
+            timings['vertical_video_processing'] = time.time() - step_start
+            print(f"   ✅ Vertical video processing complete ({timings['vertical_video_processing']:.2f}s)")
             
             # Calculate total time
             timings['total_time'] = time.time() - total_start
             
             # Display detailed timing breakdown
             print("\n" + "=" * 50)
-            print("⏱️  DETAILED TIMING BREAKDOWN (WITH QUALITY CONTROL)")
+            print("⏱️  DETAILED TIMING BREAKDOWN")
             print("=" * 50)
             print(f"🚀 Apify Data Extraction:  {timings['apify_extraction']:.2f}s ({timings['apify_extraction']/timings['total_time']*100:.1f}%)")
             print(f"🔽 Audio Download:         {timings['audio_download']:.2f}s ({timings['audio_download']/timings['total_time']*100:.1f}%)")
             print(f"🎤 Deepgram Transcription: {timings['transcription']:.2f}s ({timings['transcription']/timings['total_time']*100:.1f}%)")
             print(f"📋 Metadata Formatting:    {timings['metadata_formatting']:.2f}s ({timings['metadata_formatting']/timings['total_time']*100:.1f}%)")
-            print(f"🔗 Content Combination:    {timings['content_combination']:.2f}s ({timings['content_combination']/timings['total_time']*100:.1f}%)")
-            print(f"🤖 LLM Recipe Parsing:     {timings['llm_parsing']:.2f}s ({timings['llm_parsing']/timings['total_time']*100:.1f}%)")
-            print(f"📋 Output Parsing:         {timings['parsing']:.2f}s ({timings['parsing']/timings['total_time']*100:.1f}%)")
-            print(f"🧹 Quality Control:        {timings['quality_control']:.2f}s ({timings['quality_control']/timings['total_time']*100:.1f}%)")
-            print(f"🔧 Rescue + Meta Steps:    {timings['rescue_and_meta']:.2f}s ({timings['rescue_and_meta']/timings['total_time']*100:.1f}%)")
-            print(f"🔗 Step-Ingredient Match:  {timings['step_matching']:.2f}s ({timings['step_matching']/timings['total_time']*100:.1f}%)")
-            print(f"📦 JSON Structuring:       {timings['json_structuring']:.2f}s ({timings['json_structuring']/timings['total_time']*100:.1f}%)")
+            print(f"🎬 Recipe Processing:      {timings['vertical_video_processing']:.2f}s ({timings['vertical_video_processing']/timings['total_time']*100:.1f}%)")
+            print(f"   (LLM parsing, quality control, JSON structuring)")
             print(f"{'─' * 50}")
             print(f"🎯 TOTAL PROCESSING:       {timings['total_time']:.2f}s (100.0%)")
             
