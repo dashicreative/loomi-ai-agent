@@ -32,11 +32,13 @@ from psycopg2.extras import RealDictCursor
 sys.path.append(str(Path(__file__).parent / "Single_URL_Parsers" / "Instagram_Parser" / "src"))
 sys.path.append(str(Path(__file__).parent / "Single_URL_Parsers" / "Site_Parser" / "src"))
 sys.path.append(str(Path(__file__).parent / "Single_URL_Parsers" / "TikTok_Parser" / "src"))
+sys.path.append(str(Path(__file__).parent / "Single_URL_Parsers" / "Facebook_Parser" / "src"))
 
 # Import parsers
 from Instagram_parser import InstagramTranscriber
 from recipe_site_parser_actor import parse_single_recipe_url
 from TikTok_parser import TikTokTranscriber
+from Facebook_parser import FacebookTranscriber
 
 # Pydantic models
 class URLRequest(BaseModel):
@@ -96,6 +98,7 @@ app.add_middleware(
 # Initialize parsers (once at startup)
 instagram_parser = InstagramTranscriber()
 tiktok_parser = TikTokTranscriber()
+facebook_parser = FacebookTranscriber()
 
 # APNs configuration (for per-task client creation)
 apns_config = {
@@ -676,6 +679,103 @@ async def parse_tiktok_recipe(request: URLRequest):
         elif "deleted" in error_message.lower() or "not available" in error_message.lower() or "not found" in error_message.lower():
             status_code = 404
             user_message = "TikTok video not found or has been deleted"
+        elif "rate limit" in error_message.lower() or "too many requests" in error_message.lower():
+            status_code = 429
+            user_message = "Rate limit exceeded, please try again later"
+        elif "timeout" in error_message.lower():
+            status_code = 504
+            user_message = "Request timed out, please try again"
+        elif "api key" in error_message.lower() or "authentication" in error_message.lower():
+            status_code = 500
+            user_message = "Server configuration error"
+        else:
+            status_code = 500
+            user_message = f"Server error: {error_message}"
+
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "message": user_message,
+                "debug_info": detailed_error
+            }
+        )
+
+@app.post("/parse-facebook-recipe", response_model=ParseResponse)
+async def parse_facebook_recipe(request: URLRequest):
+    """
+    Parse Facebook video into structured recipe JSON.
+
+    Input: {"url": "https://www.facebook.com/watch/?v=123456789"}
+    Output: {"success": true, "recipe_json": "...", "elapsed_seconds": 12.5}
+    """
+    import traceback
+    import time
+
+    start_time = time.time()
+
+    try:
+        print(f"📘 Facebook Parse Request: {request.url}")
+
+        # Validate Facebook URL
+        if "facebook.com" not in request.url.lower():
+            raise HTTPException(status_code=400, detail="URL must be a Facebook video")
+
+        # DNS validation to check if domain exists
+        if not await is_valid_domain(request.url):
+            raise HTTPException(status_code=400, detail="Invalid or unreachable URL domain")
+
+        print("✅ URL validation passed")
+
+        # Check environment variables
+        required_env_vars = ["APIFY_API_KEY", "GOOGLE_GEMINI_KEY", "DEEPGRAM_WISPER_API"]
+        missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+        if missing_vars:
+            error_msg = f"Missing environment variables: {', '.join(missing_vars)}"
+            print(f"❌ Environment error: {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
+
+        print("✅ Environment variables check passed")
+
+        # Parse Facebook recipe (not async - runs in thread pool automatically)
+        print("🚀 Starting Facebook parser...")
+        recipe_json = facebook_parser.parse_facebook_recipe_to_json(request.url)
+
+        elapsed_seconds = time.time() - start_time
+        print(f"✅ Facebook parsing completed successfully in {elapsed_seconds:.2f}s")
+
+        return ParseResponse(
+            success=True,
+            recipe_json=recipe_json,
+            elapsed_seconds=elapsed_seconds
+        )
+
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        elapsed_seconds = time.time() - start_time
+        error_message = str(e)
+
+        # Log full traceback for debugging
+        print(f"❌ Facebook Parse Error after {elapsed_seconds:.2f}s: {error_message}")
+        print("📍 Full traceback:")
+        print(traceback.format_exc())
+
+        # Create detailed error response
+        detailed_error = {
+            "original_error": error_message,
+            "error_type": type(e).__name__,
+            "elapsed_seconds": elapsed_seconds,
+            "url": request.url
+        }
+
+        # Handle specific error cases with better status codes
+        if "private video" in error_message.lower() or "private account" in error_message.lower():
+            status_code = 403
+            user_message = "This Facebook video is private or from a private account"
+        elif "deleted" in error_message.lower() or "not available" in error_message.lower() or "not found" in error_message.lower():
+            status_code = 404
+            user_message = "Facebook video not found or has been deleted"
         elif "rate limit" in error_message.lower() or "too many requests" in error_message.lower():
             status_code = 429
             user_message = "Rate limit exceeded, please try again later"
