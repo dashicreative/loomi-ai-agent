@@ -1,0 +1,152 @@
+TASK: Extract quantity, unit, and ingredient name from ingredients that failed automatic parsing.
+
+You are receiving ingredients where the regex parser failed to extract proper quantity/unit information.
+These ingredients were defaulted to "1 count" but SOME may have quantity/unit embedded in the name.
+Your job: IF you find quantity/unit in the name, extract it and clean the name. OTHERWISE, leave as "1 count".
+
+INPUT FORMAT:
+You will receive a semicolon-delimited list of ingredient strings (just the name field).
+SOME ingredients will have quantity/unit embedded in them (like "15 oz. red sauce").
+SOME ingredients will NOT have quantity/unit and are legitimately "1 count" items (like "apple" or "egg").
+
+OUTPUT FORMAT:
+For each ingredient, return: quantity|unit|name
+Separate ingredients with semicolons.
+Example: 15|oz|red enchilada sauce;1|count|apple;1/2|cup|milk
+
+CORE REASONING PRINCIPLES:
+
+1. FIRST, CHECK IF QUANTITY/UNIT EXISTS IN THE NAME
+   - Look for numbers, fractions, or unit words (cup, oz, tablespoon, etc.)
+   - If NONE found → ingredient is legitimately "1 count", leave it as-is
+   - If found → proceed to extract
+
+2. IDENTIFY THE PRIMARY QUANTITY (if present)
+   - Look for the main quantity that tells you "how much" of this ingredient
+   - For nested quantities like "1 (15 oz.) can beans", use the CONTENT weight (15 oz), not the container count
+
+3. EXTRACT THE UNIT (if present)
+   - Common units: cup, cups, tablespoon, tablespoons, tbsp, teaspoon, tsp, oz, lb, lbs, g, kg
+   - Count units: count, piece, pieces, slice, slices, clove, cloves, can, jar, package, bag
+
+4. CLEAN THE NAME
+   - Remove ALL quantity/unit text from the name
+   - Remove preparation notes in parentheses: (diced), (drained), (minced), (rinsed)
+   - KEEP ingredient descriptors: "fresh", "yellow", "ripe", "diced" when it's part of the ingredient type
+
+5. PRESERVE QUANTITY FORMATS
+   - Whole numbers: "2", "10", "15"
+   - Fractions: "1/2", "1/4", "3/4"
+   - Mixed numbers with space: "1 1/2"
+   - Ranges: "1-2", "8-10"
+   - Decimals: "0.5", "1.5"
+
+REASONING EXAMPLES:
+
+Example 1: "10 fresh basil leaves"
+REASONING: "10" is quantity, "leaves" could be a unit but it's not standard, so use "count" for counting items
+OUTPUT: 10|count|fresh basil
+
+Example 2: "15 oz. red enchilada sauce"
+REASONING: "15" is quantity, "oz." is ounces (ignore the period), "red enchilada sauce" is the ingredient
+OUTPUT: 15|oz|red enchilada sauce
+
+Example 3: "1-2 tablespoons avocado oil"
+REASONING: "1-2" is a range quantity, "tablespoons" is the unit, "avocado oil" is the ingredient
+OUTPUT: 1-2|tablespoons|avocado oil
+
+Example 4: "1 (15 oz.) can black beans (drained and rinsed)"
+REASONING: This has nested quantities. The content weight is 15 oz (what you're actually using), not 1 can (just the container). Remove preparation notes.
+OUTPUT: 15|oz|black beans
+
+Example 5: "1 (4 oz.) can diced green chiles"
+REASONING: Content weight is 4 oz. "diced" is part of the ingredient type (diced chiles), so keep it in the name.
+OUTPUT: 4|oz|diced green chiles
+
+Example 6: "8 (8 inch) flour tortillas"
+REASONING: You need 8 tortillas (that's what you're counting). The "8 inch" is just a size descriptor, ignore it.
+OUTPUT: 8|count|flour tortillas
+
+Example 7: "Heaping 1/2 cup pizza sauce"
+REASONING: "Heaping" is an editorial descriptor (not a quantity). The real quantity is "1/2", unit is "cup".
+OUTPUT: 1/2|cup|pizza sauce
+
+Example 8: "1/2 yellow onion (diced)"
+REASONING: "1/2" is quantity, "onion" is not a standard unit so use "count". "yellow" is a descriptor (keep it). "(diced)" is preparation (remove it).
+OUTPUT: 1/2|count|yellow onion
+
+Example 9: "2 ripe peaches"
+REASONING: "2" is quantity, "peaches" is not a standard unit so use "count". "ripe" is a descriptor (keep it).
+OUTPUT: 2|count|ripe peaches
+
+Example 10: "1/2 garlic clove, minced"
+REASONING: "1/2" is quantity, "clove" is a standard unit for garlic. "minced" after the comma is preparation (remove it).
+OUTPUT: 1/2|clove|garlic
+
+Example 11: "3 large eggs"
+REASONING: "3" is quantity, "eggs" is not a standard unit so use "count". "large" is a descriptor (keep it).
+OUTPUT: 3|count|large eggs
+
+Example 12: "1 1/2 lbs chicken breast"
+REASONING: "1 1/2" is a mixed number quantity (note the space), "lbs" is pounds, "chicken breast" is the ingredient.
+OUTPUT: 1 1/2|lbs|chicken breast
+
+Example 13: "Pinch of salt"
+REASONING: "Pinch" is a non-standard quantity descriptor. Interpret as a small amount, use fraction.
+OUTPUT: 1/8|tsp|salt
+
+Example 14: "Handful fresh cilantro"
+REASONING: "Handful" is non-standard. For herbs, estimate as a reasonable amount.
+OUTPUT: 1/4|cup|fresh cilantro
+
+EXAMPLES WHERE NO EXTRACTION IS NEEDED (Leave as "1 count"):
+
+Example 15: "apple"
+REASONING: No quantity/unit in the name. This is legitimately "1 count apple".
+OUTPUT: 1|count|apple
+
+Example 16: "egg"
+REASONING: No quantity/unit in the name. This is legitimately "1 count egg".
+OUTPUT: 1|count|egg
+
+Example 17: "salt"
+REASONING: No quantity/unit in the name. Could be "to taste" or unspecified. Default to "1 count".
+OUTPUT: 1|count|salt
+
+Example 18: "lemon"
+REASONING: No quantity/unit in the name. This is legitimately "1 count lemon".
+OUTPUT: 1|count|lemon
+
+Example 19: "fresh parsley"
+REASONING: No quantity/unit in the name. "fresh" is a descriptor. Default to "1 count".
+OUTPUT: 1|count|fresh parsley
+
+Example 20: "sea salt"
+REASONING: No quantity/unit in the name. "sea" is a type descriptor. Default to "1 count".
+OUTPUT: 1|count|sea salt
+
+IMPORTANT: Some ingredients you receive may NOT have quantity/unit embedded.
+If you see a simple ingredient name with no numbers or unit words, output "1|count|name" unchanged.
+
+ACCEPTABLE UNITS (for reference):
+cup, cups, tablespoon, tablespoons, tbsp, teaspoon, tsp, ml, milliliter, milliliters, l, liter, liters,
+oz, ounce, ounces, lb, lbs, pound, pounds, g, gram, grams, kg, kilogram, kilograms,
+piece, pieces, slice, slices, clove, cloves, bunch, bunches, head, heads,
+can, cans, jar, jars, package, packages, bag, bags, count
+
+WHAT TO REMOVE FROM NAME:
+- Quantities: "1", "2", "1/2", "1-2", etc.
+- Units: "cups", "oz", "tablespoons", etc.
+- Parenthetical prep notes: "(diced)", "(minced)", "(drained and rinsed)"
+- Editorial descriptors before quantities: "Heaping", "Scant", "Generous"
+- Size descriptors in parentheses: "(8 inch)", "(medium)"
+
+WHAT TO KEEP IN NAME:
+- Ingredient type descriptors: "fresh basil", "yellow onion", "ripe peaches"
+- Ingredient states when part of the type: "diced green chiles" (diced is the product type)
+- Quality descriptors: "extra virgin olive oil", "kosher salt"
+
+Ingredients to rescue:
+{failed_ingredients}
+
+Output only quantity|unit|name format with semicolon delimiters (no explanations, no extra text):

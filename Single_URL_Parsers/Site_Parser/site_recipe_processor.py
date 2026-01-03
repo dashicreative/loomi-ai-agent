@@ -25,8 +25,10 @@ from json_recipe_model import create_enhanced_recipe_json, format_standard_recip
 # Import enhanced analysis modules
 sys.path.append(str(Path(__file__).parent.parent / "Step_Ingredient_Matching"))
 sys.path.append(str(Path(__file__).parent.parent / "Meta_Step_Extraction"))
+sys.path.append(str(Path(__file__).parent.parent / "Recipe_Quality_Control"))
 from step_ingredient_matcher import StepIngredientMatcher
 from meta_step_extractor import MetaStepExtractor
+from recipe_quality_controller import RecipeQualityController
 
 # Load environment variables
 load_dotenv()
@@ -52,10 +54,11 @@ class SiteRecipeProcessor:
         
         # Initialize shared ingredient parser
         self.ingredient_parser = IngredientParser()
-        
+
         # Initialize enhanced analysis modules
         self.step_ingredient_matcher = StepIngredientMatcher(self.google_model)
         self.meta_step_extractor = MetaStepExtractor(self.google_model)
+        self.quality_controller = RecipeQualityController(self.google_model)
     
     def call_llm(self, prompt: str, max_tokens: int = 1200) -> str:
         """
@@ -573,8 +576,8 @@ class SiteRecipeProcessor:
             # Submit all three LLM tasks
             instructions_future = executor.submit(self.format_instructions_with_llm, key_fields["instructions"])
             meal_occasion_future = executor.submit(self.extract_meal_occasion, combined_content)
-            clean_ingredients_future = executor.submit(self.clean_ingredients_with_llm, processed_ingredients)
-            
+            clean_ingredients_future = executor.submit(self.quality_controller.clean_ingredients_with_llm, processed_ingredients)
+
             # Get results
             formatted_directions = instructions_future.result()
             meal_occasion = meal_occasion_future.result()
@@ -590,7 +593,7 @@ class SiteRecipeProcessor:
         with ThreadPoolExecutor(max_workers=2) as executor:
             # Submit both analysis tasks
             rescue_future = executor.submit(
-                self.rescue_failed_ingredient_parses,
+                self.quality_controller.rescue_failed_ingredient_parses,
                 clean_ingredients
             )
             meta_step_future = executor.submit(
@@ -622,8 +625,8 @@ class SiteRecipeProcessor:
         # Step 5: Paraphrase directions for copyright compliance (final LLM call)
         print("   ✏️  Running directions paraphrasing (GEMINI)...")
         paraphrase_start = time.time()
-        
-        paraphrased_directions = self.paraphrase_directions_with_llm(formatted_directions)
+
+        paraphrased_directions = self.quality_controller.paraphrase_directions_with_llm(formatted_directions)
         
         # Update meta step result with paraphrased text
         updated_meta_step_result = []
