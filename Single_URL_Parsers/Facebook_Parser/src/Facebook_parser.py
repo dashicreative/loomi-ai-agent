@@ -102,15 +102,11 @@ class FacebookTranscriber:
         Returns:
             Dictionary with audio_download_url, description, and metadata
         """
-        actor_id = "codenest~facebook-audio-downloader"
+        actor_id = "alpha-scraper~facebook-audio-downloader"
         endpoint = f"https://api.apify.com/v2/acts/{actor_id}/runs"
 
-        # Determine if it's a reel or regular post
-        is_reel = "reel" in facebook_url.lower()
-        url_key = "reel_urls" if is_reel else "post_urls"
-
         payload = {
-            url_key: [
+            "startUrls": [
                 {
                     "url": facebook_url
                 }
