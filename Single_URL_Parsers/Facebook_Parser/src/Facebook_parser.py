@@ -174,7 +174,7 @@ class FacebookTranscriber:
                                             "view_count": "",  # Facebook doesn't provide this consistently
                                             "like_count": "",
                                             "comment_count": "",
-                                            "thumbnail_url": ""  # Facebook doesn't provide thumbnail
+                                            "thumbnail_url": item.get("thumbnail_url", "")
                                         }
 
                 raise Exception("Actor did not complete successfully or returned no items")
