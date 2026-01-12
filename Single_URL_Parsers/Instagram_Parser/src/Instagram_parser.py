@@ -1006,7 +1006,16 @@ class InstagramTranscriber:
             metadata = self.format_apify_metadata(apify_data)
             timings['metadata_formatting'] = time.time() - step_start
             print(f"   ✅ Metadata formatted ({timings['metadata_formatting']:.2f}s)")
-            
+
+            # DEBUG: Show what content we're about to process
+            print("\n" + "="*60)
+            print("🐛 DEBUG: INPUT TO VERTICAL VIDEO PROCESSOR")
+            print("="*60)
+            print(f"📝 CAPTION (first 200 chars):\n{metadata.get('caption', '')[:200]}")
+            print(f"\n🎤 TRANSCRIPT (first 300 chars):\n{transcript[:300]}")
+            print(f"\n👤 CREATOR: @{metadata.get('creator_username', 'N/A')}")
+            print("="*60 + "\n")
+
             # Steps 5-10: Use shared VerticalVideoProcessor
             print("\n🎬 Steps 5-10: Processing with shared Vertical Video Processor...")
             step_start = time.time()

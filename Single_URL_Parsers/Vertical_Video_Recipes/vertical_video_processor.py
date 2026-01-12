@@ -272,6 +272,15 @@ class VerticalVideoProcessor:
         timings['llm_parsing'] = time.time() - step_start
         print(f"   ✅ LLM parsing complete ({timings['llm_parsing']:.2f}s)")
 
+        # DEBUG: Show raw LLM outputs
+        print("\n" + "="*60)
+        print("🐛 DEBUG: RAW LLM OUTPUTS FROM STEP 6")
+        print("="*60)
+        print(f"🥕 INGREDIENTS (first 400 chars):\n{ingredients_output[:400]}")
+        print(f"\n📝 DIRECTIONS (first 400 chars):\n{directions_output[:400]}")
+        print(f"\n🍽️  MEAL OCCASION: {meal_occasion_output}")
+        print("="*60 + "\n")
+
         # Step 6.5: Parse LLM outputs into structured format
         print("📋 Step 6.5: Parsing LLM outputs...")
         step_start = time.time()
@@ -312,6 +321,22 @@ class VerticalVideoProcessor:
         timings['quality_control'] = time.time() - step_start
         print(f"   ✅ Quality control complete ({timings['quality_control']:.2f}s)")
 
+        # DEBUG: Show cleaned data after quality control
+        print("\n" + "="*60)
+        print("🐛 DEBUG: AFTER QUALITY CONTROL (STEP 7)")
+        print("="*60)
+        print(f"🥕 CLEANED INGREDIENTS ({len(cleaned_ingredients)} items):")
+        for i, ing in enumerate(cleaned_ingredients[:5], 1):  # Show first 5
+            print(f"   {i}. {ing.get('quantity', '')} {ing.get('unit', '')} {ing.get('name', '')}")
+        if len(cleaned_ingredients) > 5:
+            print(f"   ... and {len(cleaned_ingredients) - 5} more")
+        print(f"\n📝 PARAPHRASED DIRECTIONS ({len(paraphrased_directions)} steps):")
+        for i, step in enumerate(paraphrased_directions[:3], 1):  # Show first 3
+            print(f"   {i}. {step[:80]}...")
+        if len(paraphrased_directions) > 3:
+            print(f"   ... and {len(paraphrased_directions) - 3} more")
+        print("="*60 + "\n")
+
         # Step 8: PARALLEL BATCH 3 - Rescue + Meta Steps
         print("🔧 Step 8: Running rescue + meta step analysis (GEMINI)...")
         step_start = time.time()
@@ -334,6 +359,18 @@ class VerticalVideoProcessor:
         timings['rescue_and_meta'] = time.time() - step_start
         print(f"   ✅ Rescue + meta step analysis complete ({timings['rescue_and_meta']:.2f}s)")
 
+        # DEBUG: Show rescued ingredients before matching
+        print("\n" + "="*60)
+        print("🐛 DEBUG: AFTER RESCUE (STEP 8)")
+        print("="*60)
+        print(f"🥕 RESCUED INGREDIENTS ({len(rescued_ingredients)} items):")
+        for i, ing in enumerate(rescued_ingredients[:8], 1):  # Show first 8
+            ing_id = ing.get('id', 'NO_ID')
+            print(f"   {i}. [{ing_id}] {ing.get('quantity', '')} {ing.get('unit', '')} {ing.get('name', '')}")
+        if len(rescued_ingredients) > 8:
+            print(f"   ... and {len(rescued_ingredients) - 8} more")
+        print("="*60 + "\n")
+
         # Step 9: SEQUENTIAL - Step-Ingredient Matching
         print("🔗 Step 9: Matching ingredients to steps (GEMINI)...")
         step_start = time.time()
@@ -349,6 +386,16 @@ class VerticalVideoProcessor:
         # Step 10: Structure into enhanced JSON format
         print("📦 Step 10: Structuring into enhanced JSON...")
         step_start = time.time()
+
+        # DEBUG: Show what's going into final JSON
+        print("\n" + "="*60)
+        print("🐛 DEBUG: BEFORE FINAL JSON STRUCTURING (STEP 10)")
+        print("="*60)
+        print(f"📝 TITLE: {title}")
+        print(f"🥕 INGREDIENT COUNT: {len(step_ingredient_result.get('ingredients', []))}")
+        print(f"📋 DIRECTION COUNT: {len(step_ingredient_result.get('directions', []))}")
+        print(f"🍽️  MEAL OCCASION: {meal_occasion_output}")
+        print("="*60 + "\n")
 
         recipe_dict = create_enhanced_recipe_json(
             title=title,
