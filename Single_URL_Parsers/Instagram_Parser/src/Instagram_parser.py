@@ -1006,9 +1006,28 @@ class InstagramTranscriber:
             # Step 4: Format metadata from Apify data
             print("📋 Step 4: Formatting metadata...")
             step_start = time.time()
+
+            # DEBUG: Show RAW Apify data BEFORE formatting
+            print("\n" + "="*60)
+            print("🐛 DEBUG: RAW APIFY DATA (BEFORE FORMAT)")
+            print("="*60)
+            print(f"📝 apify_data['caption']: {apify_data.get('caption', '[MISSING]')[:200]}")
+            print(f"👤 apify_data['creator_username']: {apify_data.get('creator_username', '[MISSING]')}")
+            print(f"🖼️  apify_data['image_url']: {apify_data.get('image_url', '[MISSING]')[:60]}")
+            print("="*60 + "\n")
+
             metadata = self.format_apify_metadata(apify_data)
             timings['metadata_formatting'] = time.time() - step_start
             print(f"   ✅ Metadata formatted ({timings['metadata_formatting']:.2f}s)")
+
+            # DEBUG: Show formatted metadata AFTER formatting
+            print("\n" + "="*60)
+            print("🐛 DEBUG: FORMATTED METADATA (AFTER FORMAT)")
+            print("="*60)
+            print(f"📝 metadata['caption']: {metadata.get('caption', '[MISSING]')[:200]}")
+            print(f"👤 metadata['creator_username']: {metadata.get('creator_username', '[MISSING]')}")
+            print(f"🖼️  metadata['image_url']: {metadata.get('image_url', '[MISSING]')[:60]}")
+            print("="*60 + "\n")
 
             # DEBUG: Show what content we're about to process
             print("\n" + "="*60)
