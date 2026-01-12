@@ -380,21 +380,24 @@ class InstagramTranscriber:
     
     def format_apify_metadata(self, apify_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Convert Apify data to match expected metadata format.
-        
+        Format Apify data into standardized metadata format for VerticalVideoProcessor.
+
         Args:
             apify_data: Data extracted from Apify
-            
+
         Returns:
-            Dictionary containing formatted metadata
+            Standardized metadata dictionary matching TikTok/Facebook/YouTube format
         """
         return {
-            'title': f"Recipe by @{apify_data.get('creator_username', 'unknown')}",
-            'description': apify_data.get('caption', ''),
-            'uploader': apify_data.get('creator_username', ''),
-            'upload_date': '',  # Not needed for our use case
-            'duration': apify_data.get('duration', 0),
-            'view_count': apify_data.get('likes_count', 0)  # Use likes as proxy for popularity
+            'caption': apify_data.get('caption', ''),
+            'creator_username': apify_data.get('creator_username', ''),
+            'creator_id': apify_data.get('creator_id', ''),
+            'likes_count': apify_data.get('likes_count', 0),
+            'view_count': 0,  # Instagram doesn't provide view count
+            'comment_count': 0,  # Instagram doesn't provide comment count
+            'upload_date': '',  # Instagram doesn't provide upload date
+            'image_url': apify_data.get('image_url', ''),  # Cover photo/thumbnail
+            'duration': apify_data.get('duration', 0)
         }
     
     def extract_instagram_metadata(self, instagram_url: str) -> Dict[str, Any]:
