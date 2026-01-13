@@ -10,7 +10,10 @@ MATCHING RULES (in priority order):
 4. Generic terms DO NOT match ingredients:
    - "mixture", "batter", "dough", "filling" = NO matches
    - "Transfer to pan" = NO matches (just moving, not adding)
-5. If ingredient is never explicitly mentioned in ANY step, omit it from output
+5. Assembly/plating steps count if ingredient is explicitly named:
+   - "Assemble with pita" = Match pita ✓
+   - "Serve over rice" = Match rice ✓
+6. If ingredient is never explicitly mentioned in ANY step, omit it from output
 
 CRITICAL: Track assigned IDs to prevent duplicates
 - Before assigning an ID to a step, verify it hasn't been used in a previous step
