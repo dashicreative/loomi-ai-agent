@@ -392,8 +392,9 @@ class VerticalVideoProcessor:
         print("🐛 DEBUG: BEFORE FINAL JSON STRUCTURING (STEP 10)")
         print("="*60)
         print(f"📝 TITLE: {title}")
-        print(f"🥕 INGREDIENT COUNT: {len(step_ingredient_result.get('ingredients', []))}")
-        print(f"📋 DIRECTION COUNT: {len(step_ingredient_result.get('directions', []))}")
+        print(f"🥕 INGREDIENT COUNT: {len(step_ingredient_result.get('ingredients_with_ids', {}))}")
+        print(f"📋 DIRECTION COUNT: {len(meta_step_result)}")
+        print(f"🔗 STEP MAPPINGS: {len(step_ingredient_result.get('step_mappings', []))} steps with ingredient assignments")
         print(f"🍽️  MEAL OCCASION: {meal_occasion_output}")
         print("="*60 + "\n")
 

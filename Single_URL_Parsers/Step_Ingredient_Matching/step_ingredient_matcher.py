@@ -221,14 +221,39 @@ class StepIngredientMatcher:
         
         # Step 3: Call LLM for matching
         try:
+            # DEBUG: Show input to LLM
+            print(f"\n{'='*60}")
+            print(f"🐛 DEBUG: STEP-INGREDIENT MATCHING INPUT")
+            print(f"{'='*60}")
+            print(f"🥕 INGREDIENTS: {formatted_content['ingredients_with_ids'][:300]}...")
+            print(f"📝 STEPS: {formatted_content['numbered_steps'][:300]}...")
+            print(f"{'='*60}\n")
+
             llm_response = self.call_llm_for_matching(
                 formatted_content["ingredients_with_ids"],
                 formatted_content["numbered_steps"]
             )
-            
+
+            # DEBUG: Show raw LLM response
+            print(f"\n{'='*60}")
+            print(f"🐛 DEBUG: RAW LLM MATCHING RESPONSE")
+            print(f"{'='*60}")
+            print(f"🤖 RESPONSE: {llm_response}")
+            print(f"{'='*60}\n")
+
             # Step 4: Parse response into structured format
             step_mappings = self.parse_llm_response(llm_response, ingredients_with_ids)
-            
+
+            # DEBUG: Show parsed mappings
+            print(f"\n{'='*60}")
+            print(f"🐛 DEBUG: PARSED STEP MAPPINGS")
+            print(f"{'='*60}")
+            for mapping in step_mappings:
+                step_num = mapping["step_number"]
+                ing_ids = mapping["ingredient_ids"]
+                print(f"   Step {step_num}: {len(ing_ids)} ingredients → {ing_ids[:5]}")
+            print(f"{'='*60}\n")
+
             print(f"   ✅ Successfully matched ingredients to {len(step_mappings)} steps")
             
             return {
