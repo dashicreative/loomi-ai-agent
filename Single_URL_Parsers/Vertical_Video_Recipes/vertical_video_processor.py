@@ -234,6 +234,153 @@ class VerticalVideoProcessor:
 
             return ingredients_result, directions_result, meal_occasion_result
 
+    def parse_meta_ingredient_response(self, llm_response: str) -> List[Dict[str, Any]]:
+        """
+        Parse delimited LLM response into structured meta-ingredients.
+
+        Expected format: META_1:I101,I102|baby cucumber
+
+        Args:
+            llm_response: Raw LLM response with pipe-delimited format
+
+        Returns:
+            List of meta-ingredient dictionaries with id, name, and linked_raw_ids
+        """
+        meta_ingredients = []
+
+        try:
+            lines = llm_response.strip().split('\n')
+
+            for line in lines:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+
+                # Split by pipe: "META_1:I101,I102" | "baby cucumber"
+                if '|' not in line:
+                    continue
+
+                id_part, name = line.split('|', 1)
+                name = name.strip()
+
+                # Split by colon: "META_1" : "I101,I102"
+                if ':' not in id_part:
+                    continue
+
+                meta_id, raw_ids_str = id_part.split(':', 1)
+                meta_id = meta_id.strip()
+
+                # Split by comma: ["I101", "I102"]
+                raw_ids = [rid.strip() for rid in raw_ids_str.split(',') if rid.strip()]
+
+                meta_ingredients.append({
+                    "id": meta_id,
+                    "name": name,
+                    "linked_raw_ids": raw_ids
+                })
+
+            return meta_ingredients
+
+        except Exception as e:
+            print(f"   ⚠️  Failed to parse meta-ingredient response: {str(e)}")
+            return []
+
+    def generate_meta_ingredients(self, ingredients_with_ids: Dict[str, Dict]) -> List[Dict[str, Any]]:
+        """
+        Generate meta-ingredients by identifying and grouping duplicate ingredients using LLM.
+
+        This creates a deduplicated shopping-friendly ingredient list while preserving
+        product-defining descriptors and stripping only preparation notes.
+
+        Args:
+            ingredients_with_ids: Dictionary mapping ingredient ID to ingredient data
+                                 (output from step_ingredient_matcher)
+
+        Returns:
+            List of meta-ingredient dictionaries:
+            [
+                {
+                    "id": "META_1",
+                    "name": "baby cucumber",
+                    "linked_raw_ids": ["I101", "I102"]
+                },
+                ...
+            ]
+        """
+        if not ingredients_with_ids:
+            return []
+
+        print(f"   🔍 Generating meta-ingredients (deduplication)...")
+        step_start = time.time()
+
+        # Format ingredients for LLM prompt: "I101: 1 count baby cucumber | I102: 2 count cucumber"
+        ingredient_list = []
+        for ingredient_id, data in ingredients_with_ids.items():
+            name = data["name"]
+            quantity = data.get("quantity", "")
+            unit = data.get("unit", "")
+            # Include quantity and unit for LLM context
+            display = f"{ingredient_id}: {quantity} {unit} {name}".strip()
+            ingredient_list.append(display)
+
+        ingredients_formatted = " | ".join(ingredient_list)
+
+        # Load prompt template
+        prompt_path = self.prompts_dir / "Ingredient_Deduplication_Prompt.txt"
+
+        try:
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                prompt_template = f.read()
+
+            prompt = prompt_template.format(ingredients_with_ids=ingredients_formatted)
+
+            # Call Gemini for deduplication
+            llm_start = time.time()
+
+            response = self.google_model.generate_content(
+                prompt,
+                generation_config={
+                    "temperature": 0.1,
+                    "max_output_tokens": 2000
+                }
+            )
+
+            # Extract response text
+            if hasattr(response, 'text') and response.text:
+                llm_response = response.text.strip()
+            elif hasattr(response, 'candidates') and response.candidates:
+                candidate = response.candidates[0]
+                if hasattr(candidate, 'content') and candidate.content.parts:
+                    llm_response = candidate.content.parts[0].text.strip()
+                else:
+                    raise Exception(f"Gemini response blocked: {candidate.finish_reason}")
+            else:
+                raise Exception("Gemini returned empty response")
+
+            llm_elapsed = time.time() - llm_start
+            print(f"      ✅ Deduplication LLM completed in {llm_elapsed:.2f}s")
+
+            # Parse response into structured meta-ingredients
+            meta_ingredients = self.parse_meta_ingredient_response(llm_response)
+
+            elapsed = time.time() - step_start
+            print(f"   ✅ Generated {len(meta_ingredients)} meta-ingredients ({elapsed:.2f}s)")
+
+            return meta_ingredients
+
+        except Exception as e:
+            print(f"   ⚠️  Meta-ingredient generation failed: {str(e)}")
+            # Fallback: Create 1-to-1 mapping (no deduplication)
+            fallback_meta = []
+            for i, (ingredient_id, data) in enumerate(ingredients_with_ids.items(), 1):
+                fallback_meta.append({
+                    "id": f"META_{i}",
+                    "name": data["name"],
+                    "linked_raw_ids": [ingredient_id]
+                })
+            print(f"   ℹ️  Using fallback: {len(fallback_meta)} meta-ingredients (1-to-1 mapping)")
+            return fallback_meta
+
     def process_recipe(
         self,
         transcript: str,
@@ -383,6 +530,16 @@ class VerticalVideoProcessor:
         timings['step_matching'] = time.time() - step_start
         print(f"   ✅ Step-ingredient matching complete ({timings['step_matching']:.2f}s)")
 
+        # Step 9.5: Generate meta-ingredients (deduplication for shopping)
+        print("🔍 Step 9.5: Generating meta-ingredients...")
+        step_start = time.time()
+
+        meta_ingredients = self.generate_meta_ingredients(
+            step_ingredient_result.get("ingredients_with_ids", {})
+        )
+
+        timings['meta_ingredients'] = time.time() - step_start
+
         # Step 10: Structure into enhanced JSON format
         print("📦 Step 10: Structuring into enhanced JSON...")
         step_start = time.time()
@@ -392,7 +549,8 @@ class VerticalVideoProcessor:
         print("🐛 DEBUG: BEFORE FINAL JSON STRUCTURING (STEP 10)")
         print("="*60)
         print(f"📝 TITLE: {title}")
-        print(f"🥕 INGREDIENT COUNT: {len(step_ingredient_result.get('ingredients_with_ids', {}))}")
+        print(f"🥕 RAW INGREDIENT COUNT: {len(step_ingredient_result.get('ingredients_with_ids', {}))}")
+        print(f"🔍 META-INGREDIENT COUNT: {len(meta_ingredients)} (deduplicated for shopping)")
         print(f"📋 DIRECTION COUNT: {len(meta_step_result)}")
         print(f"🔗 STEP MAPPINGS: {len(step_ingredient_result.get('step_mappings', []))} steps with ingredient assignments")
         print(f"🍽️  MEAL OCCASION: {meal_occasion_output}")
@@ -404,6 +562,7 @@ class VerticalVideoProcessor:
             source_url=source_url,
             step_ingredient_result=step_ingredient_result,
             meta_step_result=meta_step_result,
+            meta_ingredients=meta_ingredients,  # NEW: Deduplicated ingredient list
             image=metadata.get("image_url", ""),  # Cover photo/thumbnail
             meal_occasion=meal_occasion_output,
             servings=0  # Vertical videos rarely specify servings

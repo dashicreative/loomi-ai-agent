@@ -66,6 +66,7 @@ def create_enhanced_recipe_json(
     source_url: str,
     step_ingredient_result: Dict[str, Any],
     meta_step_result: List[Dict[str, Any]],
+    meta_ingredients: List[Dict[str, Any]] = None,
     nutrition: Dict[str, str] = None,
     image: str = "",
     meal_occasion: str = "Other",
@@ -73,22 +74,23 @@ def create_enhanced_recipe_json(
     total_time: str = ""
 ) -> Dict[str, Any]:
     """
-    Create an enhanced recipe dictionary with step-ingredient matching and meta steps.
-    
+    Create an enhanced recipe dictionary with step-ingredient matching, meta steps, and meta-ingredients.
+
     Args:
         title: Recipe title
         parser_method: Source parser identifier (e.g., "Instagram", "RecipeSite")
         source_url: Original recipe URL
         step_ingredient_result: Result from step_ingredient_matcher containing ingredients_with_ids and step_mappings
         meta_step_result: Result from meta_step_extractor containing structured steps
+        meta_ingredients: Optional list of deduplicated meta-ingredients with linked_raw_ids (for shopping context)
         nutrition: Optional nutrition dict
         image: Optional image URL
         meal_occasion: Meal occasion category
         servings: Number of servings (0 if not found or invalid)
         total_time: Optional total cooking/prep time
-        
+
     Returns:
-        Enhanced recipe dictionary with ingredient IDs and meta steps
+        Enhanced recipe dictionary with ingredient IDs, meta-ingredients, and meta steps
     """
     # Default empty nutrition if not provided
     if nutrition is None:
@@ -129,7 +131,8 @@ def create_enhanced_recipe_json(
             "ingredient_ids": step_ingredient_lookup.get(step_number, [])
         })
     
-    return {
+    # Build base recipe dictionary
+    recipe_dict = {
         "title": title,
         "parser_method": parser_method,
         "meal_occasion": meal_occasion,
@@ -141,6 +144,12 @@ def create_enhanced_recipe_json(
         "image": image,
         "source_url": source_url
     }
+
+    # Add meta_ingredients if provided (deduplicated shopping-friendly list)
+    if meta_ingredients:
+        recipe_dict["meta_ingredients"] = meta_ingredients
+
+    return recipe_dict
 
 
 def format_standard_recipe_json(recipe_dict: Dict[str, Any]) -> str:

@@ -1,0 +1,106 @@
+TASK: Group duplicate ingredients for shopping context. Return deduplicated list with links to original IDs.
+
+OBJECTIVE: Create shopping-friendly ingredient names by removing preparation notes while PRESERVING all product-defining descriptors.
+
+CORE PRINCIPLE: Only combine ingredients if they are THE SAME PRODUCT with different preparation. Preserve all descriptors that define WHAT you buy, not HOW you prepare it.
+
+GROUPING RULES:
+
+1. ALWAYS PRESERVE product-defining descriptors (these define what you buy at the store):
+   - Keep variety/type: "extra virgin olive oil" ≠ "olive oil" (different products)
+   - Keep variety/type: "light olive oil" ≠ "extra virgin olive oil" (different products)
+   - Keep size/variety: "baby cucumber" ≠ "cucumber" (different sizes)
+   - Keep type: "Greek yogurt" ≠ "regular yogurt" (different products)
+   - Keep type: "sea salt" ≠ "kosher salt" ≠ "salt" (different salt types)
+   - Keep form: "chicken breast" ≠ "ground chicken" (different cuts)
+   - Keep descriptors: "natural", "organic", "fresh", "frozen" (product attributes)
+
+2. STRIP preparation/editorial notes (these describe cooking methods, not product identity):
+   - Remove: "minced", "grated", "sliced", "diced", "chopped", "crushed", "juiced", "peeled"
+   - Remove: "bottled", "room temperature", "melted", "softened", "beaten"
+   - Remove: "and water removed", "finely chopped", "roughly chopped"
+   - Example: "baby cucumber, grated and water removed" → "baby cucumber"
+   - Example: "extra virgin olive oil, bottled" → "extra virgin olive oil"
+   - Example: "garlic, minced" → "garlic"
+
+3. NORMALIZE spelling/formatting variations (same product, different spelling):
+   - "yoghurt" = "yogurt" → "yogurt" (standardize spelling)
+   - "Greek-style yogurt" = "Greek style yogurt" → "Greek yogurt" (remove hyphens)
+   - "cucumbers" = "cucumber" → "cucumber" (standardize to singular)
+
+4. HANDLE semantic equivalents (different words, same shopping item):
+   - "lemon" = "lemon juice" = "squeeze of lemon" → "lemon juice"
+   - "cream cheese" = "cream cheese, room temperature" → "cream cheese"
+
+5. COMBINE different quantities/units (same product = one shopping list entry):
+   - "1 tbsp extra virgin olive oil" + "2 tsp extra virgin olive oil" → "extra virgin olive oil"
+   - "1 count baby cucumber, grated" + "2 count baby cucumber, sliced" → "baby cucumber"
+
+DECISION RULE: Ask yourself "Would these be on different shelves at the grocery store?"
+- If YES → Keep separate
+- If NO → Combine (just strip prep notes)
+
+OUTPUT FORMAT: META_ID:RawID1,RawID2|canonical_name
+
+- One line per meta-ingredient
+- Use META_1, META_2, META_3, etc. for meta IDs
+- List all original ingredient IDs that belong to this group (comma-separated)
+- Use pipe (|) to separate from canonical shopping name
+- Preserve ALL product descriptors, remove ONLY preparation language
+
+EXAMPLES:
+
+Input:
+I101: 1 count baby cucumber, grated and water removed
+I102: 2 count baby cucumbers, sliced
+I103: 15 g natural Greek-style yoghurt
+I104: 2 tbsp natural Greek yogurt
+I105: 1 count squeeze of lemon
+I106: 1 count squeeze of lemon juice
+I107: 1 tbsp extra virgin olive oil
+I108: 2 tsp extra virgin olive oil, bottled
+
+Output:
+META_1:I101,I102|baby cucumber
+META_2:I103,I104|natural Greek yogurt
+META_3:I105,I106|lemon juice
+META_4:I107,I108|extra virgin olive oil
+
+---
+
+Input:
+I201: 1 tbsp extra virgin olive oil
+I202: 2 tsp olive oil
+I203: 1 clove garlic, minced
+I204: 2 cloves garlic, crushed
+I205: 1 tsp sea salt
+I206: 1 pinch salt
+I207: 3 oz baby cucumber
+I208: 1 count cucumber, sliced
+
+Output:
+META_1:I201|extra virgin olive oil
+META_2:I202|olive oil
+META_3:I203,I204|garlic
+META_4:I205|sea salt
+META_5:I206|salt
+META_6:I207|baby cucumber
+META_7:I208|cucumber
+
+Reasoning: "extra virgin olive oil" ≠ "olive oil" (different products, keep separate)
+          "sea salt" ≠ "salt" (different types, keep separate)
+          "baby cucumber" ≠ "cucumber" (different sizes, keep separate)
+          "garlic, minced" = "garlic, crushed" (same product, different prep → combine)
+
+CRITICAL NOTES:
+- Every raw ingredient ID must appear exactly once across all meta-ingredients
+- NEVER simplify product descriptors (extra virgin, baby, sea, Greek, light, etc.)
+- ONLY strip preparation language (minced, sliced, grated, bottled, etc.)
+- When in doubt, preserve specificity - users are intelligent and can decide
+
+---
+
+Now process the following ingredients:
+{ingredients_with_ids}
+
+Output only the meta-ingredient mappings (no explanations):
