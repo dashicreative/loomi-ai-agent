@@ -176,6 +176,8 @@ async def calculate_recipe_macros_optimized(ingredients: List[Dict]) -> str:
         total_fat = 0.0
         total_carbs = 0.0
 
+        print("\n📊 Ingredient Breakdown:")
+        print("-" * 70)
         for i, ingredient in enumerate(ingredients):
             nutrition = nutrition_data[i]
 
@@ -189,10 +191,20 @@ async def calculate_recipe_macros_optimized(ingredients: List[Dict]) -> str:
             # Scale nutrition from per-100g to actual amount
             scale = grams / 100.0
 
-            total_calories += nutrition['calories'] * scale
-            total_protein += nutrition['protein'] * scale
-            total_fat += nutrition['fat'] * scale
-            total_carbs += nutrition['carbs'] * scale
+            cal_scaled = nutrition['calories'] * scale
+            pro_scaled = nutrition['protein'] * scale
+            fat_scaled = nutrition['fat'] * scale
+            carb_scaled = nutrition['carbs'] * scale
+
+            print(f"{name[:35]:35} | {grams:6.1f}g")
+            print(f"  Per 100g: {nutrition['calories']:4.0f}cal {nutrition['protein']:4.1f}p {nutrition['fat']:4.1f}f {nutrition['carbs']:5.1f}c")
+            print(f"  Scaled:   {cal_scaled:4.0f}cal {pro_scaled:4.1f}p {fat_scaled:4.1f}f {carb_scaled:5.1f}c")
+
+            total_calories += cal_scaled
+            total_protein += pro_scaled
+            total_fat += fat_scaled
+            total_carbs += carb_scaled
+        print()
 
         # Step 3: Return comma-separated result
         return f"{total_calories:.0f},{total_protein:.0f},{total_fat:.0f},{total_carbs:.0f}"

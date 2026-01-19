@@ -40,14 +40,59 @@ class MacroDeps:
             self.ingredient_cache = {}
             
         if self.volume_to_grams is None:
-            # Common ingredient density conversions (approximate)
+            # Common ingredient density conversions (1 cup = X grams)
             self.volume_to_grams = {
-                "flour": 120,  # 1 cup flour = ~120g
-                "sugar": 200,  # 1 cup sugar = ~200g
-                "water": 240,  # 1 cup water = 240g
-                "milk": 240,   # 1 cup milk = ~240g
-                "oil": 220,    # 1 cup oil = ~220g
-                "rice": 185,   # 1 cup cooked rice = ~185g
+                # Flours & Grains (dry)
+                "flour": 120,  # all-purpose flour
+                "all-purpose flour": 120,
+                "wheat flour": 120,
+                "bread flour": 127,
+                "cake flour": 114,
+                "oats": 80,    # dry old-fashioned oats
+                "oat": 80,
+                "rolled oats": 80,
+                "old-fashioned oats": 80,
+                "quick oats": 80,
+                "rice": 185,   # cooked rice
+                "quinoa": 170,  # cooked
+                "cornmeal": 138,
+
+                # Sugars
+                "sugar": 200,  # granulated white sugar
+                "white sugar": 200,
+                "granulated sugar": 200,
+                "brown sugar": 220,  # packed
+                "dark brown sugar": 220,
+                "light brown sugar": 220,
+                "powdered sugar": 120,
+                "confectioners sugar": 120,
+                "honey": 340,
+                "maple syrup": 315,
+
+                # Fats
+                "butter": 227,  # 1 cup = 2 sticks
+                "oil": 220,     # vegetable/canola oil
+                "olive oil": 216,
+                "coconut oil": 218,
+
+                # Liquids
+                "water": 240,
+                "milk": 240,
+                "cream": 240,
+                "yogurt": 245,
+                "sour cream": 230,
+
+                # Nuts & Seeds
+                "almond": 140,
+                "walnut": 120,
+                "pecan": 110,
+                "peanut": 145,
+                "cashew": 130,
+
+                # Other
+                "cocoa powder": 85,
+                "chocolate chips": 170,
+                "peanut butter": 250,
             }
             
         if self.weight_conversions is None:

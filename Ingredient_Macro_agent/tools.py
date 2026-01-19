@@ -135,15 +135,33 @@ async def usda_lookup(ctx: RunContext[MacroDeps], ingredient_name: str) -> Dict:
     Returns:
         Dictionary with nutrition data per 100g or error info
     """
+    # Map common ingredient names to better USDA search terms
+    ingredient_search_map = {
+        "eggs": "egg whole raw",
+        "egg": "egg whole raw",
+        "salt": "salt table",
+        "butter": "butter salted",
+        "salted butter": "butter salted",
+        "unsalted butter": "butter without salt",
+        "brown sugar": "sugars brown",
+        "white sugar": "sugars granulated",
+        "sugar": "sugars granulated",
+        "all-purpose flour": "wheat flour white all-purpose",
+        "flour": "wheat flour white all-purpose",
+        "oats": "oats whole grain rolled",
+        "old-fashioned oats": "oats whole grain rolled old fashioned",
+    }
+
+    # Clean ingredient name for lookup
+    name_clean = ingredient_name.lower().strip()
+
+    # Check if we have a better search term
+    search_query = ingredient_search_map.get(name_clean, ingredient_name)
+
     # Detect preparation state (raw, cooked, etc.)
     prep_state = detect_preparation_state(ingredient_name)
-
-    # Build search query with preparation state if detected
-    search_query = ingredient_name
-    if prep_state:
-        # Ensure preparation state is in the search
-        if prep_state not in ingredient_name.lower():
-            search_query = f"{ingredient_name} {prep_state}"
+    if prep_state and prep_state not in search_query.lower():
+        search_query = f"{search_query} {prep_state}"
 
     # Check cache first (avoid duplicate API calls)
     cache_key = search_query.lower().strip()
@@ -158,7 +176,7 @@ async def usda_lookup(ctx: RunContext[MacroDeps], ingredient_name: str) -> Dict:
         params = {
             "query": search_query,  # Use enhanced query with prep state
             "pageSize": 5,  # Limit results for speed
-            "dataType": ["Foundation", "Survey (FNDDS)", "Branded"],  # Include quality data types
+            # Don't specify dataType - let USDA return all types for best matches
         }
         
         # API key is required as query parameter (not header)
@@ -167,16 +185,21 @@ async def usda_lookup(ctx: RunContext[MacroDeps], ingredient_name: str) -> Dict:
         
         response = await ctx.deps.http_client.get(search_url, params=params)
         response.raise_for_status()
-        
+
         data = response.json()
         foods = data.get("foods", [])
-        
+
         if not foods:
+            print(f"⚠️  USDA: No results for '{search_query}'")
             return {"error": "No USDA data found", "source": "USDA_API"}
             
         # Take first result (most relevant match)
         food = foods[0]
+        food_description = food.get("description", "Unknown")
         nutrients = food.get("foodNutrients", [])
+
+        # Debug: Show what USDA matched
+        print(f"  📍 USDA matched '{ingredient_name}' → '{food_description}'")
         
         # Initialize macro data structure
         macro_data = {
@@ -200,20 +223,47 @@ async def usda_lookup(ctx: RunContext[MacroDeps], ingredient_name: str) -> Dict:
         # Extract nutrition values from USDA response
         for nutrient in nutrients:
             nutrient_id = nutrient.get("nutrientId")
+            nutrient_name = nutrient.get("nutrientName", "Unknown")
             if nutrient_id in nutrient_map:
                 value = nutrient.get("value", 0)
                 macro_name = nutrient_map[nutrient_id]
                 macro_data[macro_name] = round(float(value), 1)
-                
+                print(f"      {macro_name}: {value} (ID {nutrient_id}: {nutrient_name})")
+
+        # If calories are missing, calculate from macros (fat*9 + protein*4 + carbs*4)
+        if macro_data["calories"] == 0 and (macro_data["protein"] > 0 or macro_data["fat"] > 0 or macro_data["carbs"] > 0):
+            calculated_calories = (macro_data["fat"] * 9) + (macro_data["protein"] * 4) + (macro_data["carbs"] * 4)
+            macro_data["calories"] = round(calculated_calories, 1)
+            print(f"      ⚙️  Calculated missing calories: {calculated_calories:.1f} kcal")
+
+        # Validate data - reject obviously wrong values
+        # Carbs should never exceed ~100g per 100g for most foods
+        if macro_data["carbs"] > 105:
+            print(f"      ⚠️  REJECTED: Carbs {macro_data['carbs']}g too high (likely bad data)")
+            return {"error": f"Invalid carbs data: {macro_data['carbs']}g", "source": "USDA_API"}
+
+        # Fat should never exceed 100g per 100g
+        if macro_data["fat"] > 105:
+            print(f"      ⚠️  REJECTED: Fat {macro_data['fat']}g too high (likely bad data)")
+            return {"error": f"Invalid fat data: {macro_data['fat']}g", "source": "USDA_API"}
+
+        # Protein should never exceed 100g per 100g (except pure protein powder)
+        if macro_data["protein"] > 105:
+            print(f"      ⚠️  REJECTED: Protein {macro_data['protein']}g too high (likely bad data)")
+            return {"error": f"Invalid protein data: {macro_data['protein']}g", "source": "USDA_API"}
+
         # Cache successful result
         ctx.deps.ingredient_cache[cache_key] = macro_data
         return macro_data
         
     except httpx.HTTPStatusError as e:
         error_msg = f"USDA API HTTP {e.response.status_code}: {e.response.text[:100]}"
+        print(f"⚠️  USDA HTTP Error for '{ingredient_name}': {e.response.status_code}")
+        print(f"    Response: {e.response.text[:200]}")
         return {"error": error_msg, "source": "USDA_API", "status_code": e.response.status_code}
     except Exception as e:
         error_msg = f"USDA lookup failed: {type(e).__name__}: {str(e)}"
+        print(f"⚠️  USDA Exception for '{ingredient_name}': {type(e).__name__}: {str(e)}")
         return {"error": error_msg, "source": "USDA_API"}
 
 
@@ -255,6 +305,7 @@ async def web_nutrition_search(ctx: RunContext[MacroDeps], ingredient_name: str)
         items = data.get("items", [])
         
         if not items:
+            print(f"⚠️  WEB: No search results for '{ingredient_name}'")
             return {"error": "No web nutrition data found", "source": "WEB_SEARCH"}
         
         # Extract nutrition hints from search snippets
@@ -280,8 +331,14 @@ async def web_nutrition_search(ctx: RunContext[MacroDeps], ingredient_name: str)
         ctx.deps.ingredient_cache[cache_key] = estimated_macros
         return estimated_macros
         
+    except httpx.HTTPStatusError as e:
+        print(f"⚠️  WEB HTTP Error for '{ingredient_name}': {e.response.status_code}")
+        print(f"    Response: {e.response.text[:200]}")
+        error_msg = f"Web search HTTP {e.response.status_code}"
+        return {"error": error_msg, "source": "WEB_SEARCH"}
     except Exception as e:
         error_msg = f"Web nutrition search failed: {type(e).__name__}: {str(e)}"
+        print(f"⚠️  WEB Exception for '{ingredient_name}': {type(e).__name__}: {str(e)}")
         return {"error": error_msg, "source": "WEB_SEARCH"}
 
 
