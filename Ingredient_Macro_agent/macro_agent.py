@@ -91,6 +91,117 @@ def calculate_nutrition_for_amount(ctx: RunContext[MacroDeps], calories_per_100g
     return f"calories: {scaled_calories:.1f}, protein: {scaled_protein:.1f}g, fat: {scaled_fat:.1f}g, carbs: {scaled_carbs:.1f}g"
 
 
+async def calculate_recipe_macros_optimized(ingredients: List[Dict]) -> str:
+    """
+    Optimized parallel processing version - bypasses LLM tool-calling overhead.
+
+    Processes all ingredients in parallel:
+    1. Parallel USDA/web lookups for all ingredients simultaneously
+    2. Parallel gram conversions
+    3. Calculate and sum nutrition
+
+    Args:
+        ingredients: List of ingredient dictionaries with name, quantity, unit
+
+    Returns:
+        Comma-separated numbers: "calories,protein,fat,carbs" (e.g., "450,50,25,30")
+    """
+    import asyncio
+
+    # Create dependencies instance
+    deps = create_macro_deps()
+
+    # Create a simple context-like object with just deps
+    class SimpleContext:
+        def __init__(self, deps):
+            self.deps = deps
+
+    ctx = SimpleContext(deps)
+
+    try:
+        # Step 1: Parallel nutrition lookups for ALL ingredients
+        async def lookup_ingredient(ingredient: Dict):
+            """Lookup nutrition data for a single ingredient"""
+            name = ingredient['name']
+
+            # Try USDA first
+            usda_result = await tools.usda_lookup(ctx, name)
+
+            if "error" not in usda_result:
+                return {
+                    'name': name,
+                    'calories': usda_result.get('calories', 0),
+                    'protein': usda_result.get('protein', 0),
+                    'fat': usda_result.get('fat', 0),
+                    'carbs': usda_result.get('carbs', 0),
+                    'source': 'USDA'
+                }
+
+            # USDA failed, try web search
+            web_result = await tools.web_nutrition_search(ctx, name)
+
+            if "error" not in web_result:
+                return {
+                    'name': name,
+                    'calories': web_result.get('calories', 0),
+                    'protein': web_result.get('protein', 0),
+                    'fat': web_result.get('fat', 0),
+                    'carbs': web_result.get('carbs', 0),
+                    'source': 'WEB'
+                }
+
+            # Both failed
+            return {
+                'name': name,
+                'calories': 0,
+                'protein': 0,
+                'fat': 0,
+                'carbs': 0,
+                'source': 'ERROR'
+            }
+
+        # Parallel lookups for all ingredients
+        print("\n🔍 Nutrition Data Sources:")
+        print("-" * 50)
+        nutrition_data = await asyncio.gather(*[lookup_ingredient(ing) for ing in ingredients])
+
+        for data in nutrition_data:
+            source_emoji = "✅" if data['source'] == 'USDA' else ("🌐" if data['source'] == 'WEB' else "❌")
+            print(f"{source_emoji} {data['source']:5} - {data['name']}")
+        print()
+
+        # Step 2: Calculate scaled nutrition for each ingredient
+        total_calories = 0.0
+        total_protein = 0.0
+        total_fat = 0.0
+        total_carbs = 0.0
+
+        for i, ingredient in enumerate(ingredients):
+            nutrition = nutrition_data[i]
+
+            # Convert quantity to grams
+            quantity = ingredient.get('quantity', '1')
+            unit = ingredient.get('unit', 'count')
+            name = ingredient.get('name', '')
+
+            grams = tools.convert_to_grams(ctx, quantity, unit, name)
+
+            # Scale nutrition from per-100g to actual amount
+            scale = grams / 100.0
+
+            total_calories += nutrition['calories'] * scale
+            total_protein += nutrition['protein'] * scale
+            total_fat += nutrition['fat'] * scale
+            total_carbs += nutrition['carbs'] * scale
+
+        # Step 3: Return comma-separated result
+        return f"{total_calories:.0f},{total_protein:.0f},{total_fat:.0f},{total_carbs:.0f}"
+
+    finally:
+        # Clean up HTTP client
+        await deps.http_client.aclose()
+
+
 async def calculate_recipe_macros(ingredients: List[Dict]) -> str:
     """
     Main function to calculate macros for a complete recipe.
@@ -129,11 +240,11 @@ async def calculate_recipe_macros(ingredients: List[Dict]) -> str:
         await deps.http_client.aclose()
 
 
-# Sync wrapper for easier testing
+# Sync wrapper for easier testing (uses optimized version)
 def calculate_recipe_macros_sync(ingredients: List[Dict]) -> str:
     """
-    Synchronous wrapper for calculate_recipe_macros.
-    Easier to use in test CLI.
+    Synchronous wrapper for optimized macro calculation.
+    Uses parallel processing for maximum speed.
     """
     import asyncio
-    return asyncio.run(calculate_recipe_macros(ingredients))
+    return asyncio.run(calculate_recipe_macros_optimized(ingredients))

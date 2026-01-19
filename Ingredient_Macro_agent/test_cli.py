@@ -5,6 +5,7 @@ Allows testing ingredient arrays and viewing macro calculation output.
 """
 
 import json
+import time
 from macro_agent import calculate_recipe_macros_sync
 
 def test_sample_ingredients():
@@ -13,42 +14,47 @@ def test_sample_ingredients():
     print("🥘 MACRO CALCULATION AGENT - TEST CLI")
     print("=" * 60)
     
-    # Sample ingredient array (from user's example)
+    # Sample ingredient array (cookie recipe)
     sample_ingredients = [
         {
-            "name": "1 inch knob of peeled fresh ginger (finely diced)",
+            "name": "salted butter, softened",
             "quantity": "1",
+            "unit": "cup"
+        },
+        {
+            "name": "packed dark brown sugar",
+            "quantity": "2",
+            "unit": "cup"
+        },
+        {
+            "name": "vanilla extract",
+            "quantity": "2",
+            "unit": "tsp"
+        },
+        {
+            "name": "eggs",
+            "quantity": "2",
             "unit": "count"
         },
         {
-            "name": "3 garlic cloves (finely diced)",
+            "name": "all-purpose flour",
+            "quantity": "1.75",
+            "unit": "cup"
+        },
+        {
+            "name": "salt",
+            "quantity": "1",
+            "unit": "tsp"
+        },
+        {
+            "name": "baking soda",
+            "quantity": "0.5",
+            "unit": "tsp"
+        },
+        {
+            "name": "old-fashioned oats",
             "quantity": "3",
-            "unit": "count"
-        },
-        {
-            "name": "1 small jalapeño pepper (seeded, and finely diced)",
-            "quantity": "1",
-            "unit": "count"
-        },
-        {
-            "name": "½ large yellow onion (julienned)",
-            "quantity": "0.5",
-            "unit": "count"
-        },
-        {
-            "name": "1 large red bell pepper (stemmed, seeded, and cut into ¼-inch thick strips)",
-            "quantity": "1",
-            "unit": "count"
-        },
-        {
-            "name": "juice ½ lime (plus wedges for serving)",
-            "quantity": "0.5",
-            "unit": "count"
-        },
-        {
-            "name": "handful cilantro leaves (roughly chopped, plus more for garnish)",
-            "quantity": "1",
-            "unit": "count"
+            "unit": "cup"
         }
     ]
     
@@ -58,27 +64,36 @@ def test_sample_ingredients():
         name = ingredient['name'][:50] + "..." if len(ingredient['name']) > 50 else ingredient['name']
         print(f"{i:2}. {ingredient['quantity']} {ingredient['unit']} - {name}")
     
-    print("\n🔄 Processing with Macro Agent...")
+    print("\n🔄 Processing with Macro Agent (Parallel Mode)...")
     print("-" * 40)
-    
+
     try:
-        # Calculate macros using the agent
+        # Calculate macros using the agent with timing
+        start_time = time.time()
         result = calculate_recipe_macros_sync(sample_ingredients)
+        elapsed_time = time.time() - start_time
         
+        print(f"⏱️  Processing Time: {elapsed_time:.2f}s")
+
         print("\n✅ CALCULATED MACROS:")
         print("-" * 40)
-        
-        if isinstance(result, list) and len(result) == 4:
-            print(f"🔥 {result[0]}")
-            print(f"💪 {result[1]}")  
-            print(f"🥑 {result[2]}")
-            print(f"🌾 {result[3]}")
+
+        # Parse comma-separated result
+        if isinstance(result, str) and ',' in result:
+            parts = result.split(',')
+            if len(parts) == 4:
+                print(f"🔥 Calories: {parts[0]}")
+                print(f"💪 Protein:  {parts[1]}g")
+                print(f"🥑 Fat:      {parts[2]}g")
+                print(f"🌾 Carbs:    {parts[3]}g")
+            else:
+                print("📊 Raw Result:")
+                print(result)
         else:
             print("📊 Raw Result:")
-            print(json.dumps(result, indent=2))
-        
-        print(f"\n🎯 Expected Output Format:")
-        print('["X calories", "X g protein", "X g fat", "X g carbs"]')
+            print(result)
+
+        print(f"\n🎯 Output Format: calories,protein,fat,carbs")
         
     except Exception as e:
         print(f"\n❌ Error: {str(e)}")
