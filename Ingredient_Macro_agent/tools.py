@@ -5,33 +5,158 @@ Provides USDA lookup, unit conversion, and macro calculation functionality.
 
 import re
 import json
+import httpx
 from typing import Dict, Optional, List, Any
 from pydantic_ai import RunContext
 from dependencies import MacroDeps
 
 
+# Unicode fraction map for conversion
+UNICODE_FRACTIONS = {
+    '¼': 0.25, '½': 0.5, '¾': 0.75,
+    '⅐': 0.142857, '⅑': 0.111111, '⅒': 0.1,
+    '⅓': 0.333333, '⅔': 0.666667,
+    '⅕': 0.2, '⅖': 0.4, '⅗': 0.6, '⅘': 0.8,
+    '⅙': 0.166667, '⅚': 0.833333,
+    '⅛': 0.125, '⅜': 0.375, '⅝': 0.625, '⅞': 0.875
+}
+
+
+def detect_preparation_state(ingredient_name: str) -> str:
+    """
+    Detect if ingredient is raw, cooked, or has other preparation state that affects nutrition.
+
+    Args:
+        ingredient_name: Full ingredient name with description
+
+    Returns:
+        Preparation keyword to include in USDA search, or empty string
+    """
+    name_lower = ingredient_name.lower()
+
+    # Cooking state keywords that significantly affect nutrition
+    if any(keyword in name_lower for keyword in ['cooked', 'boiled', 'steamed', 'baked', 'roasted', 'grilled', 'fried', 'sauteed', 'sautéed']):
+        # Find which cooking method
+        for method in ['cooked', 'boiled', 'steamed', 'baked', 'roasted', 'grilled', 'fried', 'sauteed', 'sautéed']:
+            if method in name_lower:
+                return method
+
+    if 'raw' in name_lower:
+        return 'raw'
+
+    # Default: assume raw for vegetables/proteins, no modifier for others
+    return ''
+
+
+def parse_quantity(quantity_str: str) -> float:
+    """
+    Parse quantity string into float, handling mixed fractions, unicode fractions, and ranges.
+
+    Examples:
+        "2" → 2.0
+        "1/2" → 0.5
+        "1 1/2" → 1.5
+        "½" → 0.5
+        "1-2" → 1.5 (average of range)
+        "~2" → 2.0
+
+    Args:
+        quantity_str: Quantity as string
+
+    Returns:
+        Parsed quantity as float
+    """
+    try:
+        # Clean up whitespace
+        quantity_str = quantity_str.strip()
+
+        # Handle approximate symbols
+        quantity_str = quantity_str.replace('~', '').replace('≈', '').replace('about', '').strip()
+
+        # Handle unicode fractions
+        for unicode_char, decimal_value in UNICODE_FRACTIONS.items():
+            if unicode_char in quantity_str:
+                # Check if there's a whole number before the fraction
+                parts = quantity_str.split(unicode_char)
+                if parts[0].strip():
+                    whole = float(parts[0].strip())
+                    return whole + decimal_value
+                else:
+                    return decimal_value
+
+        # Handle ranges (e.g., "1-2 cups") - use midpoint
+        if '-' in quantity_str and quantity_str.count('-') == 1:
+            range_parts = quantity_str.split('-')
+            if len(range_parts) == 2:
+                try:
+                    low = float(range_parts[0].strip())
+                    high = float(range_parts[1].strip())
+                    return (low + high) / 2.0
+                except ValueError:
+                    pass  # Fall through to other parsing
+
+        # Handle mixed fractions (e.g., "1 1/2")
+        if ' ' in quantity_str and '/' in quantity_str:
+            parts = quantity_str.split()
+            if len(parts) == 2:
+                whole_part = float(parts[0])
+                fraction_part = parts[1]
+
+                if '/' in fraction_part:
+                    frac_parts = fraction_part.split('/')
+                    if len(frac_parts) == 2:
+                        numerator = float(frac_parts[0])
+                        denominator = float(frac_parts[1])
+                        return whole_part + (numerator / denominator)
+
+        # Handle simple fractions (e.g., "1/2")
+        if '/' in quantity_str:
+            frac_parts = quantity_str.split('/')
+            if len(frac_parts) == 2:
+                numerator = float(frac_parts[0].strip())
+                denominator = float(frac_parts[1].strip())
+                return numerator / denominator
+
+        # Handle simple numbers
+        return float(quantity_str)
+
+    except (ValueError, ZeroDivisionError):
+        # Fallback for unparseable quantities
+        return 1.0
+
+
 async def usda_lookup(ctx: RunContext[MacroDeps], ingredient_name: str) -> Dict:
     """
     Look up nutrition data from USDA FoodData Central API.
-    
+
     Args:
         ingredient_name: Clean ingredient name to search for
-        
+
     Returns:
         Dictionary with nutrition data per 100g or error info
     """
+    # Detect preparation state (raw, cooked, etc.)
+    prep_state = detect_preparation_state(ingredient_name)
+
+    # Build search query with preparation state if detected
+    search_query = ingredient_name
+    if prep_state:
+        # Ensure preparation state is in the search
+        if prep_state not in ingredient_name.lower():
+            search_query = f"{ingredient_name} {prep_state}"
+
     # Check cache first (avoid duplicate API calls)
-    cache_key = ingredient_name.lower().strip()
+    cache_key = search_query.lower().strip()
     if cache_key in ctx.deps.ingredient_cache:
         return ctx.deps.ingredient_cache[cache_key]
-    
+
     try:
         # Use correct USDA FDC API endpoint for search
         search_url = f"{ctx.deps.usda_base_url}/foods/search"
-        
+
         # Proper query parameters based on official API docs
         params = {
-            "query": ingredient_name,
+            "query": search_query,  # Use enhanced query with prep state
             "pageSize": 5,  # Limit results for speed
             "dataType": ["Foundation", "Survey (FNDDS)", "Branded"],  # Include quality data types
         }
@@ -241,35 +366,39 @@ def _extract_carbs(text: str) -> float:
 def convert_to_grams(ctx: RunContext[MacroDeps], quantity: str, unit: str, ingredient_name: str) -> float:
     """
     Convert ingredient quantity to grams for macro calculations.
-    
+
     Args:
-        quantity: Amount as string (e.g., "1", "1.5", "1/2")
+        quantity: Amount as string (e.g., "1", "1.5", "1/2", "1 1/2", "½")
         unit: Unit type (cups, oz, tbsp, etc.)
         ingredient_name: Ingredient name for density lookup
-        
+
     Returns:
         Weight in grams
     """
-    try:
-        # Parse quantity (handle fractions)
-        if "/" in quantity:
-            parts = quantity.split("/")
-            if len(parts) == 2:
-                gram_amount = float(parts[0]) / float(parts[1])
-            else:
-                gram_amount = float(quantity)
-        else:
-            gram_amount = float(quantity)
-            
-    except ValueError:
-        return 100.0  # Default fallback
+    # Use comprehensive parsing helper
+    gram_amount = parse_quantity(quantity)
     
     unit_lower = unit.lower().strip()
-    
+
     # Direct weight units
     if unit_lower in ctx.deps.weight_conversions:
         return gram_amount * ctx.deps.weight_conversions[unit_lower]
-    
+
+    # Tiny units (pinch, dash, etc.) - very small amounts
+    tiny_units = {
+        "pinch": 0.35,      # ~0.35g per pinch
+        "dash": 0.5,        # ~0.5g per dash
+        "smidgen": 0.18,    # ~0.18g per smidgen
+        "hint": 0.25,       # ~0.25g per hint
+        "drop": 0.05,       # ~0.05g per drop
+        "splash": 2.0,      # ~2g per splash
+        "drizzle": 5.0,     # ~5g per drizzle
+        "squeeze": 10.0,    # ~10g per squeeze (e.g., lemon)
+    }
+
+    if unit_lower in tiny_units:
+        return gram_amount * tiny_units[unit_lower]
+
     # Volume units (need ingredient density)
     volume_units = {
         "cup": 240, "cups": 240,
@@ -293,17 +422,57 @@ def convert_to_grams(ctx: RunContext[MacroDeps], quantity: str, unit: str, ingre
     
     # Count/piece units - estimate based on ingredient type
     if unit_lower in ["count", "piece", "pieces", "clove", "cloves"]:
-        # Rough estimates for common items
+        # Comprehensive piece weights for common ingredients (in grams)
         piece_weights = {
-            "egg": 50, "garlic": 3, "onion": 150, "apple": 180,
-            "banana": 120, "carrot": 60, "potato": 150
+            # Eggs & Dairy
+            "egg": 50, "eggs": 50,
+
+            # Vegetables
+            "garlic": 3, "clove": 3,
+            "onion": 150, "yellow onion": 150, "white onion": 150, "red onion": 150,
+            "shallot": 25,
+            "potato": 150, "russet potato": 200, "sweet potato": 130,
+            "tomato": 150, "cherry tomato": 15, "grape tomato": 10, "roma tomato": 100,
+            "carrot": 60, "baby carrot": 10,
+            "celery": 40, "celery stalk": 40,
+            "cucumber": 300, "baby cucumber": 120, "english cucumber": 400,
+            "bell pepper": 150, "red bell pepper": 150, "green bell pepper": 150, "jalapeño": 15, "habanero": 10,
+            "zucchini": 200, "yellow squash": 200,
+            "eggplant": 450, "japanese eggplant": 200,
+            "avocado": 150,
+            "lemon": 50, "lime": 45, "orange": 130,
+            "ginger": 15, "ginger knob": 30,
+            "mushroom": 15, "portobello": 80, "shiitake": 10,
+
+            # Fruits
+            "apple": 180, "banana": 120, "pear": 170, "peach": 150, "plum": 65,
+            "strawberry": 15, "blueberry": 1, "raspberry": 1, "blackberry": 2,
+            "grape": 3, "cherry": 8,
+            "mango": 200, "papaya": 450, "pineapple": 900,
+            "kiwi": 70, "fig": 50, "date": 7,
+
+            # Proteins
+            "chicken breast": 200, "chicken thigh": 150, "chicken wing": 50,
+            "pork chop": 180, "pork tenderloin": 450,
+            "steak": 250, "beef patty": 115,
+            "salmon fillet": 180, "tuna steak": 150, "shrimp": 15, "prawn": 20,
+            "sausage": 50, "hot dog": 45, "bacon strip": 15, "bacon slice": 15,
+
+            # Breads & Grains
+            "slice bread": 30, "bread slice": 30, "toast": 30,
+            "bagel": 85, "english muffin": 60, "pita": 60, "tortilla": 50, "naan": 90,
+            "croissant": 50, "donut": 60, "muffin": 60,
+
+            # Other
+            "walnut": 5, "almond": 1, "pecan": 5, "cashew": 2,
+            "chocolate chip": 0.3,
         }
-        
+
         ingredient_lower = ingredient_name.lower()
         for key, weight in piece_weights.items():
             if key in ingredient_lower:
                 return gram_amount * weight
-                
+
         return gram_amount * 50  # Generic piece weight
         
     # Fallback: assume 100g per unit

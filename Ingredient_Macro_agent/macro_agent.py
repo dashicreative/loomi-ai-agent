@@ -91,15 +91,15 @@ def calculate_nutrition_for_amount(ctx: RunContext[MacroDeps], calories_per_100g
     return f"calories: {scaled_calories:.1f}, protein: {scaled_protein:.1f}g, fat: {scaled_fat:.1f}g, carbs: {scaled_carbs:.1f}g"
 
 
-async def calculate_recipe_macros(ingredients: List[Dict]) -> List[str]:
+async def calculate_recipe_macros(ingredients: List[Dict]) -> str:
     """
     Main function to calculate macros for a complete recipe.
-    
+
     Args:
         ingredients: List of ingredient dictionaries with name, quantity, unit
-        
+
     Returns:
-        List of formatted macro strings: ["X calories", "X g protein", "X g fat", "X g carbs"]
+        Comma-separated numbers: "calories,protein,fat,carbs" (e.g., "450,50,25,30")
     """
     # Create dependencies instance
     deps = create_macro_deps()
@@ -130,7 +130,7 @@ async def calculate_recipe_macros(ingredients: List[Dict]) -> List[str]:
 
 
 # Sync wrapper for easier testing
-def calculate_recipe_macros_sync(ingredients: List[Dict]) -> List[str]:
+def calculate_recipe_macros_sync(ingredients: List[Dict]) -> str:
     """
     Synchronous wrapper for calculate_recipe_macros.
     Easier to use in test CLI.

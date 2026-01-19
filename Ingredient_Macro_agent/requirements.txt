@@ -1,7 +1,7 @@
 # Macro Calculation Agent Dependencies
 
 # Core AI framework
-pydantic-ai==0.0.14
+pydantic-ai>=0.7.4
 
 # HTTP client for API calls
 httpx>=0.25.0
