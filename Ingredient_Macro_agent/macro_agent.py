@@ -23,13 +23,18 @@ def load_system_prompt() -> str:
     with open(prompt_path, 'r') as f:
         return f.read().strip()
 
-# Configure Gemini API - Set as GOOGLE_API_KEY for Pydantic AI
+# Configure Gemini API - Set as GOOGLE_API_KEY for Pydantic AI (ONLY if not already set for Custom Search)
 google_key = os.getenv('GOOGLE_GEMINI_KEY')
 if not google_key:
     raise ValueError("GOOGLE_GEMINI_KEY not found in .env file")
 
-# Pydantic AI expects GOOGLE_API_KEY, so set it from your GOOGLE_GEMINI_KEY
-os.environ['GOOGLE_API_KEY'] = google_key
+# Pydantic AI expects GOOGLE_API_KEY for Gemini
+# IMPORTANT: Only set if GOOGLE_API_KEY is not already set (for Custom Search API)
+if not os.getenv('GOOGLE_API_KEY'):
+    os.environ['GOOGLE_API_KEY'] = google_key
+# If GOOGLE_API_KEY is already set, use GEMINI_API_KEY instead for Gemini
+if os.getenv('GOOGLE_API_KEY') != google_key:
+    os.environ['GEMINI_API_KEY'] = google_key
 
 # Create the macro calculation agent using Google model
 macro_agent = Agent(
