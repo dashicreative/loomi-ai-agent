@@ -309,15 +309,28 @@ async def web_nutrition_search(ctx: RunContext[MacroDeps], ingredient_name: str)
         if not items:
             print(f"⚠️  WEB: No search results for '{ingredient_name}'")
             return {"error": "No web nutrition data found", "source": "WEB_SEARCH"}
-        
+
+        # DEBUG: Show search results
+        print(f"\n  🔍 Web search for '{ingredient_name}':")
+        print(f"     Query: {query}")
+        print(f"     Got {len(items)} results\n")
+
         # Extract nutrition hints from search snippets
         # This is a simple heuristic-based approach
         nutrition_text = ""
-        for item in items[:3]:  # Use top 3 results
+        for i, item in enumerate(items[:3], 1):  # Use top 3 results
             snippet = item.get("snippet", "")
             title = item.get("title", "")
+            url = item.get("link", "")
+
+            # DEBUG: Show each result
+            print(f"     Result {i}: {title[:60]}")
+            print(f"     URL: {url[:70]}")
+            print(f"     Snippet: {snippet[:150]}...")
+            print()
+
             nutrition_text += f"{title} {snippet} "
-        
+
         # Estimate nutrition values from search text using basic patterns
         estimated_macros = {
             "calories": _extract_calories(nutrition_text),
@@ -328,6 +341,10 @@ async def web_nutrition_search(ctx: RunContext[MacroDeps], ingredient_name: str)
             "description": ingredient_name,
             "search_query": query
         }
+
+        # DEBUG: Show extracted values
+        print(f"     📊 Extracted: {estimated_macros['calories']} cal, {estimated_macros['protein']}p, {estimated_macros['fat']}f, {estimated_macros['carbs']}c per 100g")
+        print(f"     ⚠️  WARNING: Regex extraction from snippets - may be inaccurate!\n")
         
         # Cache the web result
         ctx.deps.ingredient_cache[cache_key] = estimated_macros
