@@ -10,6 +10,127 @@ import json
 from typing import Dict, List, Any
 
 
+def normalize_ingredient_units(ingredients: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """
+    Normalize unit abbreviations and variations to consistent full names.
+
+    Handles common abbreviations like:
+        "c" → "cup"
+        "tbsp" → "tablespoon"
+        "tsp" → "teaspoon"
+        "oz" → "ounce"
+        "lb" → "pound"
+
+    Also normalizes plural forms to singular for consistency.
+
+    Args:
+        ingredients: List of ingredient dicts with 'name', 'quantity', 'unit' keys
+
+    Returns:
+        List of ingredients with normalized units
+    """
+    # Comprehensive unit normalization map
+    unit_normalization_map = {
+        # Volume measurements - abbreviations to full names
+        "c": "cup",
+        "tbsp": "tablespoon",
+        "tbs": "tablespoon",
+        "tb": "tablespoon",
+        "tsp": "teaspoon",
+        "t": "teaspoon",
+        "ml": "milliliter",
+        "l": "liter",
+        "pt": "pint",
+        "qt": "quart",
+        "gal": "gallon",
+        "fl oz": "fluid ounce",
+        "fl. oz": "fluid ounce",
+        "fl. oz.": "fluid ounce",
+
+        # Volume - plural to singular normalization
+        "cups": "cup",
+        "tablespoons": "tablespoon",
+        "teaspoons": "teaspoon",
+        "milliliters": "milliliter",
+        "liters": "liter",
+        "pints": "pint",
+        "quarts": "quart",
+        "gallons": "gallon",
+
+        # Weight measurements - abbreviations to full names
+        "oz": "ounce",
+        "oz.": "ounce",
+        "lb": "pound",
+        "lbs": "pound",
+        "lb.": "pound",
+        "lbs.": "pound",
+        "g": "gram",
+        "kg": "kilogram",
+
+        # Weight - plural to singular normalization
+        "ounces": "ounce",
+        "pounds": "pound",
+        "grams": "gram",
+        "kilograms": "kilogram",
+
+        # Count/piece measurements - plural to singular
+        "pieces": "piece",
+        "slices": "slice",
+        "cloves": "clove",
+        "bunches": "bunch",
+        "heads": "head",
+        "cans": "can",
+        "jars": "jar",
+        "packages": "package",
+        "bags": "bag",
+
+        # Already normalized singular forms (pass through unchanged)
+        "cup": "cup",
+        "tablespoon": "tablespoon",
+        "teaspoon": "teaspoon",
+        "milliliter": "milliliter",
+        "liter": "liter",
+        "pint": "pint",
+        "quart": "quart",
+        "gallon": "gallon",
+        "ounce": "ounce",
+        "pound": "pound",
+        "gram": "gram",
+        "kilogram": "kilogram",
+        "piece": "piece",
+        "slice": "slice",
+        "clove": "clove",
+        "bunch": "bunch",
+        "head": "head",
+        "can": "can",
+        "jar": "jar",
+        "package": "package",
+        "bag": "bag",
+        "count": "count",
+    }
+
+    normalized_ingredients = []
+
+    for ingredient in ingredients:
+        # Create a copy to avoid mutating the original
+        normalized = ingredient.copy()
+
+        # Get the unit and normalize it
+        unit = ingredient.get("unit", "").strip()
+        unit_lower = unit.lower()
+
+        # Apply normalization if unit is in the map
+        if unit_lower in unit_normalization_map:
+            normalized["unit"] = unit_normalization_map[unit_lower]
+        # If not in map, keep original (but strip whitespace)
+        elif unit:
+            normalized["unit"] = unit_lower
+
+        normalized_ingredients.append(normalized)
+
+    return normalized_ingredients
+
+
 def create_standard_recipe_json(
     title: str,
     parser_method: str,
@@ -38,6 +159,9 @@ def create_standard_recipe_json(
     Returns:
         Standardized recipe dictionary
     """
+    # Normalize ingredient units (c → cup, tbsp → tablespoon, etc.)
+    ingredients = normalize_ingredient_units(ingredients)
+
     # Default empty nutrition if not provided
     if nutrition is None:
         nutrition = {
@@ -114,7 +238,10 @@ def create_enhanced_recipe_json(
             "quantity": ingredient_data["quantity"],
             "unit": ingredient_data["unit"]
         })
-    
+
+    # Normalize ingredient units (c → cup, tbsp → tablespoon, etc.)
+    ingredients_list = normalize_ingredient_units(ingredients_list)
+
     # Create step mappings lookup for quick access
     step_ingredient_lookup = {mapping["step_number"]: mapping["ingredient_ids"] for mapping in step_mappings}
     
@@ -147,6 +274,8 @@ def create_enhanced_recipe_json(
 
     # Add meta_ingredients if provided (deduplicated shopping-friendly list)
     if meta_ingredients:
+        # Normalize meta-ingredient units as well
+        meta_ingredients = normalize_ingredient_units(meta_ingredients)
         recipe_dict["meta_ingredients"] = meta_ingredients
 
     return recipe_dict
