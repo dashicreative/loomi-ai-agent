@@ -14,48 +14,37 @@ def test_sample_ingredients():
     print("🥘 MACRO CALCULATION AGENT - TEST CLI")
     print("=" * 60)
     
-    # Sample ingredient array (cookie recipe)
+    # Sample ingredient array (Loaded Greek Chicken Salad Bowl)
     sample_ingredients = [
-        {
-            "name": "salted butter, softened",
-            "quantity": "1",
-            "unit": "cup"
-        },
-        {
-            "name": "packed dark brown sugar",
-            "quantity": "2",
-            "unit": "cup"
-        },
-        {
-            "name": "vanilla extract",
-            "quantity": "2",
-            "unit": "tsp"
-        },
-        {
-            "name": "eggs",
-            "quantity": "2",
-            "unit": "count"
-        },
-        {
-            "name": "all-purpose flour",
-            "quantity": "1.75",
-            "unit": "cup"
-        },
-        {
-            "name": "salt",
-            "quantity": "1",
-            "unit": "tsp"
-        },
-        {
-            "name": "baking soda",
-            "quantity": "0.5",
-            "unit": "tsp"
-        },
-        {
-            "name": "old-fashioned oats",
-            "quantity": "3",
-            "unit": "cup"
-        }
+        {"name": "pita", "quantity": "1", "unit": "count"},
+        {"name": "uncooked potato", "quantity": "400", "unit": "gram"},
+        {"name": "aromat seasoning", "quantity": "2", "unit": "teaspoon"},
+        {"name": "olive oil", "quantity": "1", "unit": "teaspoon"},
+        {"name": "uncooked chicken breast, diced", "quantity": "200", "unit": "gram"},
+        {"name": "of garlic, minced", "quantity": "2", "unit": "clove"},
+        {"name": "paprika", "quantity": "1", "unit": "teaspoon"},
+        {"name": "cumin", "quantity": "1", "unit": "teaspoon"},
+        {"name": "chilli powder", "quantity": "0.5", "unit": "teaspoon"},
+        {"name": "Squeeze of lemon juice", "quantity": "1", "unit": "count"},
+        {"name": "natural Greek style yoghurt", "quantity": "15", "unit": "gram"},
+        {"name": "Salt", "quantity": "1", "unit": "count"},
+        {"name": "pepper", "quantity": "1", "unit": "count"},
+        {"name": "olive oil", "quantity": "1", "unit": "teaspoon"},
+        {"name": "natural Greek yoghurt", "quantity": "2", "unit": "tablespoon"},
+        {"name": "baby cucumber", "quantity": "1", "unit": "count"},
+        {"name": "mint leaves", "quantity": "2", "unit": "count"},
+        {"name": "of garlic, minced", "quantity": "1", "unit": "clove"},
+        {"name": "Squeeze of lemon", "quantity": "1", "unit": "count"},
+        {"name": "olive oil", "quantity": "1", "unit": "teaspoon"},
+        {"name": "Salt", "quantity": "1", "unit": "count"},
+        {"name": "pepper", "quantity": "1", "unit": "count"},
+        {"name": "cherry tomatoes", "quantity": "5", "unit": "count"},
+        {"name": "baby cucumbers", "quantity": "2", "unit": "count"},
+        {"name": "red onion", "quantity": "0.5", "unit": "count"},
+        {"name": "olives", "quantity": "6", "unit": "count"},
+        {"name": "dried dill", "quantity": "0.5", "unit": "teaspoon"},
+        {"name": "feta cheese, crumbled", "quantity": "50", "unit": "gram"},
+        {"name": "olive oil", "quantity": "1", "unit": "teaspoon"}
     ]
     
     print("📋 Input Ingredients:")
