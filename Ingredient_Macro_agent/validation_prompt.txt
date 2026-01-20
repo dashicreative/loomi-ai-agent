@@ -34,30 +34,74 @@ DATA SOURCE CONFIDENCE LEVELS:
 
 COMMON RED FLAGS TO CHECK:
 
-1. MISSING QUANTITIES (count=1 by default):
+1. ABSURD MACRO VALUES (CRITICAL - ALWAYS FLAG):
+   • Calories >1000 per 100g for any non-oil/fat ingredient
+   • Spice/seasoning showing >50 calories TOTAL (not per 100g)
+   • Salt or pepper contributing >20 calories TOTAL
+   • Any single macro >100g per 100g (impossible)
+   • Vegetables with >10g protein per 100g (potatoes ~2g, most veggies <3g)
+   • Vegetables with >5g fat per 100g (most are <1g)
+   • Garlic/onion showing >2g fat per 100g (should be ~0.1-0.5g)
+   • Chicken breast with <25g protein per 100g (should be ~30-31g)
+   • Oils showing any protein or carbs (should be 100% fat)
+
+2. INGREDIENT-SPECIFIC SANITY CHECKS (CRITICAL):
+   Common ingredients with expected macro ranges per 100g:
+
+   VEGETABLES:
+   • Potato: ~77 cal, 2p, 0.1f, 17c
+   • Garlic: ~149 cal, 6p, 0.5f, 33c
+   • Onion: ~40 cal, 1p, 0.1f, 9c
+   • Cucumber: ~15 cal, 0.6p, 0.1f, 3.6c
+   • Tomato: ~18 cal, 0.9p, 0.2f, 3.9c
+
+   PROTEINS:
+   • Chicken breast: ~165 cal, 31p, 3.6f, 0c
+   • Ground beef (80/20): ~254 cal, 17p, 20f, 0c
+
+   FATS/OILS:
+   • Olive oil: ~900 cal, 0p, 100f, 0c
+   • Butter: ~717 cal, 0.9p, 81f, 0.1c
+
+   DAIRY:
+   • Greek yogurt: ~59-100 cal, 9-10p, 0-4f, 3.6-6c
+   • Feta cheese: ~264 cal, 14p, 21f, 4c
+
+   SPICES (per 100g, but used in tiny amounts):
+   • Most dried spices: 250-350 cal/100g
+   • Black pepper: ~251 cal/100g (but 0.5 tsp = ~1g = ~3 cal TOTAL)
+   • Chili powder: ~282 cal/100g (but 0.5 tsp = ~1.5g = ~4 cal TOTAL)
+
+   If values are WAY OFF these ranges, FLAG AS CRITICAL.
+
+3. MISSING QUANTITIES (count=1 by default):
    • Count-based ingredients showing quantity=1 when recipe context suggests more
    • Example: "1 count cherry tomatoes" in a salad (should be 6-12)
    • Look for phrases in directions like "add the tomatoes" (plural implies multiple)
 
-2. GENERIC ESTIMATES (SOURCE=ESTIMATE):
+4. GENERIC ESTIMATES (SOURCE=ESTIMATE):
    • Ingredients using 50g default because piece weight unknown
    • These are HIGH PRIORITY for flagging
+   • Especially bad for seasonings like salt/pepper (should be 1-2g, not 50g)
 
-3. WATER DENSITY FALLBACK (SOURCE=WATER):
+5. WATER DENSITY FALLBACK (SOURCE=WATER):
    • Volume units (tsp, tbsp, cup) using water density when real density unknown
    • Can be very wrong for non-water-like ingredients
 
-4. UNREASONABLE MACRO RATIOS:
-   • Protein source showing mostly carbs
-   • Vegetable showing high fat content
-   • Oil/fat showing carbs or protein
-
-5. CONTEXT MISMATCHES:
+6. CONTEXT MISMATCHES (USE RECIPE REASONING):
    • Recipe title says "loaded" but ingredient quantities seem minimal
    • "Salad bowl" but very few vegetables by calorie contribution
    • "Protein bowl" but protein contribution is low
 
-6. EXTRACTION ERRORS:
+   EXAMPLE CONTEXT REASONING:
+   • "Loaded Greek Chicken Salad Bowl" with 1472 cal from potato alone?
+     → That's 400g of potato in a "salad" - seems excessive. Potatoes aren't typical in Greek salads.
+   • "Loaded Greek Chicken Salad Bowl" with only 18 cal from tomatoes?
+     → Greek salads are tomato-forward. 5 cherry tomatoes seems low - expect 8-12.
+   • Pepper contributing 166 cal in ANY recipe?
+     → Absurd. Pepper is a seasoning used in pinches (~1-2g = 3-6 cal max).
+
+7. EXTRACTION ERRORS:
    • Ingredient name includes preparation notes that might indicate quantity
    • Example: "of garlic, minced" suggests extraction missed "cloves"
 
@@ -65,16 +109,31 @@ COMMON RED FLAGS TO CHECK:
 
 VALIDATION APPROACH:
 
-For each ingredient, consider:
-• Does the quantity make sense given the recipe type?
-• Does the macro breakdown match the ingredient's nature? (e.g., chicken = high protein)
-• Does the data source suggest potential inaccuracy?
-• Would a typical home cook use this amount in this recipe?
+For each ingredient, STRICTLY CHECK IN THIS ORDER:
 
-Use recipe semantics:
-• "Loaded Greek Chicken Salad Bowl" → expect substantial vegetable quantities
-• "Protein Bowl" → expect high protein from main ingredient
-• "Snack" vs "Meal" → different quantity expectations
+1. ABSURD VALUE CHECK (CRITICAL):
+   • Compare ingredient macros to expected ranges in section 2
+   • If values are >2x expected OR <50% expected → FLAG AS CRITICAL
+   • Example: Potato showing 368 cal/100g instead of 77 cal/100g → CRITICAL
+   • Example: Chicken showing 14.7g protein/100g instead of 31g/100g → CRITICAL
+   • Example: Garlic showing 20g fat/100g instead of 0.5g/100g → CRITICAL
+
+2. TOTAL CALORIE SANITY (CRITICAL):
+   • Spices/seasonings should contribute <10 cal each
+   • If pepper/salt/spices show >50 cal TOTAL → CRITICAL (likely 50g default error)
+   • Example: "pepper 166 cal" = used 50g default instead of 1-2g → CRITICAL
+
+3. DATA SOURCE REVIEW (HIGH PRIORITY):
+   • SOURCE=ESTIMATE → Always flag (generic 50g default)
+   • SOURCE=WATER → Flag if ingredient is not water-like
+
+4. RECIPE CONTEXT CHECK (MEDIUM PRIORITY):
+   • Does quantity make sense for recipe type?
+   • Would a typical home cook use this amount?
+   • Does total match recipe title (e.g., "loaded" = generous portions)?
+
+5. EXTRACTION ERROR CHECK (LOW PRIORITY):
+   • Ingredient name suggests missing quantity info?
 
 ---
 

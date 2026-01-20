@@ -422,6 +422,109 @@ def _extract_carbs(text: str) -> float:
     return 10.0  # Conservative carb estimate
 
 
+async def batch_validate_usda_matches(matches: List[tuple[str, str]]) -> List[bool]:
+    """
+    Batch validate multiple USDA matches in a single LLM call for efficiency.
+
+    Args:
+        matches: List of (ingredient_requested, usda_match_name) tuples
+
+    Returns:
+        List of booleans indicating which matches are valid (True) or invalid (False)
+
+    Example:
+        matches = [
+            ("garlic, minced", "Ham, minced"),
+            ("olive oil", "Olive oil"),
+            ("uncooked potato", "Quinoa, uncooked")
+        ]
+        results = [False, True, False]  # garlic and potato are wrong matches
+    """
+    import google.generativeai as genai
+
+    if not matches:
+        return []
+
+    # Build the batch validation prompt
+    prompt = """You are a food database matching validator. Check if USDA database entries correctly match the requested ingredients.
+
+Answer YES only if they are the SAME FOOD ITEM (ignore preparation differences like minced, chopped, cooked).
+Answer NO if they are DIFFERENT FOODS entirely.
+
+CRITICAL RULES:
+- Different base foods = NO (garlic vs ham, potato vs quinoa, pita bread vs pita chips)
+- Same food, different prep = YES (chicken breast vs breaded chicken breast)
+- Different cooking states of same food = YES (cooked rice vs uncooked rice)
+- Different forms/products of different foods = NO (bread vs chips, even if same grain)
+
+EXAMPLES:
+❌ NO: "garlic, minced" vs "Ham, minced" (different foods: garlic ≠ ham)
+❌ NO: "uncooked potato" vs "Quinoa, uncooked" (different foods: potato ≠ quinoa)
+❌ NO: "pita" vs "Pita chips" (different products: bread ≠ fried chips)
+❌ NO: "mint leaves" vs "Drumstick leaves" (different plants)
+✅ YES: "chicken breast, diced" vs "Chicken breast" (same food, prep difference)
+✅ YES: "olive oil, bottled" vs "Olive oil" (same food, packaging difference)
+✅ YES: "cooked rice" vs "Rice, white, cooked" (same food, same state)
+
+NOW VALIDATE THESE MATCHES:
+
+"""
+
+    # Add all matches to validate
+    for i, (ingredient, usda_match) in enumerate(matches, 1):
+        prompt += f"{i}. Requested: \"{ingredient}\" | USDA matched: \"{usda_match}\"\n"
+
+    prompt += """
+OUTPUT FORMAT: Return ONLY a comma-separated list of YES or NO, one for each match in order.
+Example: NO,YES,NO,YES
+
+Your answer:"""
+
+    try:
+        # Call Gemini for batch validation
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": 0.1,  # Very low temperature for consistent validation
+                "max_output_tokens": 500
+            }
+        )
+
+        response_text = response.text.strip()
+
+        # Parse comma-separated YES/NO responses
+        answers = [answer.strip().upper() for answer in response_text.split(',')]
+
+        # Convert to booleans
+        results = []
+        for i, answer in enumerate(answers):
+            if i >= len(matches):
+                break  # Don't go beyond expected number of matches
+
+            # YES = valid match, NO = invalid match
+            is_valid = 'YES' in answer
+            results.append(is_valid)
+
+            # Debug output
+            ingredient, usda_match = matches[i]
+            status = "✅ VALID" if is_valid else "❌ INVALID"
+            print(f"  {status}: '{ingredient}' → '{usda_match}'")
+
+        # If we got fewer responses than matches, mark rest as valid (conservative)
+        while len(results) < len(matches):
+            results.append(True)
+            print(f"  ⚠️  Missing validation response for match {len(results)}, assuming valid")
+
+        return results
+
+    except Exception as e:
+        print(f"⚠️  Batch validation failed: {e}")
+        print(f"   Assuming all matches valid (fallback)")
+        # On error, assume all valid rather than rejecting everything
+        return [True] * len(matches)
+
+
 def convert_to_grams(ctx: RunContext[MacroDeps], quantity: str, unit: str, ingredient_name: str, usda_portions=None) -> tuple[float, str]:
     """
     Convert ingredient quantity to grams using 4-tier fallback system.

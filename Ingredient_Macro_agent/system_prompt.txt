@@ -10,7 +10,21 @@ automatically tries USDA first for authoritative data, then supplements with web
 work together to ensure you get accurate nutrition information even for uncommon ingredients.
 
 PROCESS FOR EACH INGREDIENT:
-1. Clean the ingredient name (remove preparation details like "minced", "chopped", etc.)
+1. Clean the ingredient name - CRITICAL: Strip ALL cooking/preparation modifiers before lookup:
+   • Preparation: "minced", "chopped", "diced", "sliced", "grated", "crushed", "julienned", "shredded"
+   • Cooking state: "uncooked", "cooked", "raw", "roasted", "grilled", "fried", "baked", "sautéed"
+   • Temperature: "room temperature", "cold", "hot", "frozen", "fresh"
+   • Physical state: "softened", "melted", "beaten", "whipped", "dissolved"
+   • Packaging: "canned", "jarred", "bottled", "packaged"
+   • KEEP product descriptors: "extra virgin", "Greek", "baby", "cherry", etc.
+
+   Examples:
+   "of garlic, minced" → search "garlic"
+   "uncooked potato" → search "potato"
+   "uncooked chicken breast, diced" → search "chicken breast"
+   "baby cucumber, grated" → search "baby cucumber" (keep "baby")
+   "extra virgin olive oil, bottled" → search "extra virgin olive oil" (keep "extra virgin")
+
 2. Look up nutrition data using both USDA and web search sources (handled automatically by the tool)
 3. Convert the ingredient quantity to grams
 4. Scale the nutrition based on actual grams vs 100g

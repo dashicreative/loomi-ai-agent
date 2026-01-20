@@ -119,25 +119,69 @@ async def calculate_recipe_macros_optimized(ingredients: List[Dict]) -> str:
     ctx = SimpleContext(deps)
 
     try:
-        # Step 1: Parallel nutrition lookups for ALL ingredients
-        async def lookup_ingredient(ingredient: Dict):
-            """Lookup nutrition data for a single ingredient"""
+        # Step 1: Parallel nutrition lookups for ALL ingredients (USDA only first)
+        async def lookup_ingredient_usda(ingredient: Dict):
+            """Try USDA lookup for a single ingredient"""
             name = ingredient['name']
-
-            # Try USDA first
             usda_result = await tools.usda_lookup(ctx, name)
 
             if "error" not in usda_result:
+                # Return USDA result with matched description for validation
                 return {
                     'name': name,
                     'calories': usda_result.get('calories', 0),
                     'protein': usda_result.get('protein', 0),
                     'fat': usda_result.get('fat', 0),
                     'carbs': usda_result.get('carbs', 0),
-                    'source': 'USDA'
+                    'portions': usda_result.get('portions', []),
+                    'source': 'USDA',
+                    'usda_match': usda_result.get('description', name)  # For validation
                 }
 
-            # USDA failed, try web search
+            # USDA failed
+            return {
+                'name': name,
+                'calories': 0,
+                'protein': 0,
+                'fat': 0,
+                'carbs': 0,
+                'source': 'USDA_FAILED',
+                'usda_match': None
+            }
+
+        # First pass: Try USDA for all ingredients
+        print("\n🔍 Nutrition Data Sources:")
+        print("-" * 50)
+        initial_data = await asyncio.gather(*[lookup_ingredient_usda(ing) for ing in ingredients])
+
+        # Step 1.5: BATCH VALIDATE USDA MATCHES
+        usda_matches = []
+        usda_indices = []
+
+        for i, data in enumerate(initial_data):
+            if data['source'] == 'USDA' and data['usda_match']:
+                usda_matches.append((data['name'], data['usda_match']))
+                usda_indices.append(i)
+
+        if usda_matches:
+            print(f"\n🔍 Validating {len(usda_matches)} USDA matches...")
+            validation_results = await tools.batch_validate_usda_matches(usda_matches)
+
+            # Mark invalid matches for re-processing
+            invalid_indices = []
+            for i, is_valid in enumerate(validation_results):
+                if not is_valid:
+                    idx = usda_indices[i]
+                    invalid_indices.append(idx)
+                    initial_data[idx]['source'] = 'USDA_INVALID'
+
+            if invalid_indices:
+                print(f"\n🔄 Re-processing {len(invalid_indices)} invalid USDA matches with web search...")
+
+        # Step 1.6: Retry failed/invalid matches with web search
+        async def retry_with_web(index: int, ingredient: Dict):
+            """Retry with web search for failed/invalid USDA lookups"""
+            name = ingredient['name']
             web_result = await tools.web_nutrition_search(ctx, name)
 
             if "error" not in web_result:
@@ -150,7 +194,7 @@ async def calculate_recipe_macros_optimized(ingredients: List[Dict]) -> str:
                     'source': 'WEB'
                 }
 
-            # Both failed
+            # Both USDA and web failed
             return {
                 'name': name,
                 'calories': 0,
@@ -160,11 +204,24 @@ async def calculate_recipe_macros_optimized(ingredients: List[Dict]) -> str:
                 'source': 'ERROR'
             }
 
-        # Parallel lookups for all ingredients
-        print("\n🔍 Nutrition Data Sources:")
-        print("-" * 50)
-        nutrition_data = await asyncio.gather(*[lookup_ingredient(ing) for ing in ingredients])
+        # Re-process failed/invalid matches
+        retry_tasks = []
+        retry_indices = []
+        for i, data in enumerate(initial_data):
+            if data['source'] in ['USDA_FAILED', 'USDA_INVALID']:
+                retry_tasks.append(retry_with_web(i, ingredients[i]))
+                retry_indices.append(i)
 
+        if retry_tasks:
+            retry_results = await asyncio.gather(*retry_tasks)
+            for i, result in zip(retry_indices, retry_results):
+                initial_data[i] = result
+
+        # Final nutrition data
+        nutrition_data = initial_data
+
+        # Print final sources
+        print()
         for data in nutrition_data:
             source_emoji = "✅" if data['source'] == 'USDA' else ("🌐" if data['source'] == 'WEB' else "❌")
             print(f"{source_emoji} {data['source']:5} - {data['name']}")
