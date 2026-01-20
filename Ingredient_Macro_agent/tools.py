@@ -269,6 +269,96 @@ async def usda_lookup(ctx: RunContext[MacroDeps], ingredient_name: str) -> Dict:
         return {"error": error_msg, "source": "USDA_API"}
 
 
+async def _extract_nutrition_with_llm(ingredient_name: str, search_results: str) -> Dict:
+    """
+    Use LLM to intelligently extract nutrition per 100g from web search results.
+
+    Args:
+        ingredient_name: The ingredient to extract nutrition for
+        search_results: Formatted search results (titles, URLs, snippets)
+
+    Returns:
+        Dictionary with calories, protein, fat, carbs per 100g
+    """
+    import google.generativeai as genai
+
+    prompt = f"""You are a nutrition data extraction expert. Extract accurate nutrition values PER 100 GRAMS for: "{ingredient_name}"
+
+SEARCH RESULTS:
+{search_results}
+
+TASK:
+Extract nutrition values that are EXPLICITLY per 100g/100 grams, OR that you can reliably infer as per 100g.
+
+CRITICAL RULES:
+1. IGNORE recipe totals (e.g., "This recipe has 640 calories" - that's NOT per 100g!)
+2. IGNORE per-serving values unless you can calculate per 100g
+3. IGNORE values without clear units
+4. If multiple sources disagree, use the most authoritative (nutrition databases, USDA, official sources)
+5. If no clear per-100g data found, use your nutrition knowledge to estimate reasonable values based on food type
+
+FOOD TYPE REASONING:
+- Vegetables (cucumbers, tomatoes): Usually 10-50 cal/100g, low protein (<2g), very low fat (<1g)
+- Leafy greens/herbs: Usually 20-70 cal/100g, moderate protein (2-5g)
+- Garlic: ~149 cal/100g, 6g protein, 0.5g fat, 33g carbs
+- Pita bread: ~275 cal/100g, 9g protein, 1g fat, 56g carbs
+- Potatoes: ~77 cal/100g, 2g protein, 0.1g fat, 17g carbs
+
+OUTPUT FORMAT (JSON only, no explanation):
+{{
+  "calories": <number>,
+  "protein": <number>,
+  "fat": <number>,
+  "carbs": <number>,
+  "reasoning": "<brief explanation of source or estimation method>"
+}}
+
+Be conservative and reasonable - don't return absurd values like 640 cal/100g for cucumber!
+"""
+
+    try:
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": 0.2,  # Low temperature for consistent extraction
+                "max_output_tokens": 500
+            }
+        )
+
+        response_text = response.text.strip()
+
+        # Remove markdown code blocks if present
+        if response_text.startswith("```json"):
+            response_text = response_text[7:]
+        if response_text.startswith("```"):
+            response_text = response_text[3:]
+        if response_text.endswith("```"):
+            response_text = response_text[:-3]
+        response_text = response_text.strip()
+
+        # Parse JSON
+        result = json.loads(response_text)
+
+        # Validate and extract values
+        return {
+            "calories": float(result.get("calories", 50)),
+            "protein": float(result.get("protein", 3)),
+            "fat": float(result.get("fat", 1)),
+            "carbs": float(result.get("carbs", 10))
+        }
+
+    except json.JSONDecodeError as e:
+        print(f"     ⚠️  LLM JSON parse error: {e}")
+        print(f"     Response: {response_text[:200]}")
+        # Return conservative defaults
+        return {"calories": 50, "protein": 3, "fat": 1, "carbs": 10}
+    except Exception as e:
+        print(f"     ⚠️  LLM extraction failed: {e}")
+        # Return conservative defaults
+        return {"calories": 50, "protein": 3, "fat": 1, "carbs": 10}
+
+
 async def web_nutrition_search(ctx: RunContext[MacroDeps], ingredient_name: str) -> Dict:
     """
     Search the web for nutrition information when USDA fails.
@@ -315,10 +405,9 @@ async def web_nutrition_search(ctx: RunContext[MacroDeps], ingredient_name: str)
         print(f"     Query: {query}")
         print(f"     Got {len(items)} results\n")
 
-        # Extract nutrition hints from search snippets
-        # This is a simple heuristic-based approach
-        nutrition_text = ""
-        for i, item in enumerate(items[:3], 1):  # Use top 3 results
+        # Format search results for LLM
+        search_results_text = ""
+        for i, item in enumerate(items[:5], 1):  # Use top 5 results
             snippet = item.get("snippet", "")
             title = item.get("title", "")
             url = item.get("link", "")
@@ -329,22 +418,18 @@ async def web_nutrition_search(ctx: RunContext[MacroDeps], ingredient_name: str)
             print(f"     Snippet: {snippet[:150]}...")
             print()
 
-            nutrition_text += f"{title} {snippet} "
+            search_results_text += f"\nResult {i}:\nTitle: {title}\nURL: {url}\nSnippet: {snippet}\n"
 
-        # Estimate nutrition values from search text using basic patterns
-        estimated_macros = {
-            "calories": _extract_calories(nutrition_text),
-            "protein": _extract_protein(nutrition_text),
-            "fat": _extract_fat(nutrition_text),
-            "carbs": _extract_carbs(nutrition_text),
-            "source": "WEB_SEARCH",
-            "description": ingredient_name,
-            "search_query": query
-        }
+        # Use LLM to intelligently extract nutrition per 100g
+        print(f"     🤖 Using LLM to parse nutrition data...")
+        estimated_macros = await _extract_nutrition_with_llm(ingredient_name, search_results_text)
 
         # DEBUG: Show extracted values
-        print(f"     📊 Extracted: {estimated_macros['calories']} cal, {estimated_macros['protein']}p, {estimated_macros['fat']}f, {estimated_macros['carbs']}c per 100g")
-        print(f"     ⚠️  WARNING: Regex extraction from snippets - may be inaccurate!\n")
+        print(f"     📊 Extracted: {estimated_macros['calories']} cal, {estimated_macros['protein']}p, {estimated_macros['fat']}f, {estimated_macros['carbs']}c per 100g\n")
+
+        estimated_macros["source"] = "WEB_SEARCH"
+        estimated_macros["description"] = ingredient_name
+        estimated_macros["search_query"] = query
         
         # Cache the web result
         ctx.deps.ingredient_cache[cache_key] = estimated_macros
@@ -361,82 +446,7 @@ async def web_nutrition_search(ctx: RunContext[MacroDeps], ingredient_name: str)
         return {"error": error_msg, "source": "WEB_SEARCH"}
 
 
-def _extract_calories(text: str) -> float:
-    """Extract calorie estimate from search text using regex patterns."""
-    patterns = [
-        r'(\d+)\s*calories?',
-        r'(\d+)\s*kcal',
-        r'calories?[\s:]*(\d+)',
-        r'energy[\s:]*(\d+)'
-    ]
-    
-    for pattern in patterns:
-        matches = re.findall(pattern, text.lower())
-        if matches:
-            try:
-                return float(matches[0])
-            except ValueError:
-                continue
-    
-    # Default estimate for common ingredients if no pattern found
-    return 50.0  # Conservative estimate
-
-
-def _extract_protein(text: str) -> float:
-    """Extract protein estimate from search text."""
-    patterns = [
-        r'(\d+(?:\.\d+)?)\s*g?\s*protein',
-        r'protein[\s:]*(\d+(?:\.\d+)?)\s*g?',
-    ]
-    
-    for pattern in patterns:
-        matches = re.findall(pattern, text.lower())
-        if matches:
-            try:
-                return float(matches[0])
-            except ValueError:
-                continue
-    
-    return 3.0  # Conservative protein estimate
-
-
-def _extract_fat(text: str) -> float:
-    """Extract fat estimate from search text."""
-    patterns = [
-        r'(\d+(?:\.\d+)?)\s*g?\s*fat',
-        r'fat[\s:]*(\d+(?:\.\d+)?)\s*g?',
-        r'(\d+(?:\.\d+)?)\s*g?\s*lipid',
-    ]
-    
-    for pattern in patterns:
-        matches = re.findall(pattern, text.lower())
-        if matches:
-            try:
-                return float(matches[0])
-            except ValueError:
-                continue
-    
-    return 1.0  # Conservative fat estimate
-
-
-def _extract_carbs(text: str) -> float:
-    """Extract carbohydrate estimate from search text."""
-    patterns = [
-        r'(\d+(?:\.\d+)?)\s*g?\s*carbs?',
-        r'(\d+(?:\.\d+)?)\s*g?\s*carbohydrates?',
-        r'carbs?[\s:]*(\d+(?:\.\d+)?)\s*g?',
-        r'carbohydrates?[\s:]*(\d+(?:\.\d+)?)\s*g?',
-    ]
-    
-    for pattern in patterns:
-        matches = re.findall(pattern, text.lower())
-        if matches:
-            try:
-                return float(matches[0])
-            except ValueError:
-                continue
-    
-    return 10.0  # Conservative carb estimate
+# Old regex-based extraction functions removed - now using LLM for intelligent parsing
 
 
 async def batch_validate_usda_matches(matches: List[tuple[str, str]]) -> List[bool]:
