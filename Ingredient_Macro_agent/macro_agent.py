@@ -348,6 +348,121 @@ Your estimates:"""
         await deps.http_client.aclose()
 
 
+async def validate_macro_results(
+    recipe_title: str,
+    directions: List[str],
+    ingredient_results: List[Dict],
+    total_calories: int,
+    total_protein: int,
+    total_fat: int,
+    total_carbs: int
+) -> Dict:
+    """
+    Validate calculated macro results using LLM reasoning.
+
+    This is a TOOL that the agent can use to sanity-check its calculations.
+    It provides contextual validation using recipe semantics and common sense.
+
+    Args:
+        recipe_title: Recipe name (e.g., "Loaded Greek Chicken Salad Bowl")
+        directions: List of cooking directions
+        ingredient_results: Per-ingredient breakdown with source tracking
+        total_calories: Total calculated calories
+        total_protein: Total calculated protein (g)
+        total_fat: Total calculated fat (g)
+        total_carbs: Total calculated carbs (g)
+
+    Returns:
+        {
+            "confidence": 0-100,
+            "flagged_ingredients": [...],
+            "overall_reasoning": "..."
+        }
+    """
+    import google.generativeai as genai
+
+    # Load validation prompt template
+    prompt_path = Path(__file__).parent / "validation_prompt.txt"
+    with open(prompt_path, 'r') as f:
+        prompt_template = f.read()
+
+    # Format ingredient breakdown for LLM
+    ingredient_breakdown_lines = []
+    for result in ingredient_results:
+        name = result['name']
+        grams = result['grams']
+        source = result['source']
+        cal = result['calories']
+        pro = result['protein']
+        fat = result['fat']
+        carb = result['carbs']
+
+        ingredient_breakdown_lines.append(
+            f"• {name}: {grams:.1f}g | {cal:.0f} cal, {pro:.1f}p, {fat:.1f}f, {carb:.1f}c | SOURCE={source}"
+        )
+
+    ingredient_breakdown = "\n".join(ingredient_breakdown_lines)
+
+    # Format directions
+    directions_text = "\n".join([f"{i+1}. {d}" for i, d in enumerate(directions)])
+
+    # Fill in the prompt
+    prompt = prompt_template.format(
+        recipe_title=recipe_title,
+        directions=directions_text,
+        ingredient_breakdown=ingredient_breakdown,
+        total_calories=total_calories,
+        total_protein=total_protein,
+        total_fat=total_fat,
+        total_carbs=total_carbs
+    )
+
+    try:
+        # Call Gemini for validation
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": 0.3,  # Lower temperature for more consistent validation
+                "max_output_tokens": 2000
+            }
+        )
+
+        # Parse JSON response
+        response_text = response.text.strip()
+
+        # Remove markdown code blocks if present
+        if response_text.startswith("```json"):
+            response_text = response_text[7:]  # Remove ```json
+        if response_text.startswith("```"):
+            response_text = response_text[3:]  # Remove ```
+        if response_text.endswith("```"):
+            response_text = response_text[:-3]  # Remove trailing ```
+
+        response_text = response_text.strip()
+
+        # Parse JSON
+        validation_result = json.loads(response_text)
+
+        return validation_result
+
+    except json.JSONDecodeError as e:
+        print(f"⚠️  Failed to parse validation JSON: {e}")
+        print(f"   Response: {response_text[:200]}...")
+        return {
+            "confidence": 50,
+            "flagged_ingredients": [],
+            "overall_reasoning": f"Validation parsing failed: {str(e)}"
+        }
+    except Exception as e:
+        print(f"⚠️  Validation failed: {e}")
+        return {
+            "confidence": 50,
+            "flagged_ingredients": [],
+            "overall_reasoning": f"Validation error: {str(e)}"
+        }
+
+
 async def calculate_recipe_macros(ingredients: List[Dict]) -> str:
     """
     Main function to calculate macros for a complete recipe.

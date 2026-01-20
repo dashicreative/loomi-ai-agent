@@ -1,0 +1,108 @@
+TASK: Validate macro nutrient calculations for recipe ingredients using contextual reasoning and common sense.
+
+You are a nutrition expert reviewing calculated macro values for a recipe. Your job is to sanity-check the results and flag any suspicious entries.
+
+RECIPE TITLE: {recipe_title}
+
+RECIPE DIRECTIONS:
+{directions}
+
+CALCULATED INGREDIENT BREAKDOWN:
+{ingredient_breakdown}
+
+TOTAL CALCULATED MACROS: {total_calories} calories | {total_protein}g protein | {total_fat}g fat | {total_carbs}g carbs
+
+---
+
+YOUR JOB:
+1. Use recipe context (title, type, directions) to assess if ingredient quantities are reasonable
+2. Check if macro values make sense for the stated quantities and ingredient types
+3. Identify suspicious entries that may have extraction or calculation errors
+4. Provide specific, actionable reasoning for any flags
+
+---
+
+DATA SOURCE CONFIDENCE LEVELS:
+• SOURCE=DIRECT: Very high confidence (exact grams provided)
+• SOURCE=USDA_PORTION: Very high confidence (official USDA portion data)
+• SOURCE=TABLE: High confidence (verified piece weights or density table)
+• SOURCE=LLM: Medium confidence (AI density estimate)
+• SOURCE=WATER: Low confidence (water density fallback - 1ml = 1g)
+• SOURCE=ESTIMATE: Very low confidence (generic 50g default for unknown counts)
+
+---
+
+COMMON RED FLAGS TO CHECK:
+
+1. MISSING QUANTITIES (count=1 by default):
+   • Count-based ingredients showing quantity=1 when recipe context suggests more
+   • Example: "1 count cherry tomatoes" in a salad (should be 6-12)
+   • Look for phrases in directions like "add the tomatoes" (plural implies multiple)
+
+2. GENERIC ESTIMATES (SOURCE=ESTIMATE):
+   • Ingredients using 50g default because piece weight unknown
+   • These are HIGH PRIORITY for flagging
+
+3. WATER DENSITY FALLBACK (SOURCE=WATER):
+   • Volume units (tsp, tbsp, cup) using water density when real density unknown
+   • Can be very wrong for non-water-like ingredients
+
+4. UNREASONABLE MACRO RATIOS:
+   • Protein source showing mostly carbs
+   • Vegetable showing high fat content
+   • Oil/fat showing carbs or protein
+
+5. CONTEXT MISMATCHES:
+   • Recipe title says "loaded" but ingredient quantities seem minimal
+   • "Salad bowl" but very few vegetables by calorie contribution
+   • "Protein bowl" but protein contribution is low
+
+6. EXTRACTION ERRORS:
+   • Ingredient name includes preparation notes that might indicate quantity
+   • Example: "of garlic, minced" suggests extraction missed "cloves"
+
+---
+
+VALIDATION APPROACH:
+
+For each ingredient, consider:
+• Does the quantity make sense given the recipe type?
+• Does the macro breakdown match the ingredient's nature? (e.g., chicken = high protein)
+• Does the data source suggest potential inaccuracy?
+• Would a typical home cook use this amount in this recipe?
+
+Use recipe semantics:
+• "Loaded Greek Chicken Salad Bowl" → expect substantial vegetable quantities
+• "Protein Bowl" → expect high protein from main ingredient
+• "Snack" vs "Meal" → different quantity expectations
+
+---
+
+OUTPUT FORMAT (JSON):
+
+{{
+  "confidence": [0-100 overall confidence in results],
+  "flagged_ingredients": [
+    {{
+      "ingredient": "cherry tomatoes",
+      "current_quantity": "5 count",
+      "current_grams": 85,
+      "current_macros": "18 cal, 0p, 0f, 4c",
+      "source": "TABLE",
+      "issue_type": "quantity_suspicious",
+      "reason": "Only 5 cherry tomatoes (85g, 18 cal) seems low for a 'loaded' salad bowl. Recipe directions mention 'add the cherry tomatoes' (plural emphasis). Typical Greek salad uses 8-12 cherry tomatoes.",
+      "suggested_quantity": "8-10 count",
+      "priority": "medium"
+    }}
+  ],
+  "overall_reasoning": "Most ingredients appear reasonable. Cherry tomatoes quantity may be underestimated based on recipe context and typical Greek salad proportions. Olive oil quantity (4 tsp) aligns well with salad dressing needs."
+}}
+
+PRIORITY LEVELS:
+• "critical": SOURCE=ESTIMATE or clearly wrong values (must fix)
+• "high": SOURCE=WATER or suspicious quantities affecting total by >100 cal
+• "medium": Reasonable concern but not critical
+• "low": Minor inconsistency, unlikely to affect results significantly
+
+Only flag ingredients with genuine concerns. If everything looks reasonable, return empty flagged_ingredients array.
+Be specific and actionable in your reasoning - explain WHAT looks wrong and WHY based on recipe context.

@@ -1514,6 +1514,56 @@ async def calculate_macros_endpoint(request: MacroCalculationRequest):
         # Extract per-ingredient sources from ingredient_results
         ingredient_sources = [result['source'] for result in ingredient_results]
 
+        # PHASE 1: Validation Tool (proof of concept)
+        # Call validation as a tool the agent can use
+        # For Phase 1, using placeholder values for recipe_title and directions
+        # TODO: Add these fields to MacroCalculationRequest in future phases
+        print("\n🔍 [VALIDATION] Running macro validation...")
+        validation_start = time.time()
+
+        try:
+            from Ingredient_Macro_agent.macro_agent import validate_macro_results
+
+            validation_result = await validate_macro_results(
+                recipe_title="Unknown Recipe",  # Placeholder for Phase 1
+                directions=[],  # Placeholder for Phase 1
+                ingredient_results=ingredient_results,
+                total_calories=calories,
+                total_protein=protein,
+                total_fat=fat,
+                total_carbs=carbs
+            )
+
+            validation_elapsed = time.time() - validation_start
+
+            # Print validation results
+            confidence = validation_result.get('confidence', 0)
+            flagged = validation_result.get('flagged_ingredients', [])
+            reasoning = validation_result.get('overall_reasoning', 'No reasoning provided')
+
+            print(f"   ⏱️  Validation completed in {validation_elapsed:.2f}s")
+            print(f"   🎯 Confidence: {confidence}/100")
+            print(f"   🚩 Flagged Ingredients: {len(flagged)}")
+
+            if flagged:
+                print(f"\n   ⚠️  FLAGGED INGREDIENTS:")
+                for flag in flagged:
+                    ingredient_name = flag.get('ingredient', 'Unknown')
+                    reason = flag.get('reason', 'No reason provided')
+                    priority = flag.get('priority', 'unknown')
+                    print(f"      • [{priority.upper()}] {ingredient_name}")
+                    print(f"        Reason: {reason}")
+                    if 'suggested_quantity' in flag:
+                        print(f"        Suggested: {flag['suggested_quantity']}")
+
+            print(f"\n   💭 Overall Reasoning:")
+            print(f"      {reasoning}")
+            print()
+
+        except Exception as val_error:
+            print(f"   ⚠️  Validation failed: {val_error}")
+            print(f"      Continuing with macro results...\n")
+
         elapsed = time.time() - start_time
 
         print(f"\n✅ [MACRO-CALC] Success!")
@@ -1522,7 +1572,7 @@ async def calculate_macros_endpoint(request: MacroCalculationRequest):
         print(f"   Fat: {fat}g")
         print(f"   Carbs: {carbs}g")
         print(f"   Sources: {ingredient_sources}")
-        print(f"   Time: {elapsed:.2f}s\n")
+        print(f"   Total Time: {elapsed:.2f}s\n")
 
         return MacroCalculationResponse(
             success=True,
