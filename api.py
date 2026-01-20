@@ -101,7 +101,7 @@ class MacroCalculationResponse(BaseModel):
     carbs: int
     ingredient_sources: List[str]
     elapsed_seconds: float
-    error: str = None
+    error: Optional[str] = None
 
 # Create FastAPI app
 app = FastAPI(
@@ -1541,9 +1541,17 @@ async def calculate_macros_endpoint(request: MacroCalculationRequest):
         print(f"\n❌ [MACRO-CALC] Error: {error_msg}")
         print(f"   Time: {elapsed:.2f}s\n")
 
-        raise HTTPException(
-            status_code=500,
-            detail=f"Macro calculation failed: {error_msg}"
+        # Return a proper response instead of raising HTTPException
+        # This ensures consistent response format for iOS app
+        return MacroCalculationResponse(
+            success=False,
+            calories=0,
+            protein=0,
+            fat=0,
+            carbs=0,
+            ingredient_sources=[],
+            elapsed_seconds=round(elapsed, 2),
+            error=error_msg
         )
 
 
