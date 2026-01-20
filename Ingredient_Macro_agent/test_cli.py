@@ -70,20 +70,20 @@ def test_sample_ingredients():
     try:
         # Calculate macros using the agent with timing
         start_time = time.time()
-        result = calculate_recipe_macros_sync(sample_ingredients)
+        result_string, ingredient_results = calculate_recipe_macros_sync(sample_ingredients)
         elapsed_time = time.time() - start_time
-        
+
         print(f"⏱️  Processing Time: {elapsed_time:.2f}s")
 
         print("\n✅ CALCULATED MACROS:")
         print("-" * 40)
 
         # Parse result with metadata
-        if isinstance(result, str) and ';' in result:
+        if isinstance(result_string, str) and ';' in result_string:
             # New format: calories;metadata,protein;metadata,fat;metadata,carbs;metadata
             # Extract numbers using regex (since metadata contains commas)
             import re
-            numbers = re.findall(r'(\d+);', result)
+            numbers = re.findall(r'(\d+);', result_string)
 
             if len(numbers) >= 4:
                 print(f"🔥 Calories: {numbers[0]}")
@@ -92,19 +92,19 @@ def test_sample_ingredients():
                 print(f"🌾 Carbs:    {numbers[3]}g")
 
                 # Extract metadata (appears after first semicolon, before the next number)
-                metadata_start = result.find(';') + 1
+                metadata_start = result_string.find(';') + 1
                 # Find the next number; pattern (finds ,69; after the metadata)
-                next_num_match = re.search(r',\d+;', result[metadata_start:])
+                next_num_match = re.search(r',\d+;', result_string[metadata_start:])
                 if next_num_match:
                     metadata_end = metadata_start + next_num_match.start()
-                    metadata = result[metadata_start:metadata_end]
+                    metadata = result_string[metadata_start:metadata_end]
                     print(f"\n📈 Data Quality: {metadata}")
             else:
                 print("📊 Raw Result:")
-                print(result)
+                print(result_string)
         else:
             print("📊 Raw Result:")
-            print(result)
+            print(result_string)
 
         print(f"\n🎯 Output Format: calories;metadata,protein;metadata,fat;metadata,carbs;metadata")
         

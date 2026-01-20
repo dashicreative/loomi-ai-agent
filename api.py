@@ -34,6 +34,7 @@ sys.path.append(str(Path(__file__).parent / "Single_URL_Parsers" / "Site_Parser"
 sys.path.append(str(Path(__file__).parent / "Single_URL_Parsers" / "TikTok_Parser" / "src"))
 sys.path.append(str(Path(__file__).parent / "Single_URL_Parsers" / "Facebook_Parser" / "src"))
 sys.path.append(str(Path(__file__).parent / "Single_URL_Parsers" / "YouTube_Parser" / "src"))
+sys.path.append(str(Path(__file__).parent / "Ingredient_Macro_agent"))
 
 # Import parsers
 from Instagram_parser import InstagramTranscriber
@@ -41,6 +42,9 @@ from recipe_site_parser_actor import parse_single_recipe_url
 from TikTok_parser import TikTokTranscriber
 from Facebook_parser import FacebookTranscriber
 from YouTube_parser import YouTubeTranscriber
+
+# Import macro agent
+from macro_agent import calculate_recipe_macros_optimized
 
 # Pydantic models
 class URLRequest(BaseModel):
@@ -80,6 +84,24 @@ class LearnAliasRequest(BaseModel):
     alias_text: str
     ingredient_id: int
     confidence: float
+
+class IngredientMacroItem(BaseModel):
+    name: str
+    quantity: str
+    unit: str
+
+class MacroCalculationRequest(BaseModel):
+    ingredients: List[IngredientMacroItem]
+
+class MacroCalculationResponse(BaseModel):
+    success: bool
+    calories: int
+    protein: int
+    fat: int
+    carbs: int
+    ingredient_sources: List[str]
+    elapsed_seconds: float
+    error: str = None
 
 # Create FastAPI app
 app = FastAPI(
@@ -1448,12 +1470,90 @@ async def learned_aliases_health():
 
     return health_status
 
+
+@app.post("/api/calculate-macros", response_model=MacroCalculationResponse)
+async def calculate_macros_endpoint(request: MacroCalculationRequest):
+    """
+    Calculate macronutrients for a list of ingredients using 4-tier density system.
+
+    Returns: Calories, protein, fat, carbs with per-ingredient data source tracking
+    """
+    print("\n🥗 [MACRO-CALC] Macro calculation request received")
+    print(f"   Ingredients: {len(request.ingredients)}")
+
+    start_time = time.time()
+
+    try:
+        # Convert Pydantic models to dictionaries
+        ingredients_list = []
+        for ing in request.ingredients:
+            ingredients_list.append({
+                "name": ing.name,
+                "quantity": ing.quantity,
+                "unit": ing.unit
+            })
+            print(f"   - {ing.quantity} {ing.unit} {ing.name}")
+
+        # Call the macro calculation agent
+        print("\n🔄 [MACRO-CALC] Processing with macro agent...")
+        result_string, ingredient_results = await calculate_recipe_macros_optimized(ingredients_list)
+
+        # Parse the result string to extract numbers
+        # Format: "5000;TABLE:62%,LLM:12%,69;TABLE:62%,210;...
+        import re
+        numbers = re.findall(r'(\d+);', result_string)
+
+        if len(numbers) < 4:
+            raise ValueError(f"Invalid result format: expected 4 numbers, got {len(numbers)}")
+
+        calories = int(numbers[0])
+        protein = int(numbers[1])
+        fat = int(numbers[2])
+        carbs = int(numbers[3])
+
+        # Extract per-ingredient sources from ingredient_results
+        ingredient_sources = [result['source'] for result in ingredient_results]
+
+        elapsed = time.time() - start_time
+
+        print(f"\n✅ [MACRO-CALC] Success!")
+        print(f"   Calories: {calories}")
+        print(f"   Protein: {protein}g")
+        print(f"   Fat: {fat}g")
+        print(f"   Carbs: {carbs}g")
+        print(f"   Sources: {ingredient_sources}")
+        print(f"   Time: {elapsed:.2f}s\n")
+
+        return MacroCalculationResponse(
+            success=True,
+            calories=calories,
+            protein=protein,
+            fat=fat,
+            carbs=carbs,
+            ingredient_sources=ingredient_sources,
+            elapsed_seconds=round(elapsed, 2),
+            error=None
+        )
+
+    except Exception as e:
+        elapsed = time.time() - start_time
+        error_msg = f"{type(e).__name__}: {str(e)}"
+        print(f"\n❌ [MACRO-CALC] Error: {error_msg}")
+        print(f"   Time: {elapsed:.2f}s\n")
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Macro calculation failed: {error_msg}"
+        )
+
+
 # Startup event to confirm endpoints are registered
 @app.on_event("startup")
 async def startup_event():
     print("\n" + "="*80)
-    print("🚀 LEARNED ALIASES ENDPOINTS REGISTERED")
+    print("🚀 API ENDPOINTS REGISTERED")
     print("="*80)
+    print("📍 POST   /api/calculate-macros")
     print("📍 POST   /api/learned-aliases/learn")
     print("📍 GET    /api/learned-aliases/lookup/{alias_text}")
     print("📍 GET    /api/learned-aliases/sync")

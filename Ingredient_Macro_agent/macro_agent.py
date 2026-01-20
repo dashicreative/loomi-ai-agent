@@ -336,9 +336,12 @@ Your estimates:"""
 
         quality_summary = ",".join(quality_parts) if quality_parts else "UNKNOWN"
 
-        # Step 5: Return result with metadata
+        # Step 5: Return result with metadata and ingredient sources
         # Format: calories;quality,protein;quality,fat;quality,carbs;quality
-        return f"{total_calories:.0f};{quality_summary},{total_protein:.0f};{quality_summary},{total_fat:.0f};{quality_summary},{total_carbs:.0f};{quality_summary}"
+        result_string = f"{total_calories:.0f};{quality_summary},{total_protein:.0f};{quality_summary},{total_fat:.0f};{quality_summary},{total_carbs:.0f};{quality_summary}"
+
+        # Return both the formatted string and the detailed ingredient results
+        return (result_string, ingredient_results)
 
     finally:
         # Clean up HTTP client
@@ -384,10 +387,13 @@ async def calculate_recipe_macros(ingredients: List[Dict]) -> str:
 
 
 # Sync wrapper for easier testing (uses optimized version)
-def calculate_recipe_macros_sync(ingredients: List[Dict]) -> str:
+def calculate_recipe_macros_sync(ingredients: List[Dict]) -> tuple:
     """
     Synchronous wrapper for optimized macro calculation.
     Uses parallel processing for maximum speed.
+
+    Returns:
+        Tuple of (result_string, ingredient_results)
     """
     import asyncio
     return asyncio.run(calculate_recipe_macros_optimized(ingredients))
