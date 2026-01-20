@@ -504,49 +504,138 @@ def convert_to_grams(ctx: RunContext[MacroDeps], quantity: str, unit: str, ingre
     # Count/piece units - estimate based on ingredient type
     if unit_lower in ["count", "piece", "pieces", "clove", "cloves"]:
         # Comprehensive piece weights for common ingredients (in grams)
+        # Based on USDA data, research, and verified sources
         piece_weights = {
             # Eggs & Dairy
             "egg": 50, "eggs": 50,
 
             # Vegetables
-            "garlic": 3, "clove": 3,
+            "garlic": 3, "clove": 3, "garlic clove": 3,
             "onion": 150, "yellow onion": 150, "white onion": 150, "red onion": 150,
             "shallot": 25,
-            "potato": 150, "russet potato": 200, "sweet potato": 130,
-            "tomato": 150, "cherry tomato": 15, "grape tomato": 10, "roma tomato": 100,
-            "carrot": 60, "baby carrot": 10,
-            "celery": 40, "celery stalk": 40,
-            "cucumber": 300, "baby cucumber": 120, "english cucumber": 400,
-            "bell pepper": 150, "red bell pepper": 150, "green bell pepper": 150, "jalapeño": 15, "habanero": 10,
+            "potato": 150, "russet potato": 200, "sweet potato": 130, "red potato": 140, "yukon gold": 150,
+            # Tomatoes - specific varieties BEFORE generic to ensure correct substring matching
+            "cherry tomato": 17, "cherry tomatoes": 17,
+            "grape tomato": 10, "grape tomatoes": 10,
+            "roma tomato": 100, "roma tomatoes": 100,
+            "plum tomato": 100, "plum tomatoes": 100,
+            "beefsteak tomato": 200, "beefsteak tomatoes": 200,
+            "tomato": 150, "tomatoes": 150,
+            # Carrots - specific types before generic
+            "baby carrot": 10, "baby carrots": 10,
+            "medium carrot": 60,
+            "carrot": 60, "carrots": 60,
+            "celery": 40, "celery stalk": 40, "celery rib": 40,
+            # Cucumbers - specific types before generic
+            "english cucumber": 400, "persian cucumber": 150, "baby cucumber": 150,
+            "cucumber": 300,
+            "bell pepper": 150, "bell peppers": 150,
+            "red bell pepper": 150, "red bell peppers": 150,
+            "green bell pepper": 150, "green bell peppers": 150,
+            "yellow bell pepper": 150, "yellow bell peppers": 150,
+            "orange bell pepper": 150, "orange bell peppers": 150,
+            "jalapeño": 15, "jalapeños": 15,
+            "habanero": 10, "habaneros": 10,
+            "serrano": 12, "serranos": 12,
+            "poblano": 80, "poblanos": 80,
+            "cayenne": 8,
             "zucchini": 200, "yellow squash": 200,
             "eggplant": 450, "japanese eggplant": 200,
             "avocado": 150,
-            "lemon": 50, "lime": 45, "orange": 130,
+            "lemon": 50, "lemons": 50, "lime": 45, "limes": 45, "orange": 130, "oranges": 130, "grapefruit": 250, "tangerine": 90, "tangerines": 90,
             "ginger": 15, "ginger knob": 30,
-            "mushroom": 15, "portobello": 80, "shiitake": 10,
+            "mushroom": 15, "mushrooms": 15,
+            "portobello": 80, "portobello mushroom": 80,
+            "shiitake": 10, "shiitake mushroom": 10,
+            "cremini": 15, "cremini mushroom": 15,
+            "button mushroom": 15, "button mushrooms": 15,
+            "brussels sprout": 10, "brussels sprouts": 10,
+            "asparagus": 15, "asparagus spear": 15,
+            "broccoli floret": 20, "cauliflower floret": 15,
+            "radish": 10, "turnip": 150, "beet": 80, "rutabaga": 400,
+            "corn": 150, "ear of corn": 150,
+            "artichoke": 150,
+            "leek": 100,
+
+            # Leafy Greens & Herbs (per leaf or small bunch)
+            "basil leaf": 0.5, "basil": 0.5,
+            "mint leaf": 0.5, "mint": 0.5, "mint leaves": 0.5,
+            "parsley": 0.5, "parsley leaf": 0.5, "parsley sprig": 2,
+            "cilantro": 0.5, "cilantro leaf": 0.5, "coriander leaf": 0.5,
+            "sage leaf": 0.3, "thyme sprig": 1, "rosemary sprig": 2,
+            "dill sprig": 1, "dill": 1,
+            "bay leaf": 0.3,
+            "lettuce leaf": 15, "romaine leaf": 20, "iceberg leaf": 15,
+            "spinach leaf": 5, "spinach": 5,
+            "kale leaf": 8, "kale": 8,
+            "arugula": 2, "watercress": 2,
 
             # Fruits
-            "apple": 180, "banana": 120, "pear": 170, "peach": 150, "plum": 65,
-            "strawberry": 15, "blueberry": 1, "raspberry": 1, "blackberry": 2,
-            "grape": 3, "cherry": 8,
+            "apple": 180, "banana": 120, "pear": 170, "peach": 150, "plum": 65, "nectarine": 140,
+            "strawberry": 15, "strawberries": 15,
+            "blueberry": 1, "blueberries": 1,
+            "raspberry": 1, "raspberries": 1,
+            "blackberry": 2, "blackberries": 2,
+            "cranberry": 1, "cranberries": 1,
+            "grape": 3, "grapes": 3,
+            "cherry": 8, "cherries": 8,
             "mango": 200, "papaya": 450, "pineapple": 900,
             "kiwi": 70, "fig": 50, "date": 7,
+            "apricot": 35, "cantaloupe": 600, "honeydew": 900, "watermelon": 4500,
+            "coconut": 400, "pomegranate": 250,
 
-            # Proteins
-            "chicken breast": 200, "chicken thigh": 150, "chicken wing": 50,
-            "pork chop": 180, "pork tenderloin": 450,
-            "steak": 250, "beef patty": 115,
-            "salmon fillet": 180, "tuna steak": 150, "shrimp": 15, "prawn": 20,
-            "sausage": 50, "hot dog": 45, "bacon strip": 15, "bacon slice": 15,
+            # Dried Fruits
+            "raisin": 0.5, "raisins": 0.5,
+            "dried cranberry": 0.5, "dried cranberries": 0.5,
+            "dried blueberry": 0.5, "dried blueberries": 0.5,
+            "prune": 10, "prunes": 10,
+            "dried apricot": 8, "dried apricots": 8,
+            "dried fig": 15, "dried figs": 15,
+            "dried date": 7, "dried dates": 7,
+            "dried cherry": 1, "dried cherries": 1,
+
+            # Proteins - Poultry
+            "chicken breast": 200, "chicken thigh": 150, "chicken wing": 50, "chicken drumstick": 100, "chicken tender": 40,
+
+            # Proteins - Meat
+            "pork chop": 180, "pork tenderloin": 450, "pork rib": 70,
+            "steak": 250, "beef patty": 115, "ground beef patty": 115,
+            "lamb chop": 150, "lamb shank": 250,
+            "sausage": 50, "hot dog": 45, "bratwurst": 85,
+            "bacon strip": 15, "bacon slice": 15, "bacon rasher": 15,
+            "meatball": 25,
+
+            # Proteins - Seafood
+            "salmon fillet": 180, "tuna steak": 150, "cod fillet": 170, "tilapia fillet": 150,
+            "shrimp": 15, "prawns": 20, "prawn": 20, "jumbo shrimp": 25,
+            "scallop": 30, "scallops": 30, "sea scallop": 40, "sea scallops": 40, "bay scallop": 8, "bay scallops": 8,
+            "oyster": 20, "oysters": 20, "clam": 15, "clams": 15, "mussel": 10, "mussels": 10,
+            "crab leg": 50, "crab legs": 50, "lobster tail": 200, "lobster tails": 200,
 
             # Breads & Grains
-            "slice bread": 30, "bread slice": 30, "toast": 30,
-            "bagel": 85, "english muffin": 60, "pita": 60, "tortilla": 50, "naan": 90,
-            "croissant": 50, "donut": 60, "muffin": 60,
+            "slice bread": 30, "bread slice": 30, "toast": 30, "bread roll": 50,
+            "bagel": 85, "english muffin": 60, "pita": 60, "tortilla": 50, "naan": 90, "flatbread": 60,
+            "croissant": 50, "donut": 60, "doughnut": 60, "muffin": 60, "biscuit": 60, "scone": 70,
+            "pancake": 40, "waffle": 75, "crumpet": 60,
+
+            # Nuts & Seeds (per piece)
+            "walnut": 5, "walnuts": 5,
+            "almond": 1.2, "almonds": 1.2,
+            "pecan": 5, "pecans": 5,
+            "cashew": 2, "cashews": 2,
+            "peanut": 1, "peanuts": 1,
+            "macadamia": 2, "macadamias": 2,
+            "pistachio": 1, "pistachios": 1,
+            "hazelnut": 1.5, "hazelnuts": 1.5,
+            "brazil nut": 5, "brazil nuts": 5,
+            "pine nut": 0.1, "pine nuts": 0.1,
+            "sunflower seed": 0.05, "sunflower seeds": 0.05,
+
+            # Olives
+            "olive": 4, "olives": 4, "kalamata olive": 6, "green olive": 4, "black olive": 4,
 
             # Other
-            "walnut": 5, "almond": 1, "pecan": 5, "cashew": 2,
-            "chocolate chip": 0.3,
+            "chocolate chip": 0.3, "chocolate square": 5,
         }
 
         ingredient_lower = ingredient_name.lower()
