@@ -197,6 +197,7 @@ async def usda_lookup(ctx: RunContext[MacroDeps], ingredient_name: str) -> Dict:
         food = foods[0]
         food_description = food.get("description", "Unknown")
         nutrients = food.get("foodNutrients", [])
+        portions = food.get("foodPortions", [])  # Extract portion/measure data
 
         # Debug: Show what USDA matched
         print(f"  📍 USDA matched '{ingredient_name}' → '{food_description}'")
@@ -209,7 +210,8 @@ async def usda_lookup(ctx: RunContext[MacroDeps], ingredient_name: str) -> Dict:
             "carbs": 0,
             "source": "USDA",
             "description": food.get("description", ingredient_name),
-            "fdcId": food.get("fdcId", "")
+            "fdcId": food.get("fdcId", ""),
+            "portions": portions  # Include USDA portion data for density lookup
         }
         
         # Correct USDA nutrient IDs from official documentation
@@ -420,26 +422,33 @@ def _extract_carbs(text: str) -> float:
     return 10.0  # Conservative carb estimate
 
 
-def convert_to_grams(ctx: RunContext[MacroDeps], quantity: str, unit: str, ingredient_name: str) -> float:
+def convert_to_grams(ctx: RunContext[MacroDeps], quantity: str, unit: str, ingredient_name: str, usda_portions=None) -> tuple[float, str]:
     """
-    Convert ingredient quantity to grams for macro calculations.
+    Convert ingredient quantity to grams using 4-tier fallback system.
+
+    Tier 1: USDA portion data (most accurate)
+    Tier 2: Hardcoded density table (fast & reliable)
+    Tier 3: LLM estimation (handled separately in batch)
+    Tier 4: Water density default (last resort)
 
     Args:
         quantity: Amount as string (e.g., "1", "1.5", "1/2", "1 1/2", "½")
         unit: Unit type (cups, oz, tbsp, etc.)
         ingredient_name: Ingredient name for density lookup
+        usda_portions: Optional USDA foodPortions data from nutrition lookup
 
     Returns:
-        Weight in grams
+        Tuple of (weight in grams, source indicator)
+        Source: "USDA_PORTION", "TABLE", "WATER", or "LLM"
     """
     # Use comprehensive parsing helper
     gram_amount = parse_quantity(quantity)
-    
+
     unit_lower = unit.lower().strip()
 
-    # Direct weight units
+    # Direct weight units (already in grams/oz/lb)
     if unit_lower in ctx.deps.weight_conversions:
-        return gram_amount * ctx.deps.weight_conversions[unit_lower]
+        return (gram_amount * ctx.deps.weight_conversions[unit_lower], "DIRECT")
 
     # Tiny units (pinch, dash, etc.) - very small amounts
     tiny_units = {
@@ -454,7 +463,7 @@ def convert_to_grams(ctx: RunContext[MacroDeps], quantity: str, unit: str, ingre
     }
 
     if unit_lower in tiny_units:
-        return gram_amount * tiny_units[unit_lower]
+        return (gram_amount * tiny_units[unit_lower], "TABLE")
 
     # Volume units (need ingredient density)
     volume_units = {
@@ -467,15 +476,30 @@ def convert_to_grams(ctx: RunContext[MacroDeps], quantity: str, unit: str, ingre
     
     if unit_lower in volume_units:
         volume_ml = gram_amount * volume_units[unit_lower]
-        
-        # Try to find ingredient density
+
+        # TIER 1: Check USDA portion data (most accurate)
+        if usda_portions:
+            for portion in usda_portions:
+                portion_unit = portion.get("measureUnit", {}).get("name", "").lower()
+                # Match unit (cup, tbsp, tsp, etc.)
+                if unit_lower.rstrip('s') in portion_unit or portion_unit in unit_lower:
+                    grams_per_unit = portion.get("gramWeight", 0)
+                    if grams_per_unit > 0:
+                        print(f"  ✅ Tier 1 (USDA Portion): 1 {unit_lower} = {grams_per_unit}g")
+                        return (gram_amount * grams_per_unit, "USDA_PORTION")
+
+        # TIER 2: Check hardcoded density table
         ingredient_lower = ingredient_name.lower()
         for key, density in ctx.deps.volume_to_grams.items():
             if key in ingredient_lower:
-                return (volume_ml / 240) * density  # Convert to cup equivalent, then to grams
-                
-        # Default density (water equivalent)
-        return volume_ml  # 1ml = 1g for water-like density
+                grams_result = (volume_ml / 240) * density  # Convert to cup equivalent, then to grams
+                print(f"  ✅ Tier 2 (Density Table): 1 cup ≈ {density}g")
+                return (grams_result, "TABLE")
+
+        # TIER 4: Water default (Tier 3 LLM will be handled in batch later)
+        print(f"  ⚠️  Tier 4 (Water Default): '{ingredient_name}' density unknown")
+        print(f"     Using water density (240g/cup) - may need LLM estimation")
+        return (volume_ml, "WATER")  # 1ml = 1g for water-like density
     
     # Count/piece units - estimate based on ingredient type
     if unit_lower in ["count", "piece", "pieces", "clove", "cloves"]:
@@ -528,12 +552,14 @@ def convert_to_grams(ctx: RunContext[MacroDeps], quantity: str, unit: str, ingre
         ingredient_lower = ingredient_name.lower()
         for key, weight in piece_weights.items():
             if key in ingredient_lower:
-                return gram_amount * weight
+                return (gram_amount * weight, "TABLE")
 
-        return gram_amount * 50  # Generic piece weight
-        
+        print(f"  ⚠️  Unknown piece weight for '{ingredient_name}', using 50g default")
+        return (gram_amount * 50, "ESTIMATE")  # Generic piece weight
+
     # Fallback: assume 100g per unit
-    return gram_amount * 100
+    print(f"  ⚠️  Unknown unit '{unit}', treating as 100g per unit")
+    return (gram_amount * 100, "ESTIMATE")
 
 
 def calculate_macros_for_ingredient(ctx: RunContext[MacroDeps], ingredient: Dict) -> Dict:

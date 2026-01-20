@@ -176,17 +176,24 @@ async def calculate_recipe_macros_optimized(ingredients: List[Dict]) -> str:
         total_fat = 0.0
         total_carbs = 0.0
 
+        # Step 2: Calculate scaled nutrition for each ingredient
         print("\n📊 Ingredient Breakdown:")
         print("-" * 70)
+
+        # Track ingredients that used WATER fallback for LLM estimation
+        water_fallback_ingredients = []
+        ingredient_results = []  # Store results for potential re-calculation
+
         for i, ingredient in enumerate(ingredients):
             nutrition = nutrition_data[i]
 
-            # Convert quantity to grams
+            # Convert quantity to grams (with source tracking)
             quantity = ingredient.get('quantity', '1')
             unit = ingredient.get('unit', 'count')
             name = ingredient.get('name', '')
+            portions = nutrition.get('portions', [])  # Pass USDA portion data
 
-            grams = tools.convert_to_grams(ctx, quantity, unit, name)
+            grams, source = tools.convert_to_grams(ctx, quantity, unit, name, portions)
 
             # Scale nutrition from per-100g to actual amount
             scale = grams / 100.0
@@ -196,9 +203,30 @@ async def calculate_recipe_macros_optimized(ingredients: List[Dict]) -> str:
             fat_scaled = nutrition['fat'] * scale
             carb_scaled = nutrition['carbs'] * scale
 
-            print(f"{name[:35]:35} | {grams:6.1f}g")
+            print(f"{name[:35]:35} | {grams:6.1f}g [{source}]")
             print(f"  Per 100g: {nutrition['calories']:4.0f}cal {nutrition['protein']:4.1f}p {nutrition['fat']:4.1f}f {nutrition['carbs']:5.1f}c")
             print(f"  Scaled:   {cal_scaled:4.0f}cal {pro_scaled:4.1f}p {fat_scaled:4.1f}f {carb_scaled:5.1f}c")
+
+            # Track water fallbacks for LLM estimation
+            if source == "WATER":
+                water_fallback_ingredients.append({
+                    'index': i,
+                    'name': name,
+                    'quantity': quantity,
+                    'unit': unit,
+                    'grams_water': grams  # Current water-based estimate
+                })
+
+            # Store result for this ingredient
+            ingredient_results.append({
+                'name': name,
+                'grams': grams,
+                'source': source,
+                'calories': cal_scaled,
+                'protein': pro_scaled,
+                'fat': fat_scaled,
+                'carbs': carb_scaled
+            })
 
             total_calories += cal_scaled
             total_protein += pro_scaled
@@ -206,8 +234,111 @@ async def calculate_recipe_macros_optimized(ingredients: List[Dict]) -> str:
             total_carbs += carb_scaled
         print()
 
-        # Step 3: Return comma-separated result
-        return f"{total_calories:.0f},{total_protein:.0f},{total_fat:.0f},{total_carbs:.0f}"
+        # Step 3 (TIER 3): LLM Batch Density Estimation for WATER fallbacks
+        if water_fallback_ingredients:
+            print("\n🤖 Tier 3: LLM Density Estimation")
+            print("-" * 70)
+            print(f"Found {len(water_fallback_ingredients)} ingredient(s) using water density fallback")
+            print("Requesting LLM density estimates...\n")
+
+            # Build prompt for batch estimation
+            ingredient_list = []
+            for item in water_fallback_ingredients:
+                ingredient_list.append(f"- {item['name']} (currently estimated: {item['grams_water']:.1f}g for {item['quantity']} {item['unit']})")
+
+            prompt = f"""Estimate the weight in grams for these ingredients. Compare to water density baseline (240g/cup).
+
+Ingredients needing estimation:
+{chr(10).join(ingredient_list)}
+
+For each ingredient, provide ONLY the estimated grams for the given quantity.
+Return one number per line, in the same order as listed above.
+If an ingredient is similar to water density, return the current estimate.
+If heavier (like honey, nut butter), estimate higher.
+If lighter (like flour, oats, cocoa powder), estimate lower.
+
+Example format:
+120
+340
+85
+
+Your estimates:"""
+
+            try:
+                # Call Gemini for density estimation
+                import google.generativeai as genai
+                model = genai.GenerativeModel('gemini-2.0-flash-exp')
+                response = model.generate_content(prompt)
+                llm_estimates = response.text.strip().split('\n')
+
+                # Parse LLM estimates and recalculate
+                for idx, item in enumerate(water_fallback_ingredients):
+                    if idx < len(llm_estimates):
+                        try:
+                            llm_grams = float(llm_estimates[idx].strip())
+
+                            # Sanity check (shouldn't be > 500g for 1 cup or < 10g)
+                            if 10 <= llm_grams <= 500:
+                                result_idx = item['index']
+                                old_grams = ingredient_results[result_idx]['grams']
+                                nutrition = nutrition_data[result_idx]
+
+                                # Recalculate macros with LLM estimate
+                                new_scale = llm_grams / 100.0
+                                new_cal = nutrition['calories'] * new_scale
+                                new_pro = nutrition['protein'] * new_scale
+                                new_fat = nutrition['fat'] * new_scale
+                                new_carb = nutrition['carbs'] * new_scale
+
+                                # Update totals (subtract old, add new)
+                                total_calories += (new_cal - ingredient_results[result_idx]['calories'])
+                                total_protein += (new_pro - ingredient_results[result_idx]['protein'])
+                                total_fat += (new_fat - ingredient_results[result_idx]['fat'])
+                                total_carbs += (new_carb - ingredient_results[result_idx]['carbs'])
+
+                                # Update stored result
+                                ingredient_results[result_idx].update({
+                                    'grams': llm_grams,
+                                    'source': 'LLM',
+                                    'calories': new_cal,
+                                    'protein': new_pro,
+                                    'fat': new_fat,
+                                    'carbs': new_carb
+                                })
+
+                                change_pct = ((llm_grams - old_grams) / old_grams) * 100
+                                print(f"  ✅ {item['name']}: {old_grams:.1f}g → {llm_grams:.1f}g ({change_pct:+.0f}%)")
+                            else:
+                                print(f"  ⚠️  {item['name']}: LLM estimate {llm_grams}g rejected (out of range)")
+                        except ValueError:
+                            print(f"  ⚠️  {item['name']}: Could not parse LLM estimate")
+
+                print()
+
+            except Exception as e:
+                print(f"  ⚠️  LLM density estimation failed: {e}")
+                print("     Continuing with water density defaults\n")
+
+        # Step 4: Calculate metadata summary
+        source_counts = {}
+        for result in ingredient_results:
+            source = result['source']
+            source_counts[source] = source_counts.get(source, 0) + 1
+
+        # Generate quality indicator
+        total_ingredients = len(ingredient_results)
+        quality_parts = []
+        for source in ['USDA_PORTION', 'TABLE', 'LLM', 'WATER', 'ESTIMATE', 'DIRECT']:
+            if source in source_counts:
+                count = source_counts[source]
+                pct = (count / total_ingredients) * 100
+                quality_parts.append(f"{source}:{pct:.0f}%")
+
+        quality_summary = ",".join(quality_parts) if quality_parts else "UNKNOWN"
+
+        # Step 5: Return result with metadata
+        # Format: calories;quality,protein;quality,fat;quality,carbs;quality
+        return f"{total_calories:.0f};{quality_summary},{total_protein:.0f};{quality_summary},{total_fat:.0f};{quality_summary},{total_carbs:.0f};{quality_summary}"
 
     finally:
         # Clean up HTTP client

@@ -78,14 +78,27 @@ def test_sample_ingredients():
         print("\n✅ CALCULATED MACROS:")
         print("-" * 40)
 
-        # Parse comma-separated result
-        if isinstance(result, str) and ',' in result:
-            parts = result.split(',')
-            if len(parts) == 4:
-                print(f"🔥 Calories: {parts[0]}")
-                print(f"💪 Protein:  {parts[1]}g")
-                print(f"🥑 Fat:      {parts[2]}g")
-                print(f"🌾 Carbs:    {parts[3]}g")
+        # Parse result with metadata
+        if isinstance(result, str) and ';' in result:
+            # New format: calories;metadata,protein;metadata,fat;metadata,carbs;metadata
+            # Extract numbers using regex (since metadata contains commas)
+            import re
+            numbers = re.findall(r'(\d+);', result)
+
+            if len(numbers) >= 4:
+                print(f"🔥 Calories: {numbers[0]}")
+                print(f"💪 Protein:  {numbers[1]}g")
+                print(f"🥑 Fat:      {numbers[2]}g")
+                print(f"🌾 Carbs:    {numbers[3]}g")
+
+                # Extract metadata (appears after first semicolon, before the next number)
+                metadata_start = result.find(';') + 1
+                # Find the next number; pattern (finds ,69; after the metadata)
+                next_num_match = re.search(r',\d+;', result[metadata_start:])
+                if next_num_match:
+                    metadata_end = metadata_start + next_num_match.start()
+                    metadata = result[metadata_start:metadata_end]
+                    print(f"\n📈 Data Quality: {metadata}")
             else:
                 print("📊 Raw Result:")
                 print(result)
@@ -93,7 +106,7 @@ def test_sample_ingredients():
             print("📊 Raw Result:")
             print(result)
 
-        print(f"\n🎯 Output Format: calories,protein,fat,carbs")
+        print(f"\n🎯 Output Format: calories;metadata,protein;metadata,fat;metadata,carbs;metadata")
         
     except Exception as e:
         print(f"\n❌ Error: {str(e)}")
