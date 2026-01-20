@@ -7,12 +7,82 @@ This ensures consistency across Instagram parser, recipe site parsers, and any f
 """
 
 import json
+import re
+from fractions import Fraction
 from typing import Dict, List, Any
+
+
+def normalize_quantity(quantity_str: str) -> str:
+    """
+    Normalize quantity strings to clean decimal numbers.
+
+    Handles:
+        - Ranges: "5-6" → "6" (take max)
+        - Fractions: "1/2" → "0.5"
+        - Mixed numbers: "1 1/2" → "1.5"
+        - Clean numbers: "5" → "5"
+
+    Args:
+        quantity_str: Raw quantity string from parser
+
+    Returns:
+        Normalized quantity as decimal string
+
+    Examples:
+        >>> normalize_quantity("5-6")
+        "6"
+        >>> normalize_quantity("1/2")
+        "0.5"
+        >>> normalize_quantity("1 1/2")
+        "1.5"
+        >>> normalize_quantity("5")
+        "5"
+    """
+    if not quantity_str:
+        return quantity_str
+
+    quantity_str = quantity_str.strip()
+
+    # Handle ranges (5-6, 2-3, etc.) - take the MAX
+    # Match pattern like "5-6" but not negative numbers like "-5"
+    range_match = re.match(r'^(\d+(?:\s*\d*/\d+)?)\s*-\s*(\d+(?:\s*\d*/\d+)?)$', quantity_str)
+    if range_match:
+        low_str, high_str = range_match.groups()
+        # Recursively normalize each part, then take max
+        low = float(normalize_quantity(low_str))
+        high = float(normalize_quantity(high_str))
+        result = max(low, high)
+        # Return as int if it's a whole number, otherwise as float
+        return str(int(result)) if result.is_integer() else str(result)
+
+    # Handle fractions and mixed numbers
+    if '/' in quantity_str:
+        try:
+            # Check for mixed number format: "1 1/2"
+            mixed_match = re.match(r'^(\d+)\s+(\d+)/(\d+)$', quantity_str)
+            if mixed_match:
+                whole, numerator, denominator = map(int, mixed_match.groups())
+                result = whole + (numerator / denominator)
+                # Return as int if it's a whole number, otherwise as float
+                return str(int(result)) if result.is_integer() else str(result)
+
+            # Simple fraction: "1/2"
+            frac = Fraction(quantity_str)
+            result = float(frac)
+            # Return as int if it's a whole number, otherwise as float
+            return str(int(result)) if result.is_integer() else str(result)
+        except (ValueError, ZeroDivisionError):
+            # If fraction parsing fails, return original
+            return quantity_str
+
+    # Return as-is for clean numbers
+    return quantity_str
 
 
 def normalize_ingredient_units(ingredients: List[Dict[str, str]]) -> List[Dict[str, str]]:
     """
     Normalize unit abbreviations and variations to consistent full names.
+    Also normalizes quantity strings (ranges, fractions, etc.).
 
     Handles common abbreviations like:
         "c" → "cup"
@@ -23,11 +93,16 @@ def normalize_ingredient_units(ingredients: List[Dict[str, str]]) -> List[Dict[s
 
     Also normalizes plural forms to singular for consistency.
 
+    Quantity normalization:
+        "5-6" → "6" (takes max of range)
+        "1/2" → "0.5" (converts fractions)
+        "1 1/2" → "1.5" (converts mixed numbers)
+
     Args:
         ingredients: List of ingredient dicts with 'name', 'quantity', 'unit' keys
 
     Returns:
-        List of ingredients with normalized units
+        List of ingredients with normalized quantities and units
     """
     # Comprehensive unit normalization map
     unit_normalization_map = {
@@ -114,6 +189,10 @@ def normalize_ingredient_units(ingredients: List[Dict[str, str]]) -> List[Dict[s
     for ingredient in ingredients:
         # Create a copy to avoid mutating the original
         normalized = ingredient.copy()
+
+        # Normalize quantity (ranges, fractions, etc.)
+        quantity = ingredient.get("quantity", "").strip()
+        normalized["quantity"] = normalize_quantity(quantity)
 
         # Get the unit and normalize it
         unit = ingredient.get("unit", "").strip()
