@@ -363,47 +363,48 @@ class VerticalVideoProcessor:
             # Parse response into structured meta-ingredients
             meta_ingredients = self.parse_meta_ingredient_response(llm_response)
 
-            # Aggregate quantities for each meta ingredient
-            for meta in meta_ingredients:
-                linked_ids = meta.get("linked_raw_ids", [])
-                if not linked_ids:
-                    meta["quantity"] = ""
-                    meta["unit"] = ""
-                    continue
-
-                # Collect all quantities and units from linked raw ingredients
-                quantities = []
-                units = []
-                for raw_id in linked_ids:
-                    if raw_id in ingredients_with_ids:
-                        raw_ing = ingredients_with_ids[raw_id]
-                        qty = raw_ing.get("quantity", "")
-                        unit = raw_ing.get("unit", "")
-                        if qty and unit:
-                            quantities.append(qty)
-                            units.append(unit)
-
-                # Aggregate quantities if all have the same unit
-                if quantities and units:
-                    unique_units = set(units)
-                    if len(unique_units) == 1:
-                        # Same unit - sum the quantities
-                        try:
-                            total = sum(float(q) for q in quantities)
-                            # Return as int if whole number
-                            meta["quantity"] = str(int(total)) if total.is_integer() else str(total)
-                            meta["unit"] = units[0]
-                        except (ValueError, TypeError):
-                            # If conversion fails, leave empty
-                            meta["quantity"] = ""
-                            meta["unit"] = ""
-                    else:
-                        # Different units - can't aggregate, leave empty
-                        meta["quantity"] = ""
-                        meta["unit"] = ""
-                else:
-                    meta["quantity"] = ""
-                    meta["unit"] = ""
+            # TODO: Quantity aggregation commented out for testing (iOS app may handle this)
+            # # Aggregate quantities for each meta ingredient
+            # for meta in meta_ingredients:
+            #     linked_ids = meta.get("linked_raw_ids", [])
+            #     if not linked_ids:
+            #         meta["quantity"] = ""
+            #         meta["unit"] = ""
+            #         continue
+            #
+            #     # Collect all quantities and units from linked raw ingredients
+            #     quantities = []
+            #     units = []
+            #     for raw_id in linked_ids:
+            #         if raw_id in ingredients_with_ids:
+            #             raw_ing = ingredients_with_ids[raw_id]
+            #             qty = raw_ing.get("quantity", "")
+            #             unit = raw_ing.get("unit", "")
+            #             if qty and unit:
+            #                 quantities.append(qty)
+            #                 units.append(unit)
+            #
+            #     # Aggregate quantities if all have the same unit
+            #     if quantities and units:
+            #         unique_units = set(units)
+            #         if len(unique_units) == 1:
+            #             # Same unit - sum the quantities
+            #             try:
+            #                 total = sum(float(q) for q in quantities)
+            #                 # Return as int if whole number
+            #                 meta["quantity"] = str(int(total)) if total.is_integer() else str(total)
+            #                 meta["unit"] = units[0]
+            #             except (ValueError, TypeError):
+            #                 # If conversion fails, leave empty
+            #                 meta["quantity"] = ""
+            #                 meta["unit"] = ""
+            #         else:
+            #             # Different units - can't aggregate, leave empty
+            #             meta["quantity"] = ""
+            #             meta["unit"] = ""
+            #     else:
+            #         meta["quantity"] = ""
+            #         meta["unit"] = ""
 
             elapsed = time.time() - step_start
             print(f"   ✅ Generated {len(meta_ingredients)} meta-ingredients ({elapsed:.2f}s)")
@@ -418,9 +419,10 @@ class VerticalVideoProcessor:
                 fallback_meta.append({
                     "id": f"META_{i}",
                     "name": data["name"],
-                    "linked_raw_ids": [ingredient_id],
-                    "quantity": data.get("quantity", ""),
-                    "unit": data.get("unit", "")
+                    "linked_raw_ids": [ingredient_id]
+                    # TODO: Quantity/unit fields commented out for testing
+                    # "quantity": data.get("quantity", ""),
+                    # "unit": data.get("unit", "")
                 })
             print(f"   ℹ️  Using fallback: {len(fallback_meta)} meta-ingredients (1-to-1 mapping)")
             return fallback_meta
