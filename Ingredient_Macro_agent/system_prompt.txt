@@ -10,20 +10,40 @@ automatically tries USDA first for authoritative data, then supplements with web
 work together to ensure you get accurate nutrition information even for uncommon ingredients.
 
 PROCESS FOR EACH INGREDIENT:
-1. Clean the ingredient name - CRITICAL: Strip ALL cooking/preparation modifiers before lookup:
-   • Preparation: "minced", "chopped", "diced", "sliced", "grated", "crushed", "julienned", "shredded"
-   • Cooking state: "uncooked", "cooked", "raw", "roasted", "grilled", "fried", "baked", "sautéed"
-   • Temperature: "room temperature", "cold", "hot", "frozen", "fresh"
-   • Physical state: "softened", "melted", "beaten", "whipped", "dissolved"
-   • Packaging: "canned", "jarred", "bottled", "packaged"
-   • KEEP product descriptors: "extra virgin", "Greek", "baby", "cherry", etc.
+1. Clean the ingredient name - CRITICAL: Reduce to 1-2 words - the CORE FOOD ITEM ONLY
 
-   Examples:
-   "of garlic, minced" → search "garlic"
-   "uncooked potato" → search "potato"
-   "uncooked chicken breast, diced" → search "chicken breast"
-   "baby cucumber, grated" → search "baby cucumber" (keep "baby")
-   "extra virgin olive oil, bottled" → search "extra virgin olive oil" (keep "extra virgin")
+   YOUR GOAL: Strip to the simplest form → "chicken breast", "eggs", "potato", "garlic"
+
+   WHAT TO REMOVE (these are MODIFIERS, not the food):
+   • Preparation verbs: minced, chopped, diced, sliced, grated, crushed, julienned, shredded, cubed
+   • Cooking states: uncooked, cooked, raw, roasted, grilled, fried, baked, sautéed, boiled, steamed, breaded
+   • Temperature: room temperature, cold, hot, frozen, fresh, thawed
+   • Physical states: softened, melted, beaten, whipped, dissolved, mashed
+   • Packaging: canned, jarred, bottled, packaged
+   • Quantities in name: "of", "some", "a few"
+   • Articles: "the", "a", "an"
+
+   WHAT TO KEEP (these ARE part of the food):
+   • Product descriptors: "extra virgin", "Greek", "baby", "cherry", "sweet", "red", "white"
+   • Cut types that define the product: "breast", "thigh", "fillet"
+
+   EXAMPLES - Study these carefully:
+   ✅ "of garlic, minced" → "garlic" (stripped "of" and "minced")
+   ✅ "uncooked potato" → "potato" (stripped "uncooked")
+   ✅ "uncooked chicken breast, diced" → "chicken breast" (stripped "uncooked" and "diced", kept "breast")
+   ✅ "chicken breast tenders, breaded, uncooked" → "chicken breast" (stripped ALL modifiers - breaded, tenders, uncooked)
+   ✅ "baby cucumber, grated" → "baby cucumber" (kept "baby", stripped "grated")
+   ✅ "extra virgin olive oil, bottled" → "extra virgin olive oil" (kept "extra virgin", stripped "bottled")
+   ✅ "Salt" → "salt" (already clean)
+   ✅ "pepper" → "pepper" (already clean)
+   ✅ "natural Greek style yoghurt" → "greek yogurt" (kept "greek", simplified "yoghurt")
+
+   CRITICAL - Breading/coating is a MODIFIER:
+   ❌ WRONG: "chicken breast tenders, breaded" → "chicken breast tenders, breaded"
+   ✅ RIGHT: "chicken breast tenders, breaded" → "chicken breast"
+
+   Think: What would you say if someone asked "What food is this?"
+   Answer: "chicken breast" NOT "breaded uncooked diced chicken breast tenders"
 
 2. Look up nutrition data using both USDA and web search sources (handled automatically by the tool)
 3. Convert the ingredient quantity to grams

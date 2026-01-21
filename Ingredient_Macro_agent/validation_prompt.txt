@@ -107,9 +107,50 @@ COMMON RED FLAGS TO CHECK:
 
 ---
 
+8. MANDATORY SEASONING VALIDATION (ALWAYS CHECK - EVEN IF THEY LOOK CORRECT):
+
+   COMMON SEASONINGS LIST - You MUST validate each of these if present:
+   • Salts: salt, sea salt, kosher salt, table salt, himalayan salt, pink salt
+   • Peppers: pepper, black pepper, white pepper, ground pepper, cracked pepper, peppercorns
+   • Spices: paprika, smoked paprika, cayenne, cayenne pepper, red pepper flakes, chili powder,
+     cumin, coriander, turmeric, cinnamon, nutmeg, allspice, cloves, cardamom, curry powder,
+     garam masala, chinese five spice
+   • Dried herbs: oregano, basil, thyme, rosemary, sage, parsley, dill, bay leaf, tarragon, marjoram
+   • Powders: garlic powder, garlic salt, onion powder, onion salt, mustard powder
+   • Blends: italian seasoning, poultry seasoning, taco seasoning, cajun seasoning, old bay, za'atar
+
+   SEASONING VALIDATION RULES:
+   • Seasonings should contribute <5 calories EACH in most recipes
+   • If any seasoning shows >20 calories TOTAL → FLAG AS CRITICAL
+   • If any seasoning shows >10g weight → LIKELY WRONG (should be 1-5g max)
+
+   THE 1g RULE FOR SEASONINGS:
+   • Most seasonings are used in pinches, dashes, or "to taste"
+   • If unit is "count", "each", "pinch", or ambiguous → assume 1g
+   • At 1g, most seasonings contribute 2-4 calories
+   • If a seasoning is showing 50g worth of macros, it's using wrong default!
+
+   SEASONING CORRECTION CALCULATION:
+   If you identify a seasoning using wrong weight (e.g., 50g instead of 1g):
+   1. Calculate correct macros: (current_macros * 1) / current_grams
+   2. Example: Pepper at 50g showing 166 cal → Correct: (166 × 1)/50 = 3.3 cal for 1g
+   3. Include corrected values in your flag
+
+   ⚠️ THIS IS THE #1 SOURCE OF CALORIE OVERESTIMATION - ALWAYS CHECK SEASONINGS FIRST!
+
+---
+
 VALIDATION APPROACH:
 
 For each ingredient, STRICTLY CHECK IN THIS ORDER:
+
+**STEP 0: MANDATORY SEASONING SCAN (ALWAYS DO THIS FIRST)**
+   • Scan ALL ingredients for seasonings from the list in section 8
+   • For EACH seasoning found, check:
+     a) Is the weight reasonable? (should be 1-5g, rarely >10g)
+     b) Are the total calories reasonable? (should be <5 cal each)
+     c) If showing >20g or >20 cal → FLAG AS CRITICAL with corrected 1g values
+   • This catches the most common error source!
 
 1. ABSURD VALUE CHECK (CRITICAL):
    • Compare ingredient macros to expected ranges in section 2
@@ -126,6 +167,7 @@ For each ingredient, STRICTLY CHECK IN THIS ORDER:
 3. DATA SOURCE REVIEW (HIGH PRIORITY):
    • SOURCE=ESTIMATE → Always flag (generic 50g default)
    • SOURCE=WATER → Flag if ingredient is not water-like
+   • SOURCE=SEASONING_DEFAULT → Good, confirms 1g was used (don't flag)
 
 4. RECIPE CONTEXT CHECK (MEDIUM PRIORITY):
    • Does quantity make sense for recipe type?

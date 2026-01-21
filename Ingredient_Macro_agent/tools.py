@@ -21,6 +21,185 @@ UNICODE_FRACTIONS = {
     '⅛': 0.125, '⅜': 0.375, '⅝': 0.625, '⅞': 0.875
 }
 
+# Common seasonings list - these should default to 1g if units are ambiguous
+# Seasonings barely affect nutrition but can swing calorie totals if given wrong weights
+COMMON_SEASONINGS = {
+    # Salts
+    "salt", "sea salt", "kosher salt", "table salt", "himalayan salt", "pink salt",
+    "fleur de sel", "flaky salt",
+
+    # Peppers
+    "pepper", "black pepper", "white pepper", "ground pepper", "cracked pepper",
+    "peppercorns", "black peppercorns", "white peppercorns",
+
+    # Common spices
+    "paprika", "smoked paprika", "sweet paprika", "hot paprika",
+    "cayenne", "cayenne pepper", "red pepper flakes", "crushed red pepper",
+    "chili powder", "chile powder", "chili flakes",
+    "cumin", "ground cumin", "cumin seed", "cumin seeds",
+    "coriander", "ground coriander", "coriander seed", "coriander seeds",
+    "turmeric", "ground turmeric",
+    "cinnamon", "ground cinnamon",
+    "nutmeg", "ground nutmeg",
+    "allspice", "ground allspice",
+    "cloves", "ground cloves", "whole cloves",
+    "ginger powder", "ground ginger", "dried ginger",
+    "cardamom", "ground cardamom",
+    "curry powder", "garam masala", "chinese five spice", "five spice",
+    "oregano", "dried oregano",
+    "basil", "dried basil",
+    "thyme", "dried thyme",
+    "rosemary", "dried rosemary",
+    "sage", "dried sage",
+    "parsley", "dried parsley",
+    "dill", "dried dill", "dill weed",
+    "bay leaf", "bay leaves",
+    "tarragon", "dried tarragon",
+    "marjoram", "dried marjoram",
+
+    # Powdered aromatics
+    "garlic powder", "garlic salt", "granulated garlic",
+    "onion powder", "onion salt", "granulated onion",
+
+    # Other seasonings
+    "msg", "monosodium glutamate",
+    "celery salt", "celery seed",
+    "mustard powder", "dry mustard", "mustard seed",
+    "caraway seed", "caraway seeds",
+    "fennel seed", "fennel seeds",
+    "poppy seed", "poppy seeds",
+    "sesame seed", "sesame seeds",
+    "za'atar", "zaatar",
+    "sumac",
+    "saffron",
+    "herbs de provence", "herbes de provence",
+    "italian seasoning", "poultry seasoning", "taco seasoning",
+    "old bay", "cajun seasoning", "creole seasoning",
+    "everything bagel seasoning",
+}
+
+# Negligible ingredient patterns - these have minimal nutritional impact (<5 cal)
+# and should be skipped to avoid noise and bad matches
+# NOTE: These are checked as WHOLE WORDS or START OF STRING to avoid false positives
+# (e.g., "ice" matching "diced" or "rice")
+NEGLIGIBLE_PHRASE_PATTERNS = {
+    # Squeeze/pinch/dash phrases (must appear at start or as whole phrase)
+    "pinch of", "a pinch of", "small pinch",
+    "squeeze of", "a squeeze of",
+    "dash of", "a dash of",
+    "splash of", "a splash of",
+    "drizzle of", "a drizzle of",
+    "drop of", "drops of", "a drop of",
+    "hint of", "a hint of",
+    "touch of", "a touch of",
+
+    # To taste / as needed
+    "to taste", "as needed", "as required",
+    "to season", "for seasoning",
+
+    # Garnish
+    "for garnish", "as garnish", "for decoration",
+    "to serve", "for serving",
+
+    # Zest (tiny amounts, negligible calories)
+    "zest of", "lemon zest", "lime zest", "orange zest",
+}
+
+# Exact match ingredients (must match the whole ingredient name)
+NEGLIGIBLE_EXACT_MATCHES = {
+    "water", "ice", "ice cubes", "cold water", "hot water", "warm water",
+    "boiling water", "filtered water", "tap water",
+    "salt", "pepper", "black pepper", "sea salt", "kosher salt",
+}
+
+# Units that indicate negligible amounts when combined with seasonings
+NEGLIGIBLE_UNITS = {"pinch", "dash", "drop", "hint", "touch", "smidgen", "to taste"}
+
+
+def is_negligible_ingredient(ingredient_name: str, quantity: str, unit: str) -> bool:
+    """
+    Check if an ingredient is nutritionally negligible and should be skipped.
+
+    This includes:
+    - Phrases like "pinch of salt", "squeeze of lemon" (at START of name)
+    - Water, ice (exact match only)
+    - Garnishes
+    - Common seasonings in small quantities (≤2 tsp or ≤1 tbsp)
+
+    Args:
+        ingredient_name: The ingredient name
+        quantity: The quantity string
+        unit: The unit string
+
+    Returns:
+        True if ingredient should be skipped (assigned 0 macros)
+    """
+    name_lower = ingredient_name.lower().strip()
+    unit_lower = unit.lower().strip()
+
+    # Check for exact matches (water, ice, etc.)
+    if name_lower in NEGLIGIBLE_EXACT_MATCHES:
+        return True
+
+    # Check for phrase patterns at the START of the ingredient name
+    # This avoids false positives like "ice" in "diced"
+    for pattern in NEGLIGIBLE_PHRASE_PATTERNS:
+        if name_lower.startswith(pattern):
+            return True
+
+    # Check for negligible units (pinch, dash, etc.)
+    if unit_lower in NEGLIGIBLE_UNITS:
+        return True
+
+    # Check for common seasonings in small quantities
+    # Seasonings in tsp/tbsp amounts have negligible nutritional impact (<10 cal)
+    if is_seasoning(ingredient_name):
+        try:
+            qty = float(quantity) if quantity else 1.0
+        except ValueError:
+            qty = 1.0
+
+        # Teaspoon amounts of seasonings: ≤2 tsp is negligible (~2-6g, <20 cal)
+        if unit_lower in {"tsp", "teaspoon", "teaspoons"}:
+            if qty <= 2:
+                return True
+
+        # Tablespoon amounts of seasonings: ≤1 tbsp is negligible (~6-15g, <30 cal)
+        if unit_lower in {"tbsp", "tablespoon", "tablespoons"}:
+            if qty <= 1:
+                return True
+
+        # Count-based seasonings with small quantities
+        if unit_lower in {"count", "piece", "pieces", "each", ""}:
+            if qty <= 2:
+                return True
+
+    return False
+
+
+def is_seasoning(ingredient_name: str) -> bool:
+    """
+    Check if an ingredient is a common seasoning.
+
+    Args:
+        ingredient_name: Ingredient name to check
+
+    Returns:
+        True if ingredient matches a common seasoning
+    """
+    name_lower = ingredient_name.lower().strip()
+
+    # Direct match
+    if name_lower in COMMON_SEASONINGS:
+        return True
+
+    # Partial match - check if any seasoning is contained in the name
+    for seasoning in COMMON_SEASONINGS:
+        if seasoning in name_lower or name_lower in seasoning:
+            return True
+
+    return False
+
 
 def detect_preparation_state(ingredient_name: str) -> str:
     """
@@ -254,6 +433,19 @@ async def usda_lookup(ctx: RunContext[MacroDeps], ingredient_name: str) -> Dict:
             print(f"      ⚠️  REJECTED: Protein {macro_data['protein']}g too high (likely bad data)")
             return {"error": f"Invalid protein data: {macro_data['protein']}g", "source": "USDA_API"}
 
+        # Calories should never exceed 900 cal/100g (pure fat is ~900)
+        # Exception: pure oils are ~900 cal/100g
+        if macro_data["calories"] > 950:
+            print(f"      ⚠️  REJECTED: Calories {macro_data['calories']} too high (max ~900 for pure fat)")
+            return {"error": f"Invalid calorie data: {macro_data['calories']} cal/100g", "source": "USDA_API"}
+
+        # All macros being 0 is suspicious (except salt/water)
+        if macro_data["calories"] == 0 and macro_data["protein"] == 0 and macro_data["fat"] == 0 and macro_data["carbs"] == 0:
+            name_lower = ingredient_name.lower()
+            if "salt" not in name_lower and "water" not in name_lower:
+                print(f"      ⚠️  REJECTED: All macros are 0 (suspicious for '{ingredient_name}')")
+                return {"error": f"All macros are 0 (suspicious)", "source": "USDA_API"}
+
         # Cache successful result
         ctx.deps.ingredient_cache[cache_key] = macro_data
         return macro_data
@@ -317,12 +509,12 @@ Be conservative and reasonable - don't return absurd values like 640 cal/100g fo
 """
 
     try:
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         response = model.generate_content(
             prompt,
             generation_config={
                 "temperature": 0.2,  # Low temperature for consistent extraction
-                "max_output_tokens": 500
+                "max_output_tokens": 1000  # Doubled from 500 to prevent corner-cutting
             }
         )
 
@@ -357,6 +549,77 @@ Be conservative and reasonable - don't return absurd values like 640 cal/100g fo
         print(f"     ⚠️  LLM extraction failed: {e}")
         # Return conservative defaults
         return {"calories": 50, "protein": 3, "fat": 1, "carbs": 10}
+
+
+async def llm_nutrition_estimate(ingredient_name: str, recipe_context: Dict = None) -> Dict:
+    """
+    Use LLM to estimate nutrition per 100g based on its knowledge.
+    This replaces web search with direct LLM estimation using recipe context.
+
+    Args:
+        ingredient_name: The ingredient to estimate nutrition for
+        recipe_context: Optional dict with 'title' and 'directions' for better context
+
+    Returns:
+        Dictionary with calories, protein, fat, carbs per 100g
+    """
+    import google.generativeai as genai
+    import re
+
+    # Clean the ingredient name first - strip modifiers
+    clean_name = ingredient_name.lower().strip()
+    for prefix in ["of ", "uncooked ", "raw ", "fresh "]:
+        if clean_name.startswith(prefix):
+            clean_name = clean_name[len(prefix):]
+    for suffix in [", minced", ", diced", ", chopped", ", sliced", ", crumbled"]:
+        clean_name = clean_name.replace(suffix, "")
+
+    # Direct instruction with clear format
+    prompt = f"""Output ONLY 4 numbers for {clean_name} nutrition per 100g.
+Format: calories,protein,fat,carbs
+Example: chicken breast → 120,22,3,0
+Example: potato → 77,2,0,17
+Example: olive oil → 900,0,100,0
+{clean_name} →"""
+
+    try:
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": 0.0,
+                "max_output_tokens": 20
+            }
+        )
+
+        response_text = response.text.strip()
+
+        # Extract all numbers from response using regex
+        numbers = re.findall(r'[\d.]+', response_text)
+
+        if len(numbers) >= 4:
+            calories = float(numbers[0])
+            protein = float(numbers[1])
+            fat = float(numbers[2])
+            carbs = float(numbers[3])
+
+            print(f"     🤖 LLM estimate for '{ingredient_name}': {calories} cal, {protein}p, {fat}f, {carbs}c per 100g")
+
+            return {
+                "calories": calories,
+                "protein": protein,
+                "fat": fat,
+                "carbs": carbs,
+                "source": "LLM_ESTIMATE",
+                "description": ingredient_name
+            }
+        else:
+            print(f"     ⚠️  LLM returned unexpected format: {response_text}")
+            return {"calories": 50, "protein": 3, "fat": 1, "carbs": 10, "source": "LLM_ESTIMATE", "description": ingredient_name}
+
+    except Exception as e:
+        print(f"     ⚠️  LLM estimation failed: {e}")
+        return {"calories": 50, "protein": 3, "fat": 1, "carbs": 10, "source": "LLM_ESTIMATE", "description": ingredient_name}
 
 
 async def web_nutrition_search(ctx: RunContext[MacroDeps], ingredient_name: str) -> Dict:
@@ -475,21 +738,29 @@ async def batch_validate_usda_matches(matches: List[tuple[str, str]]) -> List[bo
     # Build the batch validation prompt
     prompt = """You are a food database matching validator. Check if USDA database entries correctly match the requested ingredients.
 
-Answer YES only if they are the SAME FOOD ITEM (ignore preparation differences like minced, chopped, cooked).
-Answer NO if they are DIFFERENT FOODS entirely.
+Answer YES only if they are the SAME FOOD ITEM with similar nutritional profile.
+Answer NO if they are DIFFERENT FOODS or if the match would significantly change the nutrition.
 
 CRITICAL RULES:
 - Different base foods = NO (garlic vs ham, potato vs quinoa, pita bread vs pita chips)
-- Same food, different prep = YES (chicken breast vs breaded chicken breast)
-- Different cooking states of same food = YES (cooked rice vs uncooked rice)
-- Different forms/products of different foods = NO (bread vs chips, even if same grain)
+- Same food, different cooking state = YES (cooked rice vs uncooked rice, raw chicken vs cooked chicken)
+- Breaded/battered/coated versions = NO! (plain chicken breast ≠ breaded chicken breast - nutrition is VERY different)
+- Different forms/products = NO (bread vs chips, even if same grain)
+- Words like "tenders", "nuggets", "strips" with "breaded" or "battered" = processed food, NOT same as plain meat
+
+CRITICAL: Breaded/coated meats have MUCH higher fat/carbs than plain meat!
+- Plain chicken breast: ~165 cal, 31g protein, 3.6g fat, 0g carbs per 100g
+- Breaded chicken breast: ~260 cal, 15g protein, 16g fat, 15g carbs per 100g
+- These are NOT the same! Answer NO for breaded matches to plain requests.
 
 EXAMPLES:
 ❌ NO: "garlic, minced" vs "Ham, minced" (different foods: garlic ≠ ham)
 ❌ NO: "uncooked potato" vs "Quinoa, uncooked" (different foods: potato ≠ quinoa)
 ❌ NO: "pita" vs "Pita chips" (different products: bread ≠ fried chips)
 ❌ NO: "mint leaves" vs "Drumstick leaves" (different plants)
-✅ YES: "chicken breast, diced" vs "Chicken breast" (same food, prep difference)
+❌ NO: "chicken breast" vs "Chicken breast tenders, breaded" (breaded = different nutrition!)
+❌ NO: "chicken breast, diced" vs "Chicken breast tenders, breaded, uncooked" (breaded changes everything!)
+✅ YES: "chicken breast, diced" vs "Chicken breast, raw" (same food, prep difference only)
 ✅ YES: "olive oil, bottled" vs "Olive oil" (same food, packaging difference)
 ✅ YES: "cooked rice" vs "Rice, white, cooked" (same food, same state)
 
@@ -514,7 +785,7 @@ Your answer:"""
             prompt,
             generation_config={
                 "temperature": 0.1,  # Very low temperature for consistent validation
-                "max_output_tokens": 500
+                "max_output_tokens": 1000  # Doubled from 500 to prevent corner-cutting
             }
         )
 
@@ -630,7 +901,17 @@ def convert_to_grams(ctx: RunContext[MacroDeps], quantity: str, unit: str, ingre
         print(f"  ⚠️  Tier 4 (Water Default): '{ingredient_name}' density unknown")
         print(f"     Using water density (240g/cup) - may need LLM estimation")
         return (volume_ml, "WATER")  # 1ml = 1g for water-like density
-    
+
+    # ================================================================
+    # SEASONING CHECK - Use 1g default for seasonings with ambiguous units
+    # Seasonings barely affect nutrition but can swing totals if overweighted
+    # ================================================================
+    ambiguous_units = ["count", "piece", "pieces", "each", "unit", "units", "to taste", "some", ""]
+    if unit_lower in ambiguous_units and is_seasoning(ingredient_name):
+        print(f"  🧂 Seasoning detected: '{ingredient_name}' with ambiguous unit '{unit}'")
+        print(f"     Using 1g default (seasonings have minimal nutritional impact)")
+        return (gram_amount * 1.0, "SEASONING_DEFAULT")
+
     # Count/piece units - estimate based on ingredient type
     if unit_lower in ["count", "piece", "pieces", "clove", "cloves"]:
         # Comprehensive piece weights for common ingredients (in grams)

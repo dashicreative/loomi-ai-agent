@@ -1,0 +1,41 @@
+Extract macro nutrition values from this recipe content if present.
+
+WHAT TO LOOK FOR:
+- Calories: cal, kcal, kilocalories, calories, energy
+- Protein: pro, protein, g protein
+- Fat: fat, fats, g fat
+- Carbs: carbs, carbohydrates, CHO, g carbs
+
+ALSO LOOK FOR:
+- Servings: serves, servings, portions, makes, yields
+
+COMMON FORMATS CREATORS USE:
+- "450 cal, 35g protein, 20g fat, 45g carbs"
+- "571 kcals per portion"
+- "46g PRO, 63g CHO, 20g FAT"
+- "Macros: 500cal / 40p / 25f / 55c"
+- "Per serving: 350 calories"
+- "Serves 4"
+
+OUTPUT FORMAT:
+Return exactly 5 values separated by commas in this order:
+calories,protein,fat,carbs,servings
+
+RULES:
+1. Numbers only - no units (g, kcal, etc.)
+2. If a value is not found, use 0
+3. If servings not mentioned, use 1
+4. Round to whole numbers
+5. Do NOT calculate or estimate - only extract what is explicitly stated
+
+EXAMPLES:
+- Content has "571 kcals, 46g PRO, 20g FAT, 63g CHO, Serves 2" → 571,46,20,63,2
+- Content has "450 calories, 35g protein" (no fat/carbs/servings) → 450,35,0,0,1
+- Content has no nutrition info → 0,0,0,0,0
+- Content has "Serves 4" but no macros → 0,0,0,0,0
+
+CRITICAL: If no macro values are found anywhere, return: 0,0,0,0,0
+The servings value alone without macros should still return all zeros.
+
+Content to analyze:
+{combined_content}

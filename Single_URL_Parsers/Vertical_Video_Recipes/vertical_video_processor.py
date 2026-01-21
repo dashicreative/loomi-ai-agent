@@ -202,37 +202,240 @@ class VerticalVideoProcessor:
 
         return result
 
-    def parse_recipe_parallel(self, combined_content: str) -> Tuple[str, str, str]:
+    def extract_nutrition(self, combined_content: str) -> Dict[str, Any]:
         """
-        Run ingredient, direction, and meal occasion extraction in parallel.
+        Extract macro nutrition values from combined content using LLM.
 
         Args:
             combined_content: Combined transcript and metadata
 
         Returns:
-            Tuple of (ingredients_output, directions_output, meal_occasion_output)
+            Dictionary with calories, protein, fat, carbs, servings
+            All values are integers. Returns all zeros if no nutrition found.
         """
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        prompt_path = self.prompts_dir / "Nutrition_LLM_Parsing_Prompt.txt"
+
+        with open(prompt_path, 'r', encoding='utf-8') as f:
+            prompt_template = f.read()
+
+        prompt = prompt_template.format(combined_content=combined_content)
+
+        start_time = time.time()
+        response = self.google_model.generate_content(prompt)
+
+        if hasattr(response, 'text') and response.text:
+            result = response.text.strip()
+        elif hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, 'content') and candidate.content.parts:
+                result = candidate.content.parts[0].text.strip()
+            else:
+                raise Exception(f"Gemini response blocked: {candidate.finish_reason}")
+        else:
+            raise Exception("Gemini returned empty response")
+
+        elapsed = time.time() - start_time
+        print(f"      🔢 Nutrition LLM (GEMINI): {elapsed:.2f}s")
+
+        # Parse the comma-separated response: "calories,protein,fat,carbs,servings"
+        try:
+            # Extract numbers from response (handles any extra text)
+            import re
+            numbers = re.findall(r'\d+', result)
+
+            if len(numbers) >= 5:
+                return {
+                    "calories": int(numbers[0]),
+                    "protein": int(numbers[1]),
+                    "fat": int(numbers[2]),
+                    "carbs": int(numbers[3]),
+                    "servings": int(numbers[4])
+                }
+            else:
+                print(f"      ⚠️  Nutrition extraction returned unexpected format: {result}")
+                return {"calories": 0, "protein": 0, "fat": 0, "carbs": 0, "servings": 0}
+        except Exception as e:
+            print(f"      ⚠️  Failed to parse nutrition response: {e}")
+            return {"calories": 0, "protein": 0, "fat": 0, "carbs": 0, "servings": 0}
+
+    def validate_single_macro(
+        self,
+        macro_name: str,
+        stated_value: int,
+        servings: int,
+        recipe_title: str,
+        ingredient_list: str
+    ) -> bool:
+        """
+        Validate if a single macro value has already been multiplied by servings.
+
+        Args:
+            macro_name: Name of the macro (calories, protein, fat, carbs)
+            stated_value: The extracted macro value
+            servings: Number of servings
+            recipe_title: Title of the recipe
+            ingredient_list: Formatted ingredient list string
+
+        Returns:
+            True if value is already total (don't multiply), False if per-serving (needs multiply)
+        """
+        prompt_path = self.prompts_dir / "Nutrition_Validation_Prompt.txt"
+
+        with open(prompt_path, 'r', encoding='utf-8') as f:
+            prompt_template = f.read()
+
+        # Determine unit based on macro type
+        unit = "" if macro_name == "calories" else "g"
+
+        prompt = prompt_template.format(
+            macro_name=macro_name,
+            macro_name_upper=macro_name.upper(),
+            stated_value=stated_value,
+            unit=unit,
+            servings=servings,
+            recipe_title=recipe_title,
+            ingredient_list=ingredient_list
+        )
+
+        start_time = time.time()
+        response = self.google_model.generate_content(prompt)
+
+        if hasattr(response, 'text') and response.text:
+            result = response.text.strip().upper()
+        elif hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, 'content') and candidate.content.parts:
+                result = candidate.content.parts[0].text.strip().upper()
+            else:
+                # Default to TRUE (already multiplied) on error - safer
+                result = "TRUE"
+        else:
+            result = "TRUE"
+
+        elapsed = time.time() - start_time
+        print(f"         🔍 {macro_name.capitalize()} validation: {result} ({elapsed:.2f}s)")
+
+        # Parse response - TRUE means already multiplied, FALSE means needs multiply
+        return "TRUE" in result
+
+    def validate_nutrition_multiplier(
+        self,
+        nutrition: Dict[str, Any],
+        recipe_title: str,
+        ingredients: List[Dict[str, str]]
+    ) -> bool:
+        """
+        Validate if nutrition values need to be multiplied by servings.
+
+        Runs 4 parallel LLM calls (one per macro) and uses weighted voting.
+        Calories and protein are weighted more heavily.
+
+        Args:
+            nutrition: Dict with calories, protein, fat, carbs, servings
+            recipe_title: Title of the recipe
+            ingredients: List of ingredient dicts with name, quantity, unit
+
+        Returns:
+            True if values are already total (don't multiply), False if per-serving (needs multiply)
+        """
+        servings = nutrition.get("servings", 1)
+        if servings <= 1:
+            return True  # No multiplication needed
+
+        # Format ingredient list for the prompt
+        ingredient_lines = []
+        for ing in ingredients:
+            qty = ing.get("quantity", "")
+            unit = ing.get("unit", "")
+            name = ing.get("name", "")
+            ingredient_lines.append(f"- {qty} {unit} {name}".strip())
+        ingredient_list = "\n".join(ingredient_lines)
+
+        print(f"   🔍 Validating nutrition multiplier (servings={servings})...")
+        validation_start = time.time()
+
+        # Run 4 parallel validation calls
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            calories_future = executor.submit(
+                self.validate_single_macro,
+                "calories", nutrition["calories"], servings, recipe_title, ingredient_list
+            )
+            protein_future = executor.submit(
+                self.validate_single_macro,
+                "protein", nutrition["protein"], servings, recipe_title, ingredient_list
+            )
+            fat_future = executor.submit(
+                self.validate_single_macro,
+                "fat", nutrition["fat"], servings, recipe_title, ingredient_list
+            )
+            carbs_future = executor.submit(
+                self.validate_single_macro,
+                "carbs", nutrition["carbs"], servings, recipe_title, ingredient_list
+            )
+
+            # Get results
+            calories_is_total = calories_future.result()
+            protein_is_total = protein_future.result()
+            fat_is_total = fat_future.result()
+            carbs_is_total = carbs_future.result()
+
+        validation_elapsed = time.time() - validation_start
+
+        # Weighted voting: calories and protein count more
+        # Calories: 2 votes, Protein: 2 votes, Fat: 1 vote, Carbs: 1 vote
+        votes_for_total = 0
+        if calories_is_total:
+            votes_for_total += 2
+        if protein_is_total:
+            votes_for_total += 2
+        if fat_is_total:
+            votes_for_total += 1
+        if carbs_is_total:
+            votes_for_total += 1
+
+        # Need 3+ votes (out of 6) to conclude it's already total
+        is_already_total = votes_for_total >= 3
+
+        print(f"      📊 Validation votes: cal={calories_is_total}, pro={protein_is_total}, fat={fat_is_total}, carbs={carbs_is_total}")
+        print(f"      📊 Weighted score: {votes_for_total}/6 → {'ALREADY TOTAL' if is_already_total else 'NEEDS MULTIPLY'}")
+        print(f"   ✅ Nutrition validation complete ({validation_elapsed:.2f}s)")
+
+        return is_already_total
+
+    def parse_recipe_parallel(self, combined_content: str) -> Tuple[str, str, str, Dict[str, Any]]:
+        """
+        Run ingredient, direction, meal occasion, and nutrition extraction in parallel.
+
+        Args:
+            combined_content: Combined transcript and metadata
+
+        Returns:
+            Tuple of (ingredients_output, directions_output, meal_occasion_output, nutrition_output)
+        """
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             print("   🍅 Starting ingredients extraction (GEMINI)...")
             print("   📝 Starting directions extraction (GEMINI)...")
             print("   🍽️  Starting meal occasion extraction (GEMINI)...")
+            print("   🔢 Starting nutrition extraction (GEMINI)...")
 
             parallel_start = time.time()
 
-            # Submit all three tasks
+            # Submit all four tasks
             ingredients_future = executor.submit(self.extract_ingredients, combined_content)
             directions_future = executor.submit(self.extract_title_and_directions, combined_content)
             meal_occasion_future = executor.submit(self.extract_meal_occasion, combined_content)
+            nutrition_future = executor.submit(self.extract_nutrition, combined_content)
 
             # Wait for results
             ingredients_result = ingredients_future.result()
             directions_result = directions_future.result()
             meal_occasion_result = meal_occasion_future.result()
+            nutrition_result = nutrition_future.result()
 
             parallel_total = time.time() - parallel_start
             print(f"   ✅ Parallel LLM calls completed in {parallel_total:.2f}s")
 
-            return ingredients_result, directions_result, meal_occasion_result
+            return ingredients_result, directions_result, meal_occasion_result, nutrition_result
 
     def parse_meta_ingredient_response(self, llm_response: str) -> List[Dict[str, Any]]:
         """
@@ -458,10 +661,10 @@ class VerticalVideoProcessor:
         timings['content_combination'] = time.time() - step_start
         print(f"   ✅ Content combined ({timings['content_combination']:.2f}s)")
 
-        # Step 6: Run parallel recipe extraction
+        # Step 6: Run parallel recipe extraction (ingredients, directions, meal occasion, nutrition)
         print("🤖 Step 6: Running parallel LLM recipe extraction (GEMINI)...")
         step_start = time.time()
-        ingredients_output, directions_output, meal_occasion_output = self.parse_recipe_parallel(combined_content)
+        ingredients_output, directions_output, meal_occasion_output, nutrition_output = self.parse_recipe_parallel(combined_content)
         timings['llm_parsing'] = time.time() - step_start
         print(f"   ✅ LLM parsing complete ({timings['llm_parsing']:.2f}s)")
 
@@ -472,6 +675,7 @@ class VerticalVideoProcessor:
         print(f"🥕 INGREDIENTS (first 400 chars):\n{ingredients_output[:400]}")
         print(f"\n📝 DIRECTIONS (first 400 chars):\n{directions_output[:400]}")
         print(f"\n🍽️  MEAL OCCASION: {meal_occasion_output}")
+        print(f"\n🔢 NUTRITION: {nutrition_output['calories']} cal, {nutrition_output['protein']}g pro, {nutrition_output['fat']}g fat, {nutrition_output['carbs']}g carbs (servings: {nutrition_output['servings']})")
         print("="*60 + "\n")
 
         # Step 6.5: Parse LLM outputs into structured format
@@ -564,6 +768,45 @@ class VerticalVideoProcessor:
             print(f"   ... and {len(rescued_ingredients) - 8} more")
         print("="*60 + "\n")
 
+        # Step 8.5: CONDITIONAL - Nutrition validation (only if servings > 1 and macros found)
+        final_nutrition = {
+            "calories": str(nutrition_output["calories"]) if nutrition_output["calories"] > 0 else "",
+            "protein": str(nutrition_output["protein"]) if nutrition_output["protein"] > 0 else "",
+            "fat": str(nutrition_output["fat"]) if nutrition_output["fat"] > 0 else "",
+            "carbs": str(nutrition_output["carbs"]) if nutrition_output["carbs"] > 0 else ""
+        }
+        final_servings = nutrition_output["servings"] if nutrition_output["servings"] > 0 else 0
+
+        # Only validate and potentially multiply if servings > 1 AND macros were found
+        if nutrition_output["servings"] > 1 and nutrition_output["calories"] > 0:
+            print("🔢 Step 8.5: Validating nutrition multiplier (GEMINI)...")
+            step_start = time.time()
+
+            is_already_total = self.validate_nutrition_multiplier(
+                nutrition_output,
+                title,
+                rescued_ingredients
+            )
+
+            timings['nutrition_validation'] = time.time() - step_start
+
+            if not is_already_total:
+                # Multiply macros by servings
+                multiplier = nutrition_output["servings"]
+                final_nutrition = {
+                    "calories": str(nutrition_output["calories"] * multiplier),
+                    "protein": str(nutrition_output["protein"] * multiplier),
+                    "fat": str(nutrition_output["fat"] * multiplier),
+                    "carbs": str(nutrition_output["carbs"] * multiplier)
+                }
+                print(f"   📊 Multiplied macros by {multiplier}: {final_nutrition['calories']} cal, {final_nutrition['protein']}g pro, {final_nutrition['fat']}g fat, {final_nutrition['carbs']}g carbs")
+            else:
+                print(f"   📊 Using macros as-is (already total): {final_nutrition['calories']} cal, {final_nutrition['protein']}g pro, {final_nutrition['fat']}g fat, {final_nutrition['carbs']}g carbs")
+        elif nutrition_output["calories"] > 0:
+            print(f"   📊 Nutrition found (servings=1, no validation needed): {final_nutrition['calories']} cal, {final_nutrition['protein']}g pro, {final_nutrition['fat']}g fat, {final_nutrition['carbs']}g carbs")
+        else:
+            print("   ℹ️  No nutrition data found in content")
+
         # Step 9: SEQUENTIAL - Step-Ingredient Matching
         print("🔗 Step 9: Matching ingredients to steps (GEMINI)...")
         step_start = time.time()
@@ -600,6 +843,8 @@ class VerticalVideoProcessor:
         print(f"📋 DIRECTION COUNT: {len(meta_step_result)}")
         print(f"🔗 STEP MAPPINGS: {len(step_ingredient_result.get('step_mappings', []))} steps with ingredient assignments")
         print(f"🍽️  MEAL OCCASION: {meal_occasion_output}")
+        print(f"🔢 FINAL NUTRITION: {final_nutrition['calories'] or '0'} cal, {final_nutrition['protein'] or '0'}g pro, {final_nutrition['fat'] or '0'}g fat, {final_nutrition['carbs'] or '0'}g carbs")
+        print(f"🍴 SERVINGS: {final_servings}")
         print("="*60 + "\n")
 
         recipe_dict = create_enhanced_recipe_json(
@@ -608,10 +853,11 @@ class VerticalVideoProcessor:
             source_url=source_url,
             step_ingredient_result=step_ingredient_result,
             meta_step_result=meta_step_result,
-            meta_ingredients=meta_ingredients,  # NEW: Deduplicated ingredient list
+            meta_ingredients=meta_ingredients,  # Deduplicated ingredient list
+            nutrition=final_nutrition,  # Extracted macro nutrition
             image=metadata.get("image_url", ""),  # Cover photo/thumbnail
             meal_occasion=meal_occasion_output,
-            servings=0  # Vertical videos rarely specify servings
+            servings=final_servings  # Extracted servings count
         )
 
         timings['json_structuring'] = time.time() - step_start

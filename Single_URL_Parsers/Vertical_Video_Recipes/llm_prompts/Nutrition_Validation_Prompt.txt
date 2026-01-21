@@ -1,0 +1,27 @@
+Determine if the stated {macro_name} value has already been multiplied by servings.
+
+RECIPE: {recipe_title}
+SERVINGS: {servings}
+STATED {macro_name_upper}: {stated_value}{unit}
+
+INGREDIENT LIST:
+{ingredient_list}
+
+YOUR TASK:
+1. Estimate the TOTAL {macro_name} for the entire recipe based on the ingredient list
+2. Compare your estimate to the stated value ({stated_value}{unit})
+3. Decide: Is {stated_value}{unit} the TOTAL for all {servings} servings, or PER SERVING?
+
+ESTIMATION TIPS:
+- Use your knowledge of typical {macro_name} values for common ingredients
+- For "count" units with ambiguous quantities (like "1 count cherry tomatoes"), estimate reasonable amounts based on the recipe title
+- Round estimates are fine - we just need to be in the right ballpark
+
+DECISION LOGIC:
+- If your estimate is CLOSE to stated value (within ~50%) → stated is TOTAL (already multiplied)
+- If your estimate is CLOSE to stated × {servings} → stated is PER SERVING (needs multiplication)
+
+OUTPUT:
+Return ONLY one word: TRUE or FALSE
+- TRUE = stated value is already the TOTAL (do NOT multiply)
+- FALSE = stated value is PER SERVING (needs to be multiplied by {servings})

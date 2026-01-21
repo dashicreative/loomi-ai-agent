@@ -47,27 +47,27 @@ macro_agent = Agent(
 @macro_agent.tool
 async def lookup_nutrition_data(ctx: RunContext[MacroDeps], ingredient_name: str) -> str:
     """
-    Look up nutrition data for an ingredient with USDA primary and web fallback.
-    Returns: "calories: X, protein: Y, fat: Z, carbs: W per 100g (source: USDA/WEB)"
+    Look up nutrition data for an ingredient with USDA primary and LLM fallback.
+    Returns: "calories: X, protein: Y, fat: Z, carbs: W per 100g (source: USDA/LLM)"
     """
     # Try USDA first
     usda_result = await tools.usda_lookup(ctx, ingredient_name)
-    
+
     if "error" not in usda_result:
         # USDA success
         source = usda_result.get('source', 'USDA')
         return f"calories: {usda_result.get('calories', 0)}, protein: {usda_result.get('protein', 0)}g, fat: {usda_result.get('fat', 0)}g, carbs: {usda_result.get('carbs', 0)}g per 100g (source: {source})"
-    
-    # USDA failed, try web search fallback
-    web_result = await tools.web_nutrition_search(ctx, ingredient_name)
-    
-    if "error" not in web_result:
-        # Web search success
-        source = web_result.get('source', 'WEB')
-        return f"calories: {web_result.get('calories', 0)}, protein: {web_result.get('protein', 0)}g, fat: {web_result.get('fat', 0)}g, carbs: {web_result.get('carbs', 0)}g per 100g (source: {source})"
-    
+
+    # USDA failed, try LLM estimation fallback
+    llm_result = await tools.llm_nutrition_estimate(ingredient_name)
+
+    if "error" not in llm_result:
+        # LLM estimation success
+        source = llm_result.get('source', 'LLM_ESTIMATE')
+        return f"calories: {llm_result.get('calories', 0)}, protein: {llm_result.get('protein', 0)}g, fat: {llm_result.get('fat', 0)}g, carbs: {llm_result.get('carbs', 0)}g per 100g (source: {source})"
+
     # Both failed
-    return f"Error: Could not find nutrition data for {ingredient_name}. USDA: {usda_result.get('error', 'Unknown')}. Web: {web_result.get('error', 'Unknown')}"
+    return f"Error: Could not find nutrition data for {ingredient_name}. USDA: {usda_result.get('error', 'Unknown')}. LLM: {llm_result.get('error', 'Unknown')}"
 
 
 @macro_agent.tool  
@@ -124,7 +124,32 @@ async def calculate_recipe_macros_optimized(ingredients: List[Dict]) -> str:
     ctx = SimpleContext(deps)
 
     try:
-        # Step 1: Parallel nutrition lookups for ALL ingredients (USDA only first)
+        # Step 0: Filter out negligible ingredients (squeeze of lemon, pinch of salt, etc.)
+        # These have <5 calories and just add noise to calculations
+        negligible_indices = []
+        significant_ingredients = []
+        significant_indices = []
+
+        print("\n🔍 Pre-filtering negligible ingredients...")
+        print("-" * 50)
+
+        for i, ingredient in enumerate(ingredients):
+            name = ingredient.get('name', '')
+            quantity = ingredient.get('quantity', '1')
+            unit = ingredient.get('unit', 'count')
+
+            if tools.is_negligible_ingredient(name, quantity, unit):
+                negligible_indices.append(i)
+                print(f"  ⏭️  SKIP: '{name}' ({quantity} {unit}) - negligible")
+            else:
+                significant_ingredients.append(ingredient)
+                significant_indices.append(i)
+
+        if negligible_indices:
+            print(f"\n  Skipping {len(negligible_indices)} negligible ingredient(s)")
+        print(f"  Processing {len(significant_ingredients)} significant ingredient(s)\n")
+
+        # Step 1: Parallel nutrition lookups for SIGNIFICANT ingredients only (USDA first)
         async def lookup_ingredient_usda(ingredient: Dict):
             """Try USDA lookup for a single ingredient"""
             name = ingredient['name']
@@ -154,10 +179,30 @@ async def calculate_recipe_macros_optimized(ingredients: List[Dict]) -> str:
                 'usda_match': None
             }
 
-        # First pass: Try USDA for all ingredients
+        # First pass: Try USDA for SIGNIFICANT ingredients only
         print("\n🔍 Nutrition Data Sources:")
         print("-" * 50)
-        initial_data = await asyncio.gather(*[lookup_ingredient_usda(ing) for ing in ingredients])
+        significant_data = await asyncio.gather(*[lookup_ingredient_usda(ing) for ing in significant_ingredients])
+
+        # Build full initial_data list with negligible ingredients as 0 macros
+        initial_data = []
+        sig_idx = 0
+        for i in range(len(ingredients)):
+            if i in negligible_indices:
+                # Negligible ingredient - assign 0 macros
+                initial_data.append({
+                    'name': ingredients[i]['name'],
+                    'calories': 0,
+                    'protein': 0,
+                    'fat': 0,
+                    'carbs': 0,
+                    'source': 'NEGLIGIBLE',
+                    'usda_match': None
+                })
+            else:
+                # Significant ingredient - use USDA/web result
+                initial_data.append(significant_data[sig_idx])
+                sig_idx += 1
 
         # Step 1.5: BATCH VALIDATE USDA MATCHES
         usda_matches = []
@@ -181,32 +226,33 @@ async def calculate_recipe_macros_optimized(ingredients: List[Dict]) -> str:
                     initial_data[idx]['source'] = 'USDA_INVALID'
 
             if invalid_indices:
-                print(f"\n🔄 Re-processing {len(invalid_indices)} invalid USDA matches with web search...")
+                print(f"\n🔄 Re-processing {len(invalid_indices)} invalid USDA matches with LLM estimation...")
 
-        # Step 1.6: Retry failed/invalid matches with web search
-        async def retry_with_web(index: int, ingredient: Dict):
-            """Retry with web search for failed/invalid USDA lookups"""
+        # Step 1.6: Retry failed/invalid matches with LLM estimation (replaces web search)
+        async def retry_with_llm(index: int, ingredient: Dict):
+            """Retry with LLM estimation for failed/invalid USDA lookups"""
             name = ingredient['name']
-            web_result = await tools.web_nutrition_search(ctx, name)
+            # Use LLM to estimate nutrition based on ingredient name
+            llm_result = await tools.llm_nutrition_estimate(name)
 
-            if "error" not in web_result:
+            if "error" not in llm_result:
                 return {
                     'name': name,
-                    'calories': web_result.get('calories', 0),
-                    'protein': web_result.get('protein', 0),
-                    'fat': web_result.get('fat', 0),
-                    'carbs': web_result.get('carbs', 0),
-                    'source': 'WEB'
+                    'calories': llm_result.get('calories', 0),
+                    'protein': llm_result.get('protein', 0),
+                    'fat': llm_result.get('fat', 0),
+                    'carbs': llm_result.get('carbs', 0),
+                    'source': 'LLM_ESTIMATE'
                 }
 
-            # Both USDA and web failed
+            # LLM estimation failed - use conservative defaults
             return {
                 'name': name,
-                'calories': 0,
-                'protein': 0,
-                'fat': 0,
-                'carbs': 0,
-                'source': 'ERROR'
+                'calories': 50,
+                'protein': 3,
+                'fat': 1,
+                'carbs': 10,
+                'source': 'LLM_DEFAULT'
             }
 
         # Re-process failed/invalid matches
@@ -214,7 +260,7 @@ async def calculate_recipe_macros_optimized(ingredients: List[Dict]) -> str:
         retry_indices = []
         for i, data in enumerate(initial_data):
             if data['source'] in ['USDA_FAILED', 'USDA_INVALID']:
-                retry_tasks.append(retry_with_web(i, ingredients[i]))
+                retry_tasks.append(retry_with_llm(i, ingredients[i]))
                 retry_indices.append(i)
 
         if retry_tasks:
@@ -228,8 +274,16 @@ async def calculate_recipe_macros_optimized(ingredients: List[Dict]) -> str:
         # Print final sources
         print()
         for data in nutrition_data:
-            source_emoji = "✅" if data['source'] == 'USDA' else ("🌐" if data['source'] == 'WEB' else "❌")
-            print(f"{source_emoji} {data['source']:5} - {data['name']}")
+            source = data['source']
+            if source == 'USDA':
+                source_emoji = "✅"
+            elif source == 'LLM_ESTIMATE':
+                source_emoji = "🤖"
+            elif source == 'NEGLIGIBLE':
+                source_emoji = "⏭️"
+            else:
+                source_emoji = "❌"
+            print(f"{source_emoji} {source:12} - {data['name']}")
         print()
 
         # Step 2: Calculate scaled nutrition for each ingredient
@@ -255,7 +309,12 @@ async def calculate_recipe_macros_optimized(ingredients: List[Dict]) -> str:
             name = ingredient.get('name', '')
             portions = nutrition.get('portions', [])  # Pass USDA portion data
 
-            grams, source = tools.convert_to_grams(ctx, quantity, unit, name, portions)
+            # Skip conversion for negligible ingredients
+            if nutrition.get('source') == 'NEGLIGIBLE':
+                grams = 0.0
+                source = 'NEGLIGIBLE'
+            else:
+                grams, source = tools.convert_to_grams(ctx, quantity, unit, name, portions)
 
             # Scale nutrition from per-100g to actual amount
             scale = grams / 100.0
@@ -330,7 +389,13 @@ Your estimates:"""
                 # Call Gemini for density estimation
                 import google.generativeai as genai
                 model = genai.GenerativeModel('gemini-2.0-flash-exp')
-                response = model.generate_content(prompt)
+                response = model.generate_content(
+                    prompt,
+                    generation_config={
+                        "temperature": 0.2,
+                        "max_output_tokens": 500  # Simple numeric output doesn't need much
+                    }
+                )
                 llm_estimates = response.text.strip().split('\n')
 
                 # Parse LLM estimates and recalculate
@@ -390,7 +455,7 @@ Your estimates:"""
         # Generate quality indicator
         total_ingredients = len(ingredient_results)
         quality_parts = []
-        for source in ['USDA_PORTION', 'TABLE', 'LLM', 'WATER', 'ESTIMATE', 'DIRECT']:
+        for source in ['USDA_PORTION', 'TABLE', 'LLM_ESTIMATE', 'WATER', 'ESTIMATE', 'DIRECT', 'NEGLIGIBLE', 'SEASONING_DEFAULT']:
             if source in source_counts:
                 count = source_counts[source]
                 pct = (count / total_ingredients) * 100
@@ -486,7 +551,7 @@ async def validate_macro_results(
             prompt,
             generation_config={
                 "temperature": 0.3,  # Lower temperature for more consistent validation
-                "max_output_tokens": 2000
+                "max_output_tokens": 4000  # Doubled from 2000 to prevent corner-cutting
             }
         )
 
