@@ -544,7 +544,7 @@ class VerticalVideoProcessor:
                 prompt,
                 generation_config={
                     "temperature": 0.1,
-                    "max_output_tokens": 2000
+                    "max_output_tokens": 3500
                 }
             )
 

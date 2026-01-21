@@ -57,40 +57,14 @@ def main():
         
         print("🚀 Running enhanced Instagram recipe parsing pipeline...")
         print("   This includes: Apify extraction → Audio transcription → LLM parsing → Enhanced analysis → JSON structuring\n")
-        
-        # Step 1: Extract Instagram data and transcribe
-        print("📱 Step 1-5: Extracting data and transcribing...")
-        apify_data = transcriber.extract_with_apify(instagram_url)
-        audio_path = transcriber.download_audio_from_url(apify_data['video_url'])
-        transcript = transcriber.transcribe_audio_deepgram(audio_path)
-        metadata = transcriber.format_apify_metadata(apify_data)
-        combined_content = transcriber.combine_content_for_parsing(transcript, metadata)
-        
-        # Step 2: Get raw LLM outputs for analysis
-        print("🤖 Step 6: Running LLM recipe extraction...")
-        ingredients_output, directions_output, meal_occasion_output = transcriber.parse_recipe_parallel(combined_content)
-        
-        # Display raw LLM outputs
-        print("\n" + "=" * 60)
-        print("📝 RAW LLM OUTPUTS (From Instagram Content)")
-        print("=" * 60)
-        
-        print("\n🥕 RAW INGREDIENTS OUTPUT:")
-        print("-" * 40)
-        print(ingredients_output)
-        
-        print("\n📋 RAW DIRECTIONS OUTPUT:")
-        print("-" * 40) 
-        print(directions_output)
-        
-        print("\n🍽️  RAW MEAL OCCASION OUTPUT:")
-        print("-" * 40)
-        print(meal_occasion_output)
-        
-        print("=" * 60)
-        
-        # Step 3: Run the complete enhanced pipeline
-        print("\n🔗 Running complete enhanced analysis...")
+
+        # NOTE: Removed redundant manual extraction steps that used legacy InstagramTranscriber
+        # methods with outdated prompts (was causing hallucinations). The full pipeline via
+        # parse_instagram_recipe_to_json() now uses VerticalVideoProcessor which has the
+        # correct, up-to-date prompts.
+
+        # Run the complete enhanced pipeline (uses VerticalVideoProcessor)
+        print("🔗 Running complete pipeline...")
         recipe_json = transcriber.parse_instagram_recipe_to_json(instagram_url)
         
         # Record end time

@@ -61,7 +61,7 @@ GROUPING RULE:
 If multiple actions work on the SAME mixture/component in the SAME location without a major transition, they belong in the SAME step.
 
 FORMATTING:
-- First line: Recipe title (extracted from post)
+- First line: Recipe title (extracted from post, keep any emojis if present)
 - Then numbered steps: 1., 2., 3., etc.
 - One step per line
 - Extract ONLY cooking actions (mix, bake, chop, heat, sauté, etc.). Skip ingredient quantity lists, yield declarations, and narrative elements
