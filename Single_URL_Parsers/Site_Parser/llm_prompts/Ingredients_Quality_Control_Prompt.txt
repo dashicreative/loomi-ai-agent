@@ -15,6 +15,7 @@ ONLY MODIFY IN THESE EXTREME CASES:
 ✅ "1 tsp EACH:onion powder, cumin, paprika" → "1 tsp onion powder;1 tsp cumin;1 tsp paprika"
 ✅ "2 tbsp each of: salt, pepper, garlic powder" → "2 tbsp salt;2 tbsp pepper;2 tbsp garlic powder"
 ✅ "1/2 cup combined: flour and cornstarch" → "1/2 cup flour;1/2 cup cornstarch"
+✅ "2 1/2 tbsp cornstarch mixed with 3 Tbsp beef broth" → "2 1/2 tbsp cornstarch;3 tbsp beef broth"
 
 2. EDITORIAL/WEBSITE TEXT REMOVAL (Remove parenthetical comments):
 ✅ "2 cups flour (I highly recommend King Arthur)" → "2 cups flour"
