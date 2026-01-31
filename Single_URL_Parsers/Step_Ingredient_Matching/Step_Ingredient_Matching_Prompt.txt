@@ -1,58 +1,141 @@
-TASK: Match ingredient IDs to recipe steps. Each ingredient should appear EXACTLY ONCE at its first explicit mention.
+🚨 CRITICAL RULE: Each ingredient ID can be assigned to EXACTLY ONE step - its first explicit mention only.
 
-MATCHING RULES (in priority order):
-1. Only match when step text explicitly names the ingredient
-2. Match on core ingredient name (ignore quantities, descriptors, parenthetical notes)
+MENTAL MODEL - Sequential ID Consumption:
+Think of each ingredient ID as a physical card. As you process steps sequentially:
+1. Look at Step 1, identify which ingredient IDs are explicitly mentioned → assign them
+2. REMOVE those IDs from your available pool - they are now CONSUMED and gone forever
+3. Move to Step 2 with only your REMAINING unused IDs
+4. Repeat: match IDs, consume them, move forward with what's left
+5. Once an ID is assigned, it NO LONGER EXISTS for future steps - even if the ingredient is mentioned again
+
+IMPORTANT: Different ingredient IDs are always independent, even if they share similar names:
+- I1:ground beef and I2:beef broth are DIFFERENT ingredients (different IDs)
+- I1:chocolate chips and I2:cocoa powder are DIFFERENT ingredients (different IDs)
+- Each ID can be assigned once, but both can appear in the recipe
+
+MATCHING RULES:
+1. Only match when step text explicitly names the ingredient (not generic terms)
+2. Match on core ingredient name - ignore quantities, descriptors, parenthetical notes
    - "crushed cookies" matches "12 protein cookies (crushed)" ✓
    - "cream cheese" matches "cream cheese (* See notes, room temperature)" ✓
    - "butter" matches "light butter (melted)" ✓
-3. Each ingredient ID appears in exactly one step (first mention only)
-4. Generic terms DO NOT match ingredients:
-   - "mixture", "batter", "dough", "filling" = NO matches
+3. Generic terms DO NOT match ingredients:
+   - "mixture", "batter", "dough", "filling", "it" = NO matches
    - "Transfer to pan" = NO matches (just moving, not adding)
-5. Assembly/plating steps count if ingredient is explicitly named:
+4. Assembly/plating steps count if ingredient is explicitly named:
    - "Assemble with pita" = Match pita ✓
    - "Serve over rice" = Match rice ✓
-6. If ingredient is never explicitly mentioned in ANY step, omit it from output
+5. If ingredient is never explicitly mentioned in ANY step, omit it from output
 
-CRITICAL: Track assigned IDs to prevent duplicates
-- Before assigning an ID to a step, verify it hasn't been used in a previous step
-- If an ingredient is mentioned again in a later step, skip it (no duplicate IDs)
-- Example: If "pepper" was assigned in Step 3, and Step 10 says "garnish with pepper", 
-  Step 10 gets NO pepper ID (it was already used)
-
-STEP-BY-STEP PROCESS:
-1. Read all ingredients and their IDs
-2. Go through steps sequentially
-3. For each step, identify explicitly named ingredients
-4. Assign those ingredient IDs to that step
-5. Never assign the same ID twice (skip if already used)
-
-OUTPUT FORMAT: Step1:ID1,ID2|Step2:ID3|Step3:ID4
+OUTPUT FORMAT: Step1:ID1,ID2|Step2:ID3|Step3:|Step4:ID5
 - Use actual step numbers from input
-- List all matched IDs for that step
-- Use empty after colon if no matches: Step4:|Step5:ID7
+- List all matched IDs for that step (comma-separated)
+- Use empty after colon if no matches: Step3:
 
-EXAMPLES:
+COMMON PITFALL EXAMPLES - What NOT to do:
 
-Example 1:
+Example 1 - Chicken (Prep → Cook → Assemble):
+Ingredients: I1:chicken breast | I2:soy sauce | I3:garlic
+Steps:
+1. Marinate chicken with soy sauce and garlic for 30 minutes
+2. Heat pan and cook the chicken until golden
+3. Assemble bowl with the chicken, rice, and vegetables
+
+✅ CORRECT: Step1:I1,I2,I3|Step2:|Step3:
+❌ WRONG: Step1:I1,I2,I3|Step2:I1|Step3:I1
+Reasoning: Chicken (I1) assigned to Step 1 (first use = marinating). Steps 2 and 3 mention chicken but get NO I1 because it's already consumed.
+
+Example 2 - Eggs (Mix → Pour → Plate):
+Ingredients: I10:eggs | I11:milk | I12:butter
+Steps:
+1. Whisk eggs with milk in a bowl
+2. Melt butter in pan
+3. Pour egg mixture into the pan
+4. Scramble until fluffy
+5. Plate the scrambled eggs with toast
+
+✅ CORRECT: Step1:I10,I11|Step2:I12|Step3:|Step4:|Step5:
+❌ WRONG: Step1:I10,I11|Step2:I12|Step3:I10,I11|Step5:I10
+Reasoning: Eggs (I10) assigned to Step 1 (first use). Milk (I11) assigned to Step 1. Butter (I12) assigned to Step 2. Steps 3, 4, 5 mention eggs/mixture but get NO IDs - already consumed.
+
+Example 3 - Chocolate Chips (Mix → Bake → Serve):
+Ingredients: I20:flour | I21:chocolate chips | I22:vanilla
+Steps:
+1. Mix flour, chocolate chips, and vanilla in bowl
+2. Fold in the chocolate chip mixture
+3. Bake cookies for 12 minutes
+4. Serve warm cookies with chocolate chips melted
+
+✅ CORRECT: Step1:I20,I21,I22|Step2:|Step3:|Step4:
+❌ WRONG: Step1:I20,I21,I22|Step2:I21|Step4:I21
+Reasoning: All ingredients assigned at Step 1 (first explicit use). Later mentions of "chocolate chips" or "mixture" get NO IDs - already consumed.
+
+Example 4 - Ground Beef (Brown → Drain → Mix):
+Ingredients: I30:ground beef | I31:onion | I32:eggs | I33:cheese
+Steps:
+1. Brown ground beef with onion in skillet
+2. Drain the beef and return to pan
+3. Whisk eggs and pour over beef mixture
+4. Sprinkle cheese on top and fold
+
+✅ CORRECT: Step1:I30,I31|Step2:|Step3:I32|Step4:I33
+❌ WRONG: Step1:I30,I31|Step2:I30|Step3:I32,I30|Step4:I33
+Reasoning: Beef (I30) assigned to Step 1. Step 2 mentions "beef" but gets NO I30 (already consumed). Step 3 gets only I32 (eggs). Step 4 gets I33 (cheese).
+
+Example 5 - Butter (Cream → Combine → Bake):
+Ingredients: I40:butter | I41:sugar | I42:flour
+Steps:
+1. Cream butter and sugar until fluffy
+2. Mix flour in separate bowl
+3. Add butter mixture to flour and combine
+4. Bake the cookie dough
+
+✅ CORRECT: Step1:I40,I41|Step2:I42|Step3:|Step4:
+❌ WRONG: Step1:I40,I41|Step2:I42|Step3:I40,I42
+Reasoning: Butter (I40) at Step 1, sugar (I41) at Step 1, flour (I42) at Step 2. Step 3 mentions "butter mixture" and "flour" but gets NO IDs - both already consumed.
+
+Example 6 - Same Name, Different IDs (Two Beef Ingredients):
+Ingredients: I50:ground beef | I51:beef broth | I52:onion
+Steps:
+1. Brown ground beef with onion in skillet
+2. Add beef broth and simmer for 20 minutes
+3. Serve the beef mixture over rice
+
+✅ CORRECT: Step1:I50,I52|Step2:I51|Step3:
+❌ WRONG: Step1:I50,I52|Step2:|Step3:
+Reasoning: I50 (ground beef) assigned to Step 1. I51 (beef broth) assigned to Step 2 - it's a DIFFERENT ingredient with a different ID, even though both contain "beef". I52 (onion) to Step 1. Step 3 gets nothing (mixture reference).
+
+Example 7 - Multiple Chocolate Ingredients:
+Ingredients: I60:chocolate chips | I61:cocoa powder | I62:flour | I63:chocolate syrup
+Steps:
+1. Mix flour and cocoa powder in bowl
+2. Fold in chocolate chips
+3. Bake for 15 minutes
+4. Drizzle with chocolate syrup before serving
+
+✅ CORRECT: Step1:I62,I61|Step2:I60|Step3:|Step4:I63
+❌ WRONG: Step1:I62,I61|Step2:|Step3:|Step4:
+Reasoning: Each chocolate ingredient (I60, I61, I63) is unique with its own ID. I61 (cocoa powder) to Step 1, I60 (chocolate chips) to Step 2, I63 (chocolate syrup) to Step 4. All different ingredients despite similar names.
+
+STANDARD EXAMPLES:
+
+Example 8 - Simple Pancakes:
 Ingredients: I1:eggs | I2:flour | I3:milk | I4:butter
-Steps: 1.Mix flour and eggs | 2.Add milk | 3.Pour batter into pan
+Steps: 1. Mix flour and eggs | 2. Add milk | 3. Pour batter into pan
 Output: Step1:I2,I1|Step2:I3|Step3:
 
-Example 2:
+Example 9 - Cheesecake Filling:
 Ingredients: I10:cream cheese | I11:sugar | I12:vanilla
-Steps: 1.Beat cream cheese with sugar | 2.Add vanilla | 3.Transfer mixture to pan
+Steps: 1. Beat cream cheese with sugar | 2. Add vanilla | 3. Transfer mixture to pan
 Output: Step1:I10,I11|Step2:I12|Step3:
 
-Example 3 - Preventing Duplicate Assignments:
+Example 10 - Preventing Duplicates:
 Ingredients: I401:salt | I402:pepper | I403:parsley
-Steps: 
+Steps:
 1. Season chicken with salt and pepper
 2. Garnish with fresh parsley and pepper
 Output: Step1:I401,I402|Step2:I403
-Reasoning: Pepper (I402) already assigned to Step 1, so Step 2 only gets parsley
-
+Reasoning: Pepper (I402) already assigned to Step 1, so Step 2 only gets parsley (I403)
 
 Now process:
 Ingredients: {ingredients_with_ids}

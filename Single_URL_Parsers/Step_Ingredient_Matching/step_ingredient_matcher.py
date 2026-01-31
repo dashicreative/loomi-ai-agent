@@ -114,7 +114,7 @@ class StepIngredientMatcher:
             prompt,
             generation_config=genai.types.GenerationConfig(
                 temperature=0.1,
-                max_output_tokens=2000
+                max_output_tokens=5000
             ),
             safety_settings=[
                 {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
