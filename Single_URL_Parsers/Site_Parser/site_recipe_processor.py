@@ -59,6 +59,9 @@ class SiteRecipeProcessor:
         self.step_ingredient_matcher = StepIngredientMatcher(self.google_model)
         self.meta_step_extractor = MetaStepExtractor(self.google_model)
         self.quality_controller = RecipeQualityController(self.google_model)
+
+        # Set up path to shared prompts directory
+        self.prompts_dir = Path(__file__).parent.parent / "Vertical_Video_Recipes" / "llm_prompts"
     
     def call_llm(self, prompt: str, max_tokens: int = 1200) -> str:
         """
@@ -546,7 +549,145 @@ class SiteRecipeProcessor:
             }
             for ingredient in parsed_ingredients
         ]
-    
+
+    def parse_meta_ingredient_response(self, llm_response: str) -> List[Dict[str, Any]]:
+        """
+        Parse delimited LLM response into structured meta-ingredients.
+
+        Expected format: META_1:I101,I102|baby cucumber
+
+        Args:
+            llm_response: Raw LLM response with pipe-delimited format
+
+        Returns:
+            List of meta-ingredient dictionaries with id, name, and linked_raw_ids
+        """
+        meta_ingredients = []
+
+        try:
+            lines = llm_response.strip().split('\n')
+
+            for line in lines:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+
+                # Parse format: "META_1:I101,I102|baby cucumber"
+                if '|' not in line:
+                    continue
+
+                meta_part, name = line.split('|', 1)
+                name = name.strip()
+
+                if ':' not in meta_part:
+                    continue
+
+                meta_id, raw_ids_str = meta_part.split(':', 1)
+                meta_id = meta_id.strip()
+                raw_ids_str = raw_ids_str.strip()
+
+                # Parse comma-separated raw ingredient IDs
+                raw_ids = [rid.strip() for rid in raw_ids_str.split(',') if rid.strip()]
+
+                meta_ingredients.append({
+                    "id": meta_id,
+                    "name": name,
+                    "linked_raw_ids": raw_ids
+                })
+
+            return meta_ingredients
+
+        except Exception as e:
+            print(f"   ⚠️  Failed to parse meta-ingredient response: {str(e)}")
+            return []
+
+    def generate_meta_ingredients(self, ingredients_with_ids: Dict[str, Dict]) -> List[Dict[str, Any]]:
+        """
+        Generate meta-ingredients by identifying and grouping duplicate ingredients using LLM.
+
+        This creates a deduplicated shopping-friendly ingredient list while preserving
+        product-defining descriptors and stripping only preparation notes.
+
+        Args:
+            ingredients_with_ids: Dictionary mapping ingredient ID to ingredient data
+                                 (output from step_ingredient_matcher)
+
+        Returns:
+            List of meta-ingredient dictionaries with id, name, and linked_raw_ids
+        """
+        if not ingredients_with_ids:
+            return []
+
+        print(f"   🔍 Generating meta-ingredients (deduplication)...")
+        step_start = time.time()
+
+        # Format ingredients for LLM prompt: "I101: 1 count baby cucumber | I102: 2 count cucumber"
+        ingredient_list = []
+        for ingredient_id, data in ingredients_with_ids.items():
+            name = data["name"]
+            quantity = data.get("quantity", "")
+            unit = data.get("unit", "")
+            # Include quantity and unit for LLM context
+            display = f"{ingredient_id}: {quantity} {unit} {name}".strip()
+            ingredient_list.append(display)
+
+        ingredients_formatted = " | ".join(ingredient_list)
+
+        # Load prompt template
+        prompt_path = self.prompts_dir / "Ingredient_Deduplication_Prompt.txt"
+
+        try:
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                prompt_template = f.read()
+
+            prompt = prompt_template.format(ingredients_with_ids=ingredients_formatted)
+
+            # Call Gemini for deduplication
+            llm_start = time.time()
+
+            response = self.google_model.generate_content(
+                prompt,
+                generation_config={
+                    "temperature": 0.1,
+                    "max_output_tokens": 3500
+                }
+            )
+
+            # Extract response text
+            if hasattr(response, 'text') and response.text:
+                llm_response = response.text.strip()
+            elif hasattr(response, 'candidates') and response.candidates:
+                candidate = response.candidates[0]
+                if hasattr(candidate, 'content') and candidate.content.parts:
+                    llm_response = candidate.content.parts[0].text.strip()
+                else:
+                    raise Exception(f"Gemini response blocked: {candidate.finish_reason}")
+            else:
+                raise Exception("Gemini returned empty response")
+
+            llm_elapsed = time.time() - llm_start
+            print(f"      ✅ Deduplication LLM completed in {llm_elapsed:.2f}s")
+
+            # Parse response into structured meta-ingredients
+            meta_ingredients = self.parse_meta_ingredient_response(llm_response)
+
+            elapsed = time.time() - step_start
+            print(f"   ✅ Generated {len(meta_ingredients)} meta-ingredients ({elapsed:.2f}s)")
+
+            return meta_ingredients
+
+        except Exception as e:
+            print(f"   ⚠️  Meta-ingredient generation failed: {str(e)}")
+            # Fallback: Create 1-to-1 mapping (no deduplication)
+            fallback_meta = []
+            for i, (ingredient_id, data) in enumerate(ingredients_with_ids.items(), 1):
+                fallback_meta.append({
+                    "id": f"META_{i}",
+                    "name": data["name"],
+                    "linked_raw_ids": [ingredient_id]
+                })
+            return fallback_meta
+
     def process_apify_response(self, apify_response: Dict) -> str:
         """
         Main processing method: Convert Apify response to standard JSON format.
@@ -621,7 +762,12 @@ class SiteRecipeProcessor:
 
         step_elapsed = time.time() - step_start
         print(f"   ✅ Step-ingredient matching complete in {step_elapsed:.2f}s")
-        
+
+        # Generate meta-ingredients (deduplicate for shopping-friendly list)
+        meta_ingredients = self.generate_meta_ingredients(
+            step_ingredient_result.get("ingredients_with_ids", {})
+        )
+
         # Step 5: Paraphrase directions for copyright compliance (final LLM call)
         print("   ✏️  Running directions paraphrasing (GEMINI)...")
         paraphrase_start = time.time()
@@ -640,13 +786,14 @@ class SiteRecipeProcessor:
         paraphrase_elapsed = time.time() - paraphrase_start
         print(f"   ✅ Directions paraphrasing complete in {paraphrase_elapsed:.2f}s")
         
-        # Create enhanced recipe JSON with step-ingredient matching and meta steps
+        # Create enhanced recipe JSON with step-ingredient matching, meta steps, and meta-ingredients
         recipe_dict = create_enhanced_recipe_json(
             title=key_fields["title"],
             parser_method="RecipeSite",
             source_url=key_fields["source_url"],
             step_ingredient_result=step_ingredient_result,
             meta_step_result=updated_meta_step_result,
+            meta_ingredients=meta_ingredients,  # Deduplicated ingredient list
             nutrition=key_fields["nutrition"],
             meal_occasion=meal_occasion,
             servings=key_fields["servings"],
