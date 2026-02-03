@@ -180,6 +180,103 @@ except Exception as e:
     print("   Recipe storage will be disabled")
     firebase_db = None
 
+# ============================================================================
+# QUEUE MANAGEMENT & RATE LIMITING SYSTEM
+# ============================================================================
+
+# Configuration (environment variables with defaults)
+MAX_CONCURRENT_RECIPES = int(os.getenv("MAX_CONCURRENT_RECIPES", "22"))
+MAX_RECIPES_PER_USER_PER_MINUTE = int(os.getenv("MAX_RECIPES_PER_USER_PER_MINUTE", "5"))
+
+# Global concurrency control
+global_semaphore = asyncio.Semaphore(MAX_CONCURRENT_RECIPES)
+
+# Per-user queue management
+user_queues: dict[str, asyncio.Queue] = {}
+user_queue_processors: dict[str, asyncio.Task] = {}
+
+# Per-user rate limiting (stores list of recent request timestamps)
+user_rate_limits: dict[str, list[float]] = {}
+
+print(f"✅ Queue system initialized:")
+print(f"   Max concurrent recipes: {MAX_CONCURRENT_RECIPES}")
+print(f"   Max per user per minute: {MAX_RECIPES_PER_USER_PER_MINUTE}")
+
+def check_rate_limit(user_id: str) -> tuple[bool, int]:
+    """
+    Check if user has exceeded rate limit.
+
+    Returns:
+        (is_allowed, requests_in_window)
+    """
+    now = time.time()
+    window_start = now - 60  # 1 minute window
+
+    # Get user's recent requests
+    if user_id not in user_rate_limits:
+        user_rate_limits[user_id] = []
+
+    # Remove timestamps older than 1 minute
+    user_rate_limits[user_id] = [
+        ts for ts in user_rate_limits[user_id]
+        if ts > window_start
+    ]
+
+    # Check if under limit
+    requests_in_window = len(user_rate_limits[user_id])
+    is_allowed = requests_in_window < MAX_RECIPES_PER_USER_PER_MINUTE
+
+    return is_allowed, requests_in_window
+
+def record_request(user_id: str):
+    """Record a request for rate limiting."""
+    if user_id not in user_rate_limits:
+        user_rate_limits[user_id] = []
+    user_rate_limits[user_id].append(time.time())
+
+async def process_user_queue(user_id: str):
+    """
+    Process recipes from a user's queue sequentially.
+    Respects global concurrency limit via semaphore.
+    """
+    print(f"🔄 [QUEUE] Starting queue processor for user {user_id[:8]}...")
+
+    try:
+        while True:
+            # Get next item from user's queue (wait if empty)
+            queue_item = await user_queues[user_id].get()
+
+            # Check for sentinel value (shutdown signal)
+            if queue_item is None:
+                print(f"🛑 [QUEUE] Queue processor shutting down for user {user_id[:8]}")
+                break
+
+            url, device_token, job_id = queue_item
+
+            print(f"📤 [QUEUE] Processing job {job_id} for user {user_id[:8]}")
+            print(f"   [QUEUE] Queue depth: {user_queues[user_id].qsize()} remaining")
+
+            # Acquire global semaphore (wait if at max concurrent)
+            async with global_semaphore:
+                print(f"🔓 [QUEUE] Acquired semaphore for job {job_id}")
+                print(f"   [QUEUE] Active slots: {MAX_CONCURRENT_RECIPES - global_semaphore._value}/{MAX_CONCURRENT_RECIPES}")
+
+                # Process the recipe
+                await process_recipe_background(url, device_token, user_id, job_id)
+
+                print(f"✅ [QUEUE] Released semaphore for job {job_id}")
+
+            # Mark task as done
+            user_queues[user_id].task_done()
+
+    except Exception as e:
+        print(f"❌ [QUEUE] Queue processor error for user {user_id[:8]}: {str(e)}")
+    finally:
+        # Clean up processor reference
+        if user_id in user_queue_processors:
+            del user_queue_processors[user_id]
+        print(f"🧹 [QUEUE] Queue processor cleaned up for user {user_id[:8]}")
+
 # DNS validation function
 async def is_valid_domain(url: str) -> bool:
     """Quick DNS check to validate domain exists without HTTP overhead"""
@@ -1148,10 +1245,13 @@ async def submit_ingredient_request(request: IngredientRequestModel):
 
 
 @app.post("/queue-recipe-silent-push", response_model=SilentPushResponse)
-async def queue_recipe_silent_push(request: SilentPushRequest, background_tasks: BackgroundTasks):
+async def queue_recipe_silent_push(request: SilentPushRequest):
     """
-    Queue recipe parsing and send result via silent push notification.
-    Returns immediately while processing happens in background.
+    Queue recipe parsing with user-level rate limiting and global concurrency control.
+    Returns immediately while processing happens in background via user-specific queue.
+
+    Rate limits: {MAX_RECIPES_PER_USER_PER_MINUTE} per user per minute
+    Global concurrency: {MAX_CONCURRENT_RECIPES} simultaneous recipes
     """
     try:
         print(f"\n{'='*60}")
@@ -1184,31 +1284,55 @@ async def queue_recipe_silent_push(request: SilentPushRequest, background_tasks:
         if not await is_valid_domain(request.url):
             raise HTTPException(status_code=400, detail="Invalid or unreachable URL domain")
 
+        # Check rate limit
+        is_allowed, requests_in_window = check_rate_limit(request.userId)
+        if not is_allowed:
+            print(f"🚫 [RATE-LIMIT] User {request.userId[:8]} exceeded rate limit")
+            print(f"   [RATE-LIMIT] Requests in last minute: {requests_in_window}/{MAX_RECIPES_PER_USER_PER_MINUTE}")
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit exceeded. Maximum {MAX_RECIPES_PER_USER_PER_MINUTE} recipes per minute. Try again in 60 seconds."
+            )
+
+        # Record this request for rate limiting
+        record_request(request.userId)
+
         # Generate job ID
         job_id = str(uuid.uuid4())
 
-        print(f"📋 [SILENT-PUSH] Queuing recipe processing job {job_id}")
-        print(f"   [SILENT-PUSH] URL: {request.url}")
-        print(f"   [SILENT-PUSH] Device: {request.deviceToken[:8]}...")
-        print(f"   [SILENT-PUSH] User ID being passed: '{request.userId}'")
-        print(f"   [SILENT-PUSH] Source: {request.source}")
-        print(f"   [SILENT-PUSH] Main event loop: {id(asyncio.get_event_loop())}")
+        print(f"📋 [QUEUE] Queuing recipe processing job {job_id}")
+        print(f"   [QUEUE] URL: {request.url}")
+        print(f"   [QUEUE] Device: {request.deviceToken[:8]}...")
+        print(f"   [QUEUE] User ID: {request.userId[:8]}...")
+        print(f"   [QUEUE] Source: {request.source}")
+        print(f"   [QUEUE] Requests in window: {requests_in_window + 1}/{MAX_RECIPES_PER_USER_PER_MINUTE}")
 
-        # Add background task with user ID
-        print(f"🔄 [SILENT-PUSH] Adding background task to FastAPI...")
-        background_tasks.add_task(
-            process_recipe_background,
-            request.url,
-            request.deviceToken,
-            request.userId,
-            job_id
-        )
-        print(f"✅ [SILENT-PUSH] Background task added successfully")
+        # Create user queue if it doesn't exist
+        if request.userId not in user_queues:
+            user_queues[request.userId] = asyncio.Queue()
+            print(f"   [QUEUE] Created new queue for user {request.userId[:8]}")
+
+        # Add job to user's queue
+        await user_queues[request.userId].put((request.url, request.deviceToken, job_id))
+        queue_depth = user_queues[request.userId].qsize()
+        print(f"   [QUEUE] Added to queue (depth: {queue_depth})")
+
+        # Start queue processor if not already running for this user
+        if request.userId not in user_queue_processors or user_queue_processors[request.userId].done():
+            print(f"   [QUEUE] Starting queue processor for user {request.userId[:8]}")
+            processor_task = asyncio.create_task(process_user_queue(request.userId))
+            user_queue_processors[request.userId] = processor_task
+        else:
+            print(f"   [QUEUE] Queue processor already running for user {request.userId[:8]}")
+
+        # Calculate estimated wait time
+        active_slots = MAX_CONCURRENT_RECIPES - global_semaphore._value
+        print(f"   [QUEUE] Global concurrency: {active_slots}/{MAX_CONCURRENT_RECIPES} slots in use")
         print(f"{'='*60}\n")
 
         return SilentPushResponse(
             success=True,
-            message="Recipe queued for background processing",
+            message=f"Recipe queued for processing (position: {queue_depth}, global active: {active_slots}/{MAX_CONCURRENT_RECIPES})",
             jobId=job_id
         )
 
@@ -1218,6 +1342,34 @@ async def queue_recipe_silent_push(request: SilentPushRequest, background_tasks:
         error_message = str(e)
         print(f"❌ [SILENT-PUSH] Queue Error: {error_message}")
         raise HTTPException(status_code=500, detail=error_message)
+
+@app.get("/queue-status")
+async def get_queue_status():
+    """
+    Get current queue system status for monitoring.
+    Returns active users, queue depths, and concurrency usage.
+    """
+    active_slots = MAX_CONCURRENT_RECIPES - global_semaphore._value
+
+    user_status = {}
+    for user_id, queue in user_queues.items():
+        user_status[user_id[:8] + "..."] = {
+            "queue_depth": queue.qsize(),
+            "processor_running": user_id in user_queue_processors and not user_queue_processors[user_id].done()
+        }
+
+    return {
+        "global_concurrency": {
+            "max_concurrent": MAX_CONCURRENT_RECIPES,
+            "active_slots": active_slots,
+            "available_slots": global_semaphore._value
+        },
+        "rate_limits": {
+            "max_per_user_per_minute": MAX_RECIPES_PER_USER_PER_MINUTE
+        },
+        "active_users": len(user_queues),
+        "user_queues": user_status
+    }
 
 # ============================================================================
 # LEARNED ALIASES ENDPOINTS
