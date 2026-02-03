@@ -195,6 +195,7 @@ global_semaphore = asyncio.Semaphore(MAX_CONCURRENT_RECIPES)
 # Per-user queue management
 user_queues: dict[str, asyncio.Queue] = {}
 user_queue_processors: dict[str, asyncio.Task] = {}
+user_queue_locks: dict[str, asyncio.Lock] = {}  # Prevent race conditions when creating processors
 
 # Per-user rate limiting (stores list of recent request timestamps)
 user_rate_limits: dict[str, list[float]] = {}
@@ -255,6 +256,7 @@ async def process_user_queue(user_id: str):
             url, device_token, job_id = queue_item
 
             print(f"📤 [QUEUE] Processing job {job_id} for user {user_id[:8]}")
+            print(f"   [QUEUE] URL: {url[:60]}...")
             print(f"   [QUEUE] Queue depth: {user_queues[user_id].qsize()} remaining")
 
             # Acquire global semaphore (wait if at max concurrent)
@@ -266,10 +268,11 @@ async def process_user_queue(user_id: str):
                 if firebase_db:
                     try:
                         print(f"📝 [FIREBASE] Updating status to 'processing' for job {job_id}")
+                        print(f"   [FIREBASE] This job will now be actively parsed (not queued)")
                         firebase_db.collection('users').document(user_id)\
                             .collection('pending_recipes_ui').document(job_id)\
                             .update({'status': 'processing'})
-                        print(f"   [FIREBASE] Status updated successfully")
+                        print(f"   [FIREBASE] ✅ Status updated: queued → processing")
                     except Exception as e:
                         print(f"⚠️  [FIREBASE] Failed to update status to processing: {str(e)}")
 
@@ -550,6 +553,7 @@ async def process_recipe_background(url: str, device_token: str, user_id: str, j
         # Generate unique recipe ID
         recipe_id = generate_recipe_id()
         print(f"\n🆔 [BACKGROUND] Generated recipe ID: {recipe_id}")
+        print(f"🔗 [BACKGROUND] Mapping: job_id={job_id} → recipe_id={recipe_id}")
 
         # Save complete recipe to Firebase
         print(f"\n💾 [BACKGROUND] About to call save_recipe_to_firebase()...")
@@ -565,13 +569,14 @@ async def process_recipe_background(url: str, device_token: str, user_id: str, j
         if firebase_success and firebase_db:
             try:
                 print(f"📝 [FIREBASE] Updating status to 'completed' for job {job_id}")
+                print(f"   [FIREBASE] Setting recipeId={recipe_id} for job_id={job_id}")
                 firebase_db.collection('users').document(user_id)\
                     .collection('pending_recipes_ui').document(job_id)\
                     .update({
                         'status': 'completed',
                         'recipeId': recipe_id
                     })
-                print(f"   [FIREBASE] Status updated successfully with recipeId: {recipe_id}")
+                print(f"   [FIREBASE] ✅ Job {job_id} completed with recipeId: {recipe_id}")
             except Exception as e:
                 print(f"⚠️  [FIREBASE] Failed to update status to completed: {str(e)}")
 
@@ -1370,13 +1375,17 @@ async def queue_recipe_silent_push(request: SilentPushRequest):
             except Exception as e:
                 print(f"⚠️  [FIREBASE] Failed to set initial status: {str(e)}")
 
-        # Start queue processor if not already running for this user
-        if request.userId not in user_queue_processors or user_queue_processors[request.userId].done():
-            print(f"   [QUEUE] Starting queue processor for user {request.userId[:8]}")
-            processor_task = asyncio.create_task(process_user_queue(request.userId))
-            user_queue_processors[request.userId] = processor_task
-        else:
-            print(f"   [QUEUE] Queue processor already running for user {request.userId[:8]}")
+        # Start queue processor if not already running for this user (with lock to prevent race conditions)
+        if request.userId not in user_queue_locks:
+            user_queue_locks[request.userId] = asyncio.Lock()
+
+        async with user_queue_locks[request.userId]:
+            if request.userId not in user_queue_processors or user_queue_processors[request.userId].done():
+                print(f"   [QUEUE] Starting queue processor for user {request.userId[:8]}")
+                processor_task = asyncio.create_task(process_user_queue(request.userId))
+                user_queue_processors[request.userId] = processor_task
+            else:
+                print(f"   [QUEUE] Queue processor already running for user {request.userId[:8]}")
 
         # Calculate estimated wait time
         active_slots = MAX_CONCURRENT_RECIPES - global_semaphore._value
