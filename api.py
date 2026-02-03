@@ -1359,6 +1359,17 @@ async def queue_recipe_silent_push(request: SilentPushRequest):
         queue_depth = user_queues[request.userId].qsize()
         print(f"   [QUEUE] Added to queue (depth: {queue_depth})")
 
+        # Update Firebase status: Set to 'queued' when job first received
+        if firebase_db:
+            try:
+                print(f"📝 [FIREBASE] Setting initial status to 'queued' for job {job_id}")
+                firebase_db.collection('users').document(request.userId)\
+                    .collection('pending_recipes_ui').document(job_id)\
+                    .update({'status': 'queued'})
+                print(f"   [FIREBASE] Initial status set to 'queued'")
+            except Exception as e:
+                print(f"⚠️  [FIREBASE] Failed to set initial status: {str(e)}")
+
         # Start queue processor if not already running for this user
         if request.userId not in user_queue_processors or user_queue_processors[request.userId].done():
             print(f"   [QUEUE] Starting queue processor for user {request.userId[:8]}")
