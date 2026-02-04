@@ -415,7 +415,7 @@ async def save_recipe_to_firebase(user_id: str, recipe_id: str, recipe_data: dic
         print(f"📊 [FIREBASE] Recipe data keys: {list(recipe_data.keys())}")
 
         # Construct Firebase path
-        firebase_path = f"users/{user_id}/recipes/{recipe_id}"
+        firebase_path = f"users/{user_id}/meals/{recipe_id}"
         print(f"🔗 [FIREBASE] Full document path: {firebase_path}")
 
         # Validate user_id is not empty
@@ -426,7 +426,7 @@ async def save_recipe_to_firebase(user_id: str, recipe_id: str, recipe_data: dic
 
         # Create document reference
         print(f"📍 [FIREBASE] Creating document reference...")
-        doc_ref = firebase_db.collection('users').document(user_id).collection('recipes').document(recipe_id)
+        doc_ref = firebase_db.collection('users').document(user_id).collection('meals').document(recipe_id)
         print(f"   [FIREBASE] Document reference created: {doc_ref.path}")
 
         # Perform the write
@@ -477,7 +477,7 @@ async def get_recipe_from_firebase(user_id: str, recipe_id: str) -> dict:
         if not firebase_db:
             raise Exception("Firebase not available")
         
-        doc_ref = firebase_db.collection('users').document(user_id).collection('recipes').document(recipe_id)
+        doc_ref = firebase_db.collection('users').document(user_id).collection('meals').document(recipe_id)
         doc = doc_ref.get()
         
         if doc.exists:
