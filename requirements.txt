@@ -36,5 +36,5 @@ pytest-asyncio>=0.21.1
 # Database - PostgreSQL
 psycopg2-binary>=2.9.9
 
-# Sendgrid for app to email support team communication
-sendgrid==6.10.0
+# Brevo (formerly Sendinblue) for app to email support team communication
+sib-api-v3-sdk==7.6.0

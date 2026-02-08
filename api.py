@@ -23,8 +23,8 @@ from urllib.parse import urlparse
 from aioapns import APNs, NotificationRequest, PushType
 import firebase_admin
 from firebase_admin import credentials, firestore
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
+import sib_api_v3_sdk
+from sib_api_v3_sdk.rest import ApiException
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
@@ -384,6 +384,54 @@ def generate_recipe_id() -> str:
     timestamp = int(time.time())
     random_part = random.randint(1000, 9999)
     return f"recipe_{timestamp}_{random_part}"
+
+def send_email_via_brevo(to_email: str, subject: str, text_content: str) -> bool:
+    """
+    Send transactional email via Brevo (formerly Sendinblue).
+
+    Args:
+        to_email: Recipient email address
+        subject: Email subject line
+        text_content: Plain text email body
+
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    try:
+        # Get Brevo API key from environment
+        brevo_api_key = os.getenv("BREVO_API_KEY")
+        if not brevo_api_key:
+            print(f"❌ [BREVO] API key not configured")
+            return False
+
+        # Configure Brevo API
+        configuration = sib_api_v3_sdk.Configuration()
+        configuration.api_key['api-key'] = brevo_api_key
+
+        # Create API instance
+        api_instance = sib_api_v3_sdk.TransactionalEmailsApi(
+            sib_api_v3_sdk.ApiClient(configuration)
+        )
+
+        # Create email object
+        send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
+            sender={"email": "careteam@liveloomi.com", "name": "Loomi Care Team"},
+            to=[{"email": to_email}],
+            subject=subject,
+            text_content=text_content
+        )
+
+        # Send email
+        api_response = api_instance.send_transac_email(send_smtp_email)
+        print(f"✅ [BREVO] Email sent successfully (Message ID: {api_response.message_id})")
+        return True
+
+    except ApiException as e:
+        print(f"❌ [BREVO] API Exception: {e}")
+        return False
+    except Exception as e:
+        print(f"❌ [BREVO] Unexpected error: {str(e)}")
+        return False
 
 async def save_recipe_to_firebase(user_id: str, recipe_id: str, recipe_data: dict) -> bool:
     """Save complete recipe to Firebase user collection"""
@@ -1138,11 +1186,6 @@ async def send_support_message(request: SupportMessageRequest):
           print(f"   Message length: {len(request.message)} chars")
           print(f"   User email: {request.userEmail or 'Not provided'}")
 
-          # Get SendGrid API key from environment
-          sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
-          if not sendgrid_api_key:
-              raise HTTPException(status_code=500, detail="Email service not configured")
-
           # Create email content
           email_subject = "Customer Message from Loomi App"
           # Build email body with user info
@@ -1158,19 +1201,15 @@ async def send_support_message(request: SupportMessageRequest):
   Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}
           """
 
-          # Create SendGrid email
-          message = Mail(
-              from_email='careteam@liveloomi.com',  # Must be verified in SendGrid
-              to_emails='careteam@liveloomi.com',
+          # Send email via Brevo
+          email_sent = send_email_via_brevo(
+              to_email='careteam@liveloomi.com',
               subject=email_subject,
-              plain_text_content=email_body
+              text_content=email_body
           )
 
-          # Send email
-          sg = SendGridAPIClient(sendgrid_api_key)
-          response = sg.send(message)
-
-          print(f"✅ Support email sent successfully (Status: {response.status_code})")
+          if not email_sent:
+              raise HTTPException(status_code=500, detail="Failed to send email")
 
           return {
               "success": True,
@@ -1194,16 +1233,11 @@ async def send_support_message(request: SupportMessageRequest):
           print(f"   Message length: {len(request.message)} chars")
           print(f"   User email: {request.userEmail or 'Not provided'}")
 
-          # Get SendGrid API key from environment
-          sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
-          if not sendgrid_api_key:
-              raise HTTPException(status_code=500, detail="Email service not configured")
-
           # Create email content
           email_subject = "Missed Ingredient Match."
           # Build email body with user info
           email_body = f"""
-  Ingredient(s) missed during ingredient enrichmentment. 
+  Ingredient(s) missed during ingredient enrichmentment.
   {request.message}
   /Users/agustin/Library/Mobile Documents/com~apple~CloudDocs/Loomi
   ---
@@ -1212,19 +1246,15 @@ async def send_support_message(request: SupportMessageRequest):
   Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}
           """
 
-          # Create SendGrid email
-          message = Mail(
-              from_email='careteam@liveloomi.com',  # Must be verified in SendGrid
-              to_emails='careteam@liveloomi.com',
+          # Send email via Brevo
+          email_sent = send_email_via_brevo(
+              to_email='careteam@liveloomi.com',
               subject=email_subject,
-              plain_text_content=email_body
+              text_content=email_body
           )
 
-          # Send email
-          sg = SendGridAPIClient(sendgrid_api_key)
-          response = sg.send(message)
-
-          print(f"✅ missing ingredient sent successfully (Status: {response.status_code})")
+          if not email_sent:
+              raise HTTPException(status_code=500, detail="Failed to send email")
 
           return {
               "success": True,
@@ -1250,11 +1280,6 @@ async def submit_ingredient_request(request: IngredientRequestModel):
           print(f"   Ingredient: {request.ingredientName}")
           print(f"   User email: {request.userEmail or 'Not provided'}")
 
-          # Get SendGrid API key
-          sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
-          if not sendgrid_api_key:
-              raise HTTPException(status_code=500, detail="Email service not configured")
-
           # Create email subject
           email_subject = f"Ingredient Photo Request: {request.ingredientName}"
 
@@ -1271,19 +1296,15 @@ async def submit_ingredient_request(request: IngredientRequestModel):
   Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}
           """
 
-          # Create SendGrid email
-          message = Mail(
-              from_email='careteam@liveloomi.com',
-              to_emails='careteam@liveloomi.com',
+          # Send email via Brevo
+          email_sent = send_email_via_brevo(
+              to_email='careteam@liveloomi.com',
               subject=email_subject,
-              plain_text_content=email_body
+              text_content=email_body
           )
 
-          # Send email
-          sg = SendGridAPIClient(sendgrid_api_key)
-          response = sg.send(message)
-
-          print(f"✅ Ingredient request email sent successfully (Status: {response.status_code})")
+          if not email_sent:
+              raise HTTPException(status_code=500, detail="Failed to send email")
 
           return {
               "success": True,
